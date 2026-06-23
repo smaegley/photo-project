@@ -1,0 +1,32 @@
+# ---- Python ----
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---- Node / frontend build ----
+frontend/node_modules/
+frontend/dist/
+
+# ---- Database (backed up at VM/LXC level; rebuildable; not in git) ----
+data/
+*.db
+*.sqlite*
+
+# ---- Generated importer artifacts + caches ----
+importer/review/
+
+# ---- Curation inputs: contain family names/relationships. Excluded — the live
+#      DB is the source of truth, and the repo may go public someday. ----
+/*.csv
+
+# ---- Secrets (keep .env.example, ignore real .env) ----
+.env
+backend/.env
+frontend/.env
+
+# ---- OS / editor junk ----
+._*
+.DS_Store
+.vscode/
+.idea/
