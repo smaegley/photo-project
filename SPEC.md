@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
-**Status:** ✅ **FROZEN v1.0** — co-authored by Steve + Claude. Data model + stack locked; build started (importer first). Minor look-and-feel (light/dark, palette) tunes during build (§9).
-**Version:** 1.0 (frozen) · **Date:** 2026-06-21 · **Frozen:** 2026-06-21
+**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** (current). Phase 1 built and running on dev VM; admin/curation layer + undo + map editor done. **§10 is the source of truth where it refines §§3–9.** Remaining: deploy + auth (invite flow, two-tier admin), then UX polish.
+**Version:** 1.0 frozen + §10 build log · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -198,3 +198,49 @@ Matches Steve's established Proxmox pattern.
 - §7 light vs dark default + typography/palette — tune during build
 
 **Resolved (2026-06-21):** people tree + scope (§3.3); places gazetteer + precision + in-app tagging (§3.4); provenance + **immediate** contributions w/ edit log (§3.5); events vocabulary + suggest→confirm (§3.6); magazine overlay + card-line view (§3.7); date parsing + season conventions (§3.8); **no user-built albums**; look-and-feel (§7); **person thumbnail = admin-chosen `representative_photo_id`**; **stack = FastAPI + SQLite + alembic / React + MapLibre / Caddy+Cloudflare-DNS / Cloudflare Access auth / Docker Compose on Proxmox LXC** (§6, §8); domain **`photos.maegley.org`**.
+
+---
+
+## 10. Build log & post-freeze decisions (2026-06-23)
+
+> The frozen sections above are the *design*. This section records what was **built** and the **decisions made during build** that extend/refine them. Where they differ, this section is current.
+
+### 10.1 Built and working (Phase 1, on dev VM 201 @ 10.0.1.121)
+- **Importer** (`importer/`): manifest + 3 curation files → SQLite. 1,140 photos, 32 magazines, 27 persons, 67 aliases, 170 places, 15-event vocab, people/event tags. Idempotent. Date parser covers all 120 `date_raw` forms (§3.8).
+- **Build-time geocoder** (`importer/geocode.py`): 162/170 places geocoded (1,080/1,140 photos mappable); state-code + DC-override guards.
+- **Backend** (`backend/app/`, FastAPI + SQLite): faceted query w/ live counts (self-facet-excluded), photo detail, people (derived, grouped), events, places, magazines, image/thumbnail/card serving (path-guarded), Cloudflare-Access JWT auth + dev bypass. Alembic at head (3 migrations).
+- **Frontend** (`frontend/`, React + maplibre): fixed shell, dual-handle date slider, collapsible map band, filter rail (people/events/places), justified-ish gallery w/ infinite scroll, lightbox, Gallery|Rolls toggle, RollDetail (card + clickable captions).
+- **Admin layer** (built 2026-06-22/23) — see §10.3.
+- **Code in version control:** `github.com/smaegley/photo-project` (**private**). Repo is **code-only**: `.gitignore` excludes the DB (`data/`), all family-data CSVs (`/*.csv`), `node_modules`/`.venv`/`dist`, caches, secrets. Images never in repo (live under `/mnt/photos`). **Before any future public flip, scrub PII** (steve@maegley.com in `config.py`/`geocoding.py`, `ROOT="steve"` in `family.py`, family names in `CLAUDE.md`/`SPEC.md`).
+
+### 10.2 People — per-viewer rooting (refines §3.3)
+Relationships are no longer rooted only at Steve. **`user.person_id`** (FK→person, nullable) links an account to its tree node; the People filter derives relationships **relative to whoever is logged in** ("Self" = them). An **unlinked** viewer sees the canonical Steve-rooted tree but with **no "Self"**. The deriver (`family.py`) takes a `root` param + `mark_self` flag. Family shapes decided for the invite flow: **current wife** = `spouse_id` ↔ Steve ("Spouse"); **ex-wife** = the (future) kids' `mother_id` only, **not** a spouse edge → reads as extended family, never "Spouse", valid login; **kids** = `father_id`=Steve, `mother_id`=ex-wife → "Child". Every family **user is a person node** and may have **0 photos** (exists in the tree, lights up when photographed). The admin sets the person + relationship **at invite**. Invite *screen* deferred (auth still dev-bypass); the data model supports it now.
+
+### 10.3 Admin / contributions — built (implements §3.4, §3.5)
+All admin write endpoints under `/api/admin/*`, audit-logged to `contribution`. Built:
+- **Event vocabulary:** create / rename / **merge** (re-points all tagged photos, de-dupes) / delete. UI: "Manage events" modal (search, two-step merge confirm).
+- **Place vocabulary:** create / rename / edit (region, precision, lat/lon) / **merge** / delete. UI: "Manage places" modal (search, precision dropdown, "no pin" badge).
+- **Bulk tagging:** apply/remove an event or person, set/clear a place across a selection. UI: gallery **selection mode** + action bar, "select all in filter" (`GET /api/photos/ids`).
+- **Per-photo editing (lightbox, admin):** add/remove people & events (chips), set/clear place. **Show-roll-card** reveal under Events (refines §3.7/§7.3). Lightbox also got **fit-to-window + zoom + pan**.
+- **Photo rotate:** `POST /photos/{id}/rotate` rotates the slide JPEG on disk + regenerates its thumbnail (masters safe on Steve's Mac). Image URLs are **mtime-versioned** (`?v=`) so the browser shows the new orientation immediately.
+- **In-app geocode lookup:** `GET /api/admin/geocode?q=` (Nominatim, importer's guards) backs a "🔍 Look up coordinates" button in the **map pin editor** (`PinEditor`, maplibre click/drag) — admin confirms before save. New-place creation does **not** auto-geocode.
+- **Undo (repeatable LIFO stack):** every op records an **`inverse`** JSON payload; `POST /api/admin/undo` replays the latest not-yet-undone op (`contribution.inverse`/`undone` columns). Events & places **restore with their original id** so overlapping inverses stay valid. **Only edits made after 2026-06-23 are undoable.** Narrow accepted gap: delete highest event-id → create new event grabbing that id → undo collides.
+
+### 10.4 Map — dynamic (refines §4.4)
+Selecting place(s) re-frames the map: **fly-to + zoom** for one (zoom by precision), **fit-bounds** for several. Selected pins render above unselected (z-index). **Region shading:** a `precision='region'` selection matched to a US state is **outlined + lightly shaded** (bundled `frontend/public/us-states.geojson`); unmatched regions (e.g. "Canada") keep a pin.
+
+### 10.5 Two-tier admin — DECIDED, build with auth (refines §3.5, §6.3)
+Privilege separation so cascading vocabulary changes need higher rights than per-photo tagging. Maps onto existing roles:
+- **contributor** = per-photo + bulk **tagging** (add/remove event/person, set/clear place, rotate, geocode lookup) — safe, hand-reversible.
+- **admin** = vocabulary (create/rename/merge/delete events & places), the **pin editor**, and **undo** (can reverse ops a contributor couldn't perform).
+- **viewer** = read + download.
+Frontend gates by role (hide Manage-events/places, Undo, pin editor for non-admins). Enforced **at the deploy/auth phase** (roles only real once Cloudflare Access maps emails→roles). Tier naming TBD (contributor vs editor/curator).
+
+### 10.6 Assets / corrections
+- **Index cards = 64** (32 rolls × 2), not 65: `Mag10_card_extra.jpg` was a duplicate of `Mag10_card_2.jpg` (removed). Steve cleaned all 64 (rotate/crop/white-balance) on his Mac; originals archived at `library/index_cards_original_raw/`.
+
+### 10.7 Open / next (post-freeze)
+- **Deploy:** Docker Compose + Caddy + Cloudflare Access on LXC 207; invite flow (per-viewer rooting §10.2); two-tier admin enforcement (§10.5); SQLite backups (migraine `infra/` pattern).
+- **GitHub push pending** Steve's auth on the VM (`gh` not installed; commit ready on `main`, remote set).
+- **UX polish pass** (Places/Map) — deliberately batched for later (Steve's call): region pin-vs-shading redundancy, narrow lightbox notes panel for roll cards, un-pinned places absent from the rail's place filter.
+- **Smaller:** caption editing in lightbox; light/dark toggle; person `representative_photo_id` picker UI.
