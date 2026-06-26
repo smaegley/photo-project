@@ -37,9 +37,17 @@ def thumbnail(source_file: str, _user=Depends(current_user)):
     if not SLIDE_RE.match(source_file):
         raise HTTPException(400, "bad slide filename")
     thumb = settings.thumbnails_dir / source_file
-    if not thumb.exists():
-        # generate on demand (the batch pre-generates these; this is the fallback)
+    # (Re)generate when missing OR when the slide is newer than its thumbnail, so a
+    # slide edited externally and dropped in under the same name (e.g. a Lightroom
+    # re-export) refreshes its thumbnail automatically. The batch pre-generates
+    # these; this is the fallback + self-heal. (Needs a writable library mount.)
+    try:
         src = _slide_path(source_file)
+    except HTTPException:
+        if thumb.exists():  # serve a stale thumb rather than 404 if the slide is gone
+            return FileResponse(thumb, media_type="image/jpeg")
+        raise
+    if (not thumb.exists()) or thumb.stat().st_mtime < src.stat().st_mtime:
         thumb.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(src) as im:
             im.draft("RGB", (THUMB_MAX, THUMB_MAX))

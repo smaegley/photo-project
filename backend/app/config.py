@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     # in the container this is overridden to the mounted /data volume.
     db_path: str = str(REPO_ROOT / "data" / "photos.db")
 
-    # Image library mounted read-only (SPEC §3.1 / §8). Slides, index cards, thumbnails.
+    # Image library (SPEC §3.1 / §8): slides, index cards, thumbnails. Mounted
+    # read-write — the app rotates slides in place and (re)generates thumbnails.
     library_root: str = "/mnt/photos/library"
 
     # Cloudflare Access (SPEC §6.3). When both are set, JWT verification is enforced;

@@ -13,9 +13,11 @@ services:
       - CF_ACCESS_AUD=${CF_ACCESS_AUD}
     volumes:
       - ./data:/data
-      # Image library, read-only. LIBRARY_ROOT_HOST is wherever the 200GB photo
-      # drive is mounted/shared on the LXC (see infra/DEPLOY.md).
-      - ${LIBRARY_ROOT_HOST:-/mnt/photos/library}:/mnt/photos/library:ro
+      # Image library, read-WRITE: the app rotates slides in place and (re)generates
+      # thumbnails under library/thumbnails. Archival masters live on the Mac, so the
+      # library here is the working copy. LIBRARY_ROOT_HOST is wherever the photo
+      # drive is mounted on the LXC (see infra/DEPLOY.md).
+      - ${LIBRARY_ROOT_HOST:-/mnt/photos/library}:/mnt/photos/library
     restart: unless-stopped
     networks:
       - internal

@@ -4,7 +4,8 @@ Production runs as two containers via Docker Compose behind Cloudflare Access at
 **`photos.maegley.org`**:
 
 - **`api`** — FastAPI + SQLite (`Dockerfile`). Runs `alembic upgrade head` then
-  uvicorn on `:8077`. DB on a bind-mounted volume; image library mounted read-only.
+  uvicorn on `:8077`. DB on a bind-mounted volume; image library mounted
+  read-write (the app rotates slides + writes thumbnails; masters live on the Mac).
 - **`caddy`** — serves the built SPA and reverse-proxies `/api` + `/health` to
   `api`, over plain HTTP on `127.0.0.1:8080` (`frontend/Dockerfile`, `Caddyfile`).
 - **`cloudflared`** (host systemd) — outbound-only Cloudflare Tunnel that routes
