@@ -29,7 +29,7 @@ LXC is Debian 12, unprivileged, with `features: nesting=1,keyctl=1` and
 
 ---
 
-## 0. Provision the LXC ✅ (partial)
+## 0. Provision the LXC ✅
 
 - ✅ LXC 209 `photo-album` created on NUC2c at `10.0.1.178`. Debian 12 unprivileged,
   `features: nesting=1,keyctl=1`, `lxc.apparmor.profile: unconfined`,
@@ -39,7 +39,7 @@ LXC is Debian 12, unprivileged, with `features: nesting=1,keyctl=1` and
 - ✅ Docker CE + compose plugin installed. BuildKit disabled via
   `/etc/docker/daemon.json` (`{"features":{"buildkit":false}}`) — same NUC2c
   kernel/runc crash as LXC 207. Verified: `docker run hello-world` passes.
-- ☐ **Repo access (private repo):** the LXC needs to authenticate to GitHub.
+- ✅ **Repo access (private repo):** the LXC needs to authenticate to GitHub.
   Generate a deploy key and add it as read-only to the repo:
   ```bash
   ssh -i ~/.ssh/proxmox_lxc root@10.0.1.178
@@ -52,7 +52,7 @@ LXC is Debian 12, unprivileged, with `features: nesting=1,keyctl=1` and
   Host github.com
       IdentityFile /root/.ssh/github_photos
   ```
-- ☐ **Clone the repo:**
+- ✅ **Clone the repo:**
   ```bash
   git clone git@github.com:smaegley/photo-project.git /opt/photo-project
   ```
