@@ -76,7 +76,7 @@ Sanity check:
 ls /mnt/photos/library/thumbnails | wc -l    # expect 1140
 ```
 
-## 2. Cloudflare Tunnel + Access ☐
+## 2. Cloudflare Tunnel + Access ✅
 
 > **⚠️ APPROACH CHANGED (2026-06-26) — was a non-proxied A record, now a Cloudflare
 > Tunnel.** A direct LAN A record bypasses Cloudflare Access, so the API never
@@ -133,7 +133,7 @@ no A record). Reference: `migraine-tracker/infra/proxmox-agent-brief.md` §6.
    tunnel is required — a direct LAN A record would bypass Access and the API would
    reject every request.
 
-## 3. Seed data onto the LXC ☐
+## 3. Seed data onto the LXC ✅
 
 The DB is **not** in git (gitignored); `data/` doesn't exist after a clone.
 Copy the live DB from VM 201:
@@ -145,7 +145,7 @@ scp aiuser@10.0.1.121:/home/aiuser/projects/photo-project/data/photos.db \
 **Thumbnails** are already present in the library (step 1 ✅) — no regeneration
 needed.
 
-## 4. Configure + launch ☐
+## 4. Configure + launch ✅
 
 ```bash
 cd /opt/photo-project
@@ -176,7 +176,7 @@ If the site doesn't load: `systemctl status cloudflared` and
 api up?), and `curl -s http://127.0.0.1:8080/` on the LXC (Caddy serving locally?).
 A 502 at the edge but a working local curl means the tunnel ingress target is wrong.
 
-## 5. Seed the admin + invite family ☐
+## 5. Seed the admin + invite family ✅
 
 If you copied the existing `photos.db` (step 3), Steve's `user` row is already
 `admin` linked to person `steve` — skip the seed below and go straight to inviting
@@ -198,7 +198,7 @@ person (roots their People filter on themselves).
 Roles: **contributor** = per-photo + bulk tagging, rotate, geocode lookup;
 **admin** = the above plus event/place vocabulary, undo, and user management.
 
-## 6. Backups ☐
+## 6. Backups ✅
 
 ```bash
 cp /opt/photo-project/infra/photo-backup.service /etc/systemd/system/
