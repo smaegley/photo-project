@@ -78,6 +78,19 @@ ls /mnt/photos/library/thumbnails | wc -l    # expect 1140
 
 ## 2. Cloudflare Tunnel + Access ☐
 
+> **⚠️ APPROACH CHANGED (2026-06-26) — was a non-proxied A record, now a Cloudflare
+> Tunnel.** A direct LAN A record bypasses Cloudflare Access, so the API never
+> receives the `Cf-Access-Jwt-Assertion` header and rejects every request. This
+> app must sit behind Access (like migraine), which requires the tunnel.
+> **If you already created the `photos.maegley.org` A record from the earlier
+> version of this doc, delete it** — it would resolve straight to the LXC and
+> bypass Access. The tunnel creates a CNAME instead (step 4).
+>
+> Related artifact changes pushed with this: Caddy is now HTTP-only on
+> `127.0.0.1:8080` (no TLS, no `caddy-dns/cloudflare` image), and **`.env` no
+> longer has `CLOUDFLARE_API_TOKEN`** — TLS/cert is handled at Cloudflare's edge.
+> `git pull` before deploying.
+
 Mirrors migraine-tracker (outbound-only tunnel; no inbound ports, no public IP,
 no A record). Reference: `migraine-tracker/infra/proxmox-agent-brief.md` §6.
 
