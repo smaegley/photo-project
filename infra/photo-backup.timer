@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Maegley Photo Album SQLite snapshot
+
+[Timer]
+OnCalendar=*-*-* 03:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

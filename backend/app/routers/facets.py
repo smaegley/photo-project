@@ -10,9 +10,16 @@ from app import models as m
 from app.auth import current_user
 from app.database import get_db
 from app.family import derive_relationships
-from app.schemas import EventOut, MagazineOut, PersonOut, PlaceOut
+from app.schemas import EventOut, MagazineOut, MeOut, PersonOut, PlaceOut
 
 router = APIRouter(prefix="/api", tags=["facets"])
+
+
+@router.get("/me", response_model=MeOut)
+def whoami(user: m.User = Depends(current_user)):
+    """The current viewer + role — the frontend gates its admin/contributor UI on this."""
+    return MeOut(email=user.email, role=user.role,
+                 person_id=user.person_id, display_name=user.display_name)
 
 # Stable display order for relationship groups in the People rail.
 REL_ORDER = ["Self", "Parent", "Sibling", "Child", "Grandparent",

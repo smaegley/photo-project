@@ -38,12 +38,14 @@ export const api = {
     get(`/api/photos?${qs(filters, { page, page_size: pageSize })}`),
   photoIds: (filters) => get(`/api/photos/ids?${qs(filters)}`),
   photo: (id) => get(`/api/photos/${id}`),
-  people: () => get("/api/people"),
+  people: (withPhotosOnly = true) =>
+    get(`/api/people${withPhotosOnly ? "" : "?with_photos_only=false"}`),
   events: (withPhotosOnly = true) =>
     get(`/api/events${withPhotosOnly ? "" : "?with_photos_only=false"}`),
   places: (mappableOnly = false) =>
     get(`/api/places${mappableOnly ? "?mappable_only=true" : ""}`),
   magazines: () => get("/api/magazines"),
+  me: () => get("/api/me"),
 
   // ---- admin (SPEC §3.5) ----
   createEvent: (name) => send("POST", "/api/admin/events", { name }),
@@ -64,4 +66,10 @@ export const api = {
   geocode: (q) => get(`/api/admin/geocode?q=${encodeURIComponent(q)}`),
   undo: () => send("POST", "/api/admin/undo"),
   undoPeek: () => get("/api/admin/undo/peek"),
+
+  // ---- users / invites (SPEC §6.3, §10.5; admin-only) ----
+  users: () => get("/api/admin/users"),
+  createUser: (body) => send("POST", "/api/admin/users", body),
+  updateUser: (id, body) => send("PATCH", `/api/admin/users/${id}`, body),
+  deleteUser: (id) => send("DELETE", `/api/admin/users/${id}`),
 };

@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: photo-api
+    environment:
+      - DB_PATH=/data/photos.db
+      - LIBRARY_ROOT=/mnt/photos/library
+      # Cloudflare Access (SPEC §6.3). When BOTH are set, JWT verification is
+      # enforced and the dev bypass is off. Leave unset only for local testing.
+      - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN}
+      - CF_ACCESS_AUD=${CF_ACCESS_AUD}
+    volumes:
+      - ./data:/data
+      # Image library, read-only. LIBRARY_ROOT_HOST is wherever the 200GB photo
+      # drive is mounted/shared on the LXC (see infra/DEPLOY.md).
+      - ${LIBRARY_ROOT_HOST:-/mnt/photos/library}:/mnt/photos/library:ro
+    restart: unless-stopped
+    networks:
+      - internal
+
+  caddy:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: photo-caddy
+    # Plain HTTP, bound to localhost only — cloudflared (host systemd) tunnels to
+    # this. Nothing is exposed to the LAN or internet directly.
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - internal
+
+networks:
+  internal:

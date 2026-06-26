@@ -1,5 +1,5 @@
 """API response/request schemas (SPEC §6.2)."""
-from datetime import date
+from datetime import date, datetime
 
 from pydantic import BaseModel
 
@@ -138,3 +138,36 @@ class PlaceMerge(BaseModel):
 
 class RotateReq(BaseModel):
     degrees: int  # clockwise: 90 | 180 | 270
+
+
+# ---- auth / users (SPEC §6.3, §10.5) ----
+class MeOut(BaseModel):
+    """The current viewer — drives frontend role gating."""
+    email: str
+    role: str                       # admin | contributor | viewer
+    person_id: str | None           # linked tree person (per-viewer rooting)
+    display_name: str | None
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    display_name: str | None
+    role: str
+    person_id: str | None
+    invited_at: datetime | None
+    last_login: datetime | None
+
+
+class UserCreate(BaseModel):
+    """Pre-register a CF-Access email and set its role + tree link ("invite")."""
+    email: str
+    role: str = "viewer"
+    person_id: str | None = None
+    display_name: str | None = None
+
+
+class UserUpdate(BaseModel):
+    role: str | None = None
+    person_id: str | None = None
+    display_name: str | None = None

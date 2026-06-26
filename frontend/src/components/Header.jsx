@@ -1,5 +1,6 @@
 export default function Header({ view, total, hasFilters, onView, onReset, mapOpen, onToggleMap,
-                                admin, onToggleAdmin, onManageEvents, onManagePlaces,
+                                admin, canEdit, isAdmin, onToggleAdmin,
+                                onManageEvents, onManagePlaces, onManageUsers,
                                 undoInfo, onUndo }) {
   const undoLabel = undoInfo?.available
     ? `Undo: ${undoInfo.field} ${undoInfo.old ?? ""}${undoInfo.old && undoInfo.new ? " → " : ""}${undoInfo.new ?? ""}`.trim()
@@ -24,17 +25,24 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
       </div>
 
       <div className="header-right">
-        {admin && (
+        {/* Vocabulary management + undo are admin-only and cascade across many
+            photos (SPEC §10.5); contributors only get per-photo/bulk tagging. */}
+        {admin && isAdmin && (
           <button className="ghost" onClick={onManageEvents} title="Rename / merge / delete events">
             Manage events
           </button>
         )}
-        {admin && (
+        {admin && isAdmin && (
           <button className="ghost" onClick={onManagePlaces} title="Rename / merge / delete places">
             Manage places
           </button>
         )}
-        {admin && (
+        {admin && isAdmin && (
+          <button className="ghost" onClick={onManageUsers} title="Invite / manage users">
+            Manage users
+          </button>
+        )}
+        {admin && isAdmin && (
           <button className="ghost" onClick={onUndo} disabled={!undoInfo?.available} title={undoLabel}>
             ↶ Undo
           </button>
@@ -45,10 +53,12 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
         {hasFilters && (
           <button className="ghost" onClick={onReset}>Reset</button>
         )}
-        <button className={`ghost ${admin ? "on" : ""}`} onClick={onToggleAdmin}
-                title="Toggle admin editing">
-          ⚙ Admin
-        </button>
+        {canEdit && (
+          <button className={`ghost ${admin ? "on" : ""}`} onClick={onToggleAdmin}
+                  title={isAdmin ? "Toggle admin editing" : "Toggle tagging mode"}>
+            ⚙ {isAdmin ? "Admin" : "Edit"}
+          </button>
+        )}
       </div>
     </header>
   );

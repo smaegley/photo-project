@@ -1,0 +1,11 @@
+[Unit]
+Description=Maegley Photo Album SQLite snapshot
+After=local-fs.target
+
+[Service]
+Type=oneshot
+# Adjust paths if the deploy dir differs.
+Environment=DB=/opt/photo-project/data/photos.db
+Environment=OUTDIR=/opt/photo-project/snapshots
+Environment=KEEP=14
+ExecStart=/opt/photo-project/infra/db-snapshot.sh

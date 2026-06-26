@@ -9,6 +9,7 @@ human-confirmed.
 """
 import json
 import re
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
@@ -16,7 +17,7 @@ from sqlalchemy.orm import Session
 from PIL import Image
 
 from app import models as m
-from app.auth import require_admin
+from app.auth import require_admin, require_contributor
 from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
@@ -26,6 +27,7 @@ from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq,
     EventCreate, EventMerge, EventOut, EventRename,
     PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RotateReq,
+    UserCreate, UserOut, UserUpdate,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -167,7 +169,7 @@ def delete_event(event_id: int, db: Session = Depends(get_db),
 # ---------- bulk photo tagging ----------
 @router.post("/photos/event")
 def bulk_event(body: BulkEventReq, db: Session = Depends(get_db),
-               user: m.User = Depends(require_admin)):
+               user: m.User = Depends(require_contributor)):
     e = db.get(m.Event, body.event_id)
     if e is None:
         raise HTTPException(404, "event not found")
@@ -216,7 +218,7 @@ def bulk_event(body: BulkEventReq, db: Session = Depends(get_db),
 
 @router.post("/photos/person")
 def bulk_person(body: BulkPersonReq, db: Session = Depends(get_db),
-                user: m.User = Depends(require_admin)):
+                user: m.User = Depends(require_contributor)):
     person = db.get(m.Person, body.person_id)
     if person is None:
         raise HTTPException(404, "person not found")
@@ -261,7 +263,7 @@ def bulk_person(body: BulkPersonReq, db: Session = Depends(get_db),
 
 @router.post("/photos/place")
 def bulk_place(body: BulkPlaceReq, db: Session = Depends(get_db),
-               user: m.User = Depends(require_admin)):
+               user: m.User = Depends(require_contributor)):
     """Set (or clear, if place_id is null) the place on a set of photos."""
     ids = body.photo_ids
     if not ids:
@@ -286,7 +288,7 @@ def bulk_place(body: BulkPlaceReq, db: Session = Depends(get_db),
 
 
 @router.get("/geocode")
-def geocode_lookup(q: str, user: m.User = Depends(require_admin)):
+def geocode_lookup(q: str, user: m.User = Depends(require_contributor)):
     """Look up coordinates for a place name (OSM Nominatim). A suggestion the
     admin confirms before saving — returns null if nothing is found."""
     return geocode(q) or {"found": False}
@@ -397,7 +399,7 @@ def delete_place(place_id: str, db: Session = Depends(get_db),
 # ---------- per-photo image ops ----------
 @router.post("/photos/{photo_id}/rotate")
 def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
-                 user: m.User = Depends(require_admin)):
+                 user: m.User = Depends(require_contributor)):
     """Rotate the slide on disk (clockwise) and regenerate its thumbnail. The
     archival masters live on Steve's Mac, so the library copy is the working one."""
     p = db.get(m.Photo, photo_id)
@@ -523,3 +525,93 @@ def undo(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
     c.undone = True
     db.commit()
     return {"undone": c.field, "old": c.old_value, "new": c.new_value}
+
+
+# ---- users / invites (SPEC §6.3, §10.5) -----------------------------------
+# "Invite" = add the email to the Cloudflare Access allowlist (done in Cloudflare)
+# + register the row here with a role and an optional person link for per-viewer
+# People rooting. User ops are admin-only and are NOT undoable (undo is content-only).
+_VALID_ROLES = {"admin", "contributor", "viewer"}
+
+
+def _user_out(u: m.User) -> UserOut:
+    return UserOut(id=u.id, email=u.email, display_name=u.display_name, role=u.role,
+                   person_id=u.person_id, invited_at=u.invited_at, last_login=u.last_login)
+
+
+def _check_role(role: str) -> None:
+    if role not in _VALID_ROLES:
+        raise HTTPException(400, f"invalid role: {role}")
+
+
+def _check_person(db: Session, person_id: str | None) -> None:
+    if person_id and db.get(m.Person, person_id) is None:
+        raise HTTPException(400, f"no such person: {person_id}")
+
+
+def _admin_count(db: Session) -> int:
+    return db.query(func.count(m.User.id)).filter(m.User.role == "admin").scalar() or 0
+
+
+@router.get("/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    users = db.query(m.User).order_by(m.User.email).all()
+    return [_user_out(u) for u in users]
+
+
+@router.post("/users", response_model=UserOut)
+def create_user(body: UserCreate, db: Session = Depends(get_db),
+                user: m.User = Depends(require_admin)):
+    email = body.email.strip().lower()
+    if not email:
+        raise HTTPException(400, "email required")
+    if db.query(m.User).filter(func.lower(m.User.email) == email).first():
+        raise HTTPException(409, f"user already exists: {email}")
+    _check_role(body.role)
+    _check_person(db, body.person_id)
+    u = m.User(email=email, role=body.role, person_id=body.person_id,
+               display_name=body.display_name, invited_at=datetime.now(timezone.utc))
+    db.add(u)
+    _log(db, user, "user:create", None, f"{email} ({body.role})")
+    db.commit()
+    db.refresh(u)
+    return _user_out(u)
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(user_id: int, body: UserUpdate, db: Session = Depends(get_db),
+                user: m.User = Depends(require_admin)):
+    u = db.get(m.User, user_id)
+    if u is None:
+        raise HTTPException(404, "no such user")
+    data = body.model_dump(exclude_unset=True)
+    if "role" in data and data["role"] is not None:
+        _check_role(data["role"])
+        # Don't let the last admin demote themselves out of admin access.
+        if u.role == "admin" and data["role"] != "admin" and _admin_count(db) <= 1:
+            raise HTTPException(400, "cannot demote the last admin")
+    if "person_id" in data:
+        _check_person(db, data["person_id"])
+    before = f"{u.role}/{u.person_id}/{u.display_name}"
+    for k, v in data.items():
+        setattr(u, k, v)
+    _log(db, user, "user:update", before, f"{u.role}/{u.person_id}/{u.display_name}")
+    db.commit()
+    db.refresh(u)
+    return _user_out(u)
+
+
+@router.delete("/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db),
+                user: m.User = Depends(require_admin)):
+    u = db.get(m.User, user_id)
+    if u is None:
+        raise HTTPException(404, "no such user")
+    if u.id == user.id:
+        raise HTTPException(400, "cannot delete your own account")
+    if u.role == "admin" and _admin_count(db) <= 1:
+        raise HTTPException(400, "cannot delete the last admin")
+    _log(db, user, "user:delete", f"{u.email} ({u.role})", None)
+    db.delete(u)
+    db.commit()
+    return {"deleted": u.email}

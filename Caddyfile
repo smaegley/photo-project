@@ -1,0 +1,18 @@
+# Maegley Photo Album edge (behind a Cloudflare Tunnel + Access).
+# TLS and the public cert are handled at Cloudflare's edge; cloudflared connects
+# to this container over plain HTTP, so Caddy only serves the SPA and proxies the
+# API. API routes are matched before the SPA catch-all so deep links fall back to
+# index.html but /api never does.
+:80 {
+    handle /api/* {
+        reverse_proxy api:8077
+    }
+    handle /health {
+        reverse_proxy api:8077
+    }
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+}

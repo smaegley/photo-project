@@ -10,6 +10,7 @@ import RollsView from "./components/RollsView";
 import AdminBar from "./components/AdminBar";
 import EventsAdmin from "./components/EventsAdmin";
 import PlacesAdmin from "./components/PlacesAdmin";
+import UsersAdmin from "./components/UsersAdmin";
 
 export const YEAR_MIN = 1962;
 export const YEAR_MAX = 1976;
@@ -38,10 +39,16 @@ export default function App() {
   const [mapOpen, setMapOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(false);
 
+  // current viewer role (SPEC §6.3, §10.5) — gates the editing UI
+  const [role, setRole] = useState("viewer");
+  const canEdit = role === "admin" || role === "contributor";
+  const isAdmin = role === "admin";
+
   // admin / bulk-editing (SPEC §3.5)
   const [admin, setAdmin] = useState(false);
   const [showEvents, setShowEvents] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
+  const [showUsers, setShowUsers] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [undoInfo, setUndoInfo] = useState({ available: false });
 
@@ -61,6 +68,7 @@ export default function App() {
   const activeRoll = sel.magazineId ? magazines.find((m) => m.id === sel.magazineId) : null;
 
   useEffect(() => {
+    api.me().then((me) => setRole(me.role)).catch(() => setRole("viewer"));
     api.people().then(setPeople);
     api.events().then(setEvents);
     api.events(false).then(setAllEvents);
@@ -69,10 +77,10 @@ export default function App() {
     api.magazines().then(setMagazines);
   }, []);
 
-  // keep the undo button in sync when admin mode turns on
+  // keep the undo button in sync when admin mode turns on (undo is admin-only)
   useEffect(() => {
-    if (admin) api.undoPeek().then(setUndoInfo);
-  }, [admin]);
+    if (admin && isAdmin) api.undoPeek().then(setUndoInfo);
+  }, [admin, isAdmin]);
 
   // refetch page 1 whenever filters change
   useEffect(() => {
@@ -90,17 +98,18 @@ export default function App() {
   // pages currently loaded, so the gallery keeps its scroll extent instead of
   // snapping back to page 1 — only the edited photos change.
   const refresh = useCallback(async () => {
-    const [ev, aev, pl, apl, pe, undo] = await Promise.all([
+    const [ev, aev, pl, apl, pe] = await Promise.all([
       api.events(), api.events(false), api.places(true), api.places(false),
-      api.people(), api.undoPeek()]);
+      api.people()]);
     setEvents(ev); setAllEvents(aev); setPlaces(pl); setAllPlaces(apl);
-    setPeople(pe); setUndoInfo(undo);
+    setPeople(pe);
+    if (isAdmin) api.undoPeek().then(setUndoInfo);
     const pages = await Promise.all(
       Array.from({ length: page }, (_, i) => api.photos(filters, i + 1))
     );
     setResult({ ...pages[0], photos: pages.flatMap((r) => r.photos) });
     setSelectedIds(new Set());
-  }, [filters, page]);
+  }, [filters, page, isAdmin]);
 
   const onUndo = useCallback(async () => {
     await api.undo();
@@ -146,9 +155,12 @@ export default function App() {
         mapOpen={mapOpen}
         onToggleMap={() => setMapOpen((o) => !o)}
         admin={admin}
+        canEdit={canEdit}
+        isAdmin={isAdmin}
         onToggleAdmin={() => { setAdmin((a) => !a); setSelectedIds(new Set()); }}
         onManageEvents={() => setShowEvents(true)}
         onManagePlaces={() => setShowPlaces(true)}
+        onManageUsers={() => setShowUsers(true)}
         undoInfo={undoInfo}
         onUndo={onUndo}
       />
@@ -252,6 +264,10 @@ export default function App() {
           onClose={() => setShowPlaces(false)}
           onChanged={refresh}
         />
+      )}
+
+      {showUsers && (
+        <UsersAdmin onClose={() => setShowUsers(false)} />
       )}
     </div>
   );
