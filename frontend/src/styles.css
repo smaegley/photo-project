@@ -106,6 +106,11 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 }
 .map-tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
 
+/* Dark map: invert the OSM raster canvas so lines/labels stay high-contrast
+   (CARTO's dark basemap was too low-contrast). Markers + controls are DOM
+   siblings of the canvas, so they're unaffected. */
+[data-theme="dark"] .maplibregl-canvas { filter: invert(1) hue-rotate(180deg) brightness(.95); }
+
 /* dark-mode the MapLibre zoom control + attribution to match the dark basemap */
 [data-theme="dark"] .maplibregl-ctrl-group { background: var(--field-bg); border: 1px solid var(--border); }
 [data-theme="dark"] .maplibregl-ctrl-group button + button { border-top-color: var(--border); }

@@ -218,7 +218,6 @@ export default function App() {
           selectedPlaces={sel.places}
           bbox={sel.bbox}
           pinned={mapPinned}
-          dark={dark}
           onTogglePin={() => setMapPinned((p) => !p)}
           onClose={() => setMapOpen(false)}
           onSelectPlace={(id) => toggle("places", id)}

@@ -1,24 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 
-// Light = OSM; dark = CARTO dark basemap (both OSM-attributed, no API key).
-const LIGHT_TILES = "https://tile.openstreetmap.org/{z}/{x}/{y}.png";
-const DARK_TILES = "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png";
-
-const styleFor = (dark) => ({
+// OSM raster; in dark mode a CSS filter on the canvas inverts it to a dark map
+// while keeping OSM's strong line/label contrast (see styles.css .maplibregl-canvas).
+const OSM_STYLE = {
   version: 8,
   sources: {
     osm: {
       type: "raster",
-      tiles: [dark ? DARK_TILES : LIGHT_TILES],
+      tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
       tileSize: 256,
-      attribution: "© OpenStreetMap contributors" + (dark ? " © CARTO" : ""),
+      attribution: "© OpenStreetMap contributors",
     },
   },
   layers: [{ id: "osm", type: "raster", source: "osm" }],
-});
+};
 
-export default function MapBand({ places, selectedPlaces, bbox, pinned, dark, onTogglePin, onClose, onSelectPlace, onBbox }) {
+export default function MapBand({ places, selectedPlaces, bbox, pinned, onTogglePin, onClose, onSelectPlace, onBbox }) {
   const ref = useRef(null);
   const map = useRef(null);
   const markers = useRef([]);
@@ -30,7 +28,7 @@ export default function MapBand({ places, selectedPlaces, bbox, pinned, dark, on
   useEffect(() => {
     map.current = new maplibregl.Map({
       container: ref.current,
-      style: styleFor(dark),
+      style: OSM_STYLE,
       center: [-100, 40],
       zoom: 3,
     });
@@ -50,16 +48,7 @@ export default function MapBand({ places, selectedPlaces, bbox, pinned, dark, on
       fitToPlaces();
     });
     return () => map.current?.remove();
-  }, []); // eslint-disable-line
-
-  // swap the basemap tiles when the theme toggles (no full re-init); wait for the
-  // style to load, else an early setTiles is lost and the map stays light
-  useEffect(() => {
-    const m = map.current;
-    if (!m) return;
-    const apply = () => m.getSource("osm")?.setTiles([dark ? DARK_TILES : LIGHT_TILES]);
-    m.loaded() ? apply() : m.once("load", apply);
-  }, [dark]);
+  }, []);
 
   // (re)draw markers when places / selection change
   useEffect(() => {
