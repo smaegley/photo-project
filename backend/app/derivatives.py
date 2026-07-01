@@ -45,6 +45,14 @@ def ensure(src: Path, cache: Path, max_edge: int) -> bool:
     return True
 
 
+def face_version(rep_id, region) -> str:
+    """Cache/URL key for a person's face crop — changes when the rep photo OR the
+    crop box changes, so both the disk cache and the browser refetch."""
+    if region and region[2] is not None:  # region = (x, y, w, h)
+        return f"{rep_id}-" + "-".join(str(int((v or 0) * 1000)) for v in region)
+    return str(rep_id)
+
+
 def face_thumb(src: Path, cache: Path, region, max_edge: int = FACE_MAX) -> None:
     """Square face crop from a normalized region (cx,cy,w,h in 0..1), padded for
     headroom. Falls back to a centre-square crop when there's no region."""

@@ -166,6 +166,14 @@ class RepresentativeReq(BaseModel):
     photo_id: int | None = None     # null clears it
 
 
+class FaceRegionReq(BaseModel):
+    photo_id: int
+    x: float                        # normalized face-box center + size (0..1)
+    y: float
+    w: float
+    h: float
+
+
 class UsageReq(BaseModel):
     event_type: str                 # view | download | search
     target: str | None = None

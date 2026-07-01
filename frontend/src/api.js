@@ -71,6 +71,8 @@ export const api = {
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   setRepresentative: (personId, photoId) =>
     send("POST", `/api/admin/people/${personId}/representative`, { photo_id: photoId }),
+  setFaceRegion: (personId, body) =>
+    send("POST", `/api/admin/people/${personId}/face-region`, body),
   usageStats: () => get("/api/admin/usage/stats"),
   geocode: (q) => get(`/api/admin/geocode?q=${encodeURIComponent(q)}`),
   undo: () => send("POST", "/api/admin/undo"),

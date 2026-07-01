@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import FaceCropEditor from "./FaceCropEditor";
 
 export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                                   admin = false, isAdmin = false, events = [], people = [], places = [], magazines = [], onChanged }) {
@@ -7,6 +8,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
+  const [cropPerson, setCropPerson] = useState(null);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -149,6 +151,9 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                     {isAdmin && <button className={`chip-rep ${repOf(p.person_id) === photo.id ? "on" : ""}`}
                       disabled={busy} title="Set this photo as their thumbnail"
                       onClick={() => edit(() => api.setRepresentative(p.person_id, photo.id))}>★</button>}
+                    {isAdmin && <button className="chip-rep" disabled={busy}
+                      title="Draw their face crop on this photo"
+                      onClick={() => setCropPerson(p)}>⛶</button>}
                     {admin && <button className="chip-x" disabled={busy}
                       onClick={() => edit(() => api.bulkPerson([photo.id], p.person_id, "remove"))}>×</button>}
                   </span>
@@ -214,6 +219,12 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
           </div>
         )}
       </aside>
+
+      {cropPerson && (
+        <FaceCropEditor person={cropPerson} photo={photo}
+          onClose={() => setCropPerson(null)}
+          onSaved={() => { dirty.current = true; setCropPerson(null); reload(); onChanged?.(); }} />
+      )}
     </div>
   );
 }

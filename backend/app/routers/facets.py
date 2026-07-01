@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import models as m
+from app import derivatives, models as m
 from app.auth import current_user
 from app.database import get_db
 from app.family import derive_relationships
@@ -73,11 +73,14 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
         n = counts.get(p.id, 0)
         if with_photos_only and n == 0:
             continue
+        face_url = None
+        if p.representative_photo_id:
+            pp = db.get(m.PhotoPerson, (p.representative_photo_id, p.id))
+            region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
+            face_url = f"/api/faces/{p.id}?v={derivatives.face_version(p.representative_photo_id, region)}"
         out.append(PersonOut(
             id=p.id, name=p.canonical_name, relationship=rels.get(p.id),
-            photo_count=n, representative_photo_id=p.representative_photo_id,
-            face_url=(f"/api/faces/{p.id}?v={p.representative_photo_id}"
-                      if p.representative_photo_id else None)))
+            photo_count=n, representative_photo_id=p.representative_photo_id, face_url=face_url))
     out.sort(key=lambda x: (REL_ORDER.index(x.relationship) if x.relationship in REL_ORDER else 99,
                             -x.photo_count, x.name))
     return out

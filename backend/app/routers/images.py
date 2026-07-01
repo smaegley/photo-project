@@ -82,7 +82,7 @@ def face(person_id: str, db: Session = Depends(get_db), _user=Depends(current_us
     src = photo_file(rep)
     pp = db.get(m.PhotoPerson, (rep.id, person_id))
     region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
-    cache = settings.faces_dir / f"{_safe_key(person_id)}_{rep.id}.jpg"
+    cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep.id, region)}.jpg"
     if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
         derivatives.face_thumb(src, cache, region)
     return FileResponse(cache, media_type="image/jpeg")

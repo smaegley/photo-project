@@ -26,7 +26,7 @@ from app.routers.images import photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
     EventCreate, EventMerge, EventOut, EventRename,
-    PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RepresentativeReq, RotateReq,
+    FaceRegionReq, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RepresentativeReq, RotateReq,
     UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
@@ -447,6 +447,31 @@ def set_representative(person_id: str, body: RepresentativeReq, db: Session = De
     return {"person_id": person.id, "representative_photo_id": body.photo_id}
 
 
+@router.post("/people/{person_id}/face-region")
+def set_face_region(person_id: str, body: FaceRegionReq, db: Session = Depends(get_db),
+                    user: m.User = Depends(require_admin)):
+    """Manually set a person's face crop box on a photo + make it their representative
+    (SPEC §4.2) — for people ★'d on a photo with no Lightroom face region."""
+    person = db.get(m.Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+    if db.get(m.Photo, body.photo_id) is None:
+        raise HTTPException(404, "photo not found")
+    pp = db.get(m.PhotoPerson, (body.photo_id, person_id))
+    if pp is None:
+        pp = m.PhotoPerson(photo_id=body.photo_id, person_id=person_id, source=SOURCE_HUMAN)
+        db.add(pp)
+    prior = {"rep": person.representative_photo_id,
+             "region": [pp.region_x, pp.region_y, pp.region_w, pp.region_h]}
+    pp.region_x, pp.region_y, pp.region_w, pp.region_h = body.x, body.y, body.w, body.h
+    person.representative_photo_id = body.photo_id
+    _log(db, user, "person:face", None, person_id,
+         inverse={"op": "person_face", "person_id": person_id,
+                  "photo_id": body.photo_id, "prior": prior})
+    db.commit()
+    return {"person_id": person_id, "representative_photo_id": body.photo_id}
+
+
 @router.get("/usage/stats", response_model=UsageStats)
 def usage_stats(db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
     """Admin usage panel: view/download totals, most-viewed photos, active users."""
@@ -572,6 +597,13 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         person = db.get(m.Person, inv["person_id"])
         if person:
             person.representative_photo_id = inv["photo_id"]
+    elif op == "person_face":
+        person = db.get(m.Person, inv["person_id"])
+        if person:
+            person.representative_photo_id = inv["prior"]["rep"]
+        pp = db.get(m.PhotoPerson, (inv["photo_id"], inv["person_id"]))
+        if pp:
+            pp.region_x, pp.region_y, pp.region_w, pp.region_h = inv["prior"]["region"]
     else:
         raise HTTPException(400, f"don't know how to undo: {op}")
 
