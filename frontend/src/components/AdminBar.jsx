@@ -48,6 +48,7 @@ export default function AdminBar({ selectedIds, total, filterEventId,
         <span className="admin-count">{n} selected</span>
         <button className="link" onClick={onSelectAll} disabled={busy}>Select all {total.toLocaleString()}</button>
         {n > 0 && <button className="link" onClick={onClear} disabled={busy}>Clear</button>}
+        <span className="admin-hint">⌘/Ctrl-click toggles · Shift-click selects a range · plain click opens</span>
       </div>
 
       <div className="admin-bar-right">

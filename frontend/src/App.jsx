@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import Header from "./components/Header";
 import DateSlider from "./components/DateSlider";
@@ -130,6 +130,7 @@ export default function App() {
     setLoading(true);
     setPage(1);
     setSelectedIds(new Set()); // selection is tied to the current filter view
+    anchorRef.current = null;
     api.photos(filters, 1).then((r) => {
       if (alive) { setResult(r); setLoading(false); }
     });
@@ -163,8 +164,26 @@ export default function App() {
     setSelectedIds(new Set(ids));
   }, [filters]);
 
-  const toggleSelect = (id) =>
-    setSelectedIds((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  // Light-table selection: plain checkbox / ⌘/Ctrl-click toggles one; Shift-click
+  // selects the contiguous range from the last-clicked tile (the anchor).
+  const anchorRef = useRef(null);
+  const onSelect = useCallback((i, e) => {
+    const photos = result.photos;
+    if (e?.shiftKey && anchorRef.current != null) {
+      const [a, b] = anchorRef.current <= i ? [anchorRef.current, i] : [i, anchorRef.current];
+      setSelectedIds((s) => {
+        const n = new Set(s);
+        for (let k = a; k <= b; k++) if (photos[k]) n.add(photos[k].id);
+        return n;
+      });
+    } else {
+      const p = photos[i];
+      if (p) setSelectedIds((s) => {
+        const n = new Set(s); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n;
+      });
+      anchorRef.current = i;
+    }
+  }, [result.photos]);
 
   const loadMore = useCallback(() => {
     if (loading || result.photos.length >= result.total) return;
@@ -258,7 +277,7 @@ export default function App() {
                   people={people}
                   places={allPlaces}
                   onSelectAll={selectAll}
-                  onClear={() => setSelectedIds(new Set())}
+                  onClear={() => { setSelectedIds(new Set()); anchorRef.current = null; }}
                   onApplied={refresh}
                 />
               )}
@@ -270,7 +289,7 @@ export default function App() {
                 onLoadMore={loadMore}
                 selectable={admin}
                 selectedIds={selectedIds}
-                onToggleSelect={toggleSelect}
+                onSelect={onSelect}
               />
             </>
           ) : (
