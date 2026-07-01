@@ -166,8 +166,21 @@ class User(Base):
     # at invite. When set, the People tree roots from this person ("Self" = them);
     # when null, the viewer sees the canonical Steve-rooted tree with no "Self".
     person_id: Mapped[str | None] = mapped_column(ForeignKey("person.id"), nullable=True)
+    theme: Mapped[str] = mapped_column(String, default="system")  # light|dark|system (per-user UI pref)
     invited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class UsageEvent(Base):
+    """Lightweight usage log — who viewed/downloaded what, for the admin stats panel.
+    Deliberately minimal; Cloudflare handles login/traffic analytics separately."""
+    __tablename__ = "usage_event"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_email: Mapped[str | None] = mapped_column(String, nullable=True)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)  # view|download|search
+    target: Mapped[str | None] = mapped_column(String, nullable=True)  # photo source_file, filter summary, …
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 class Contribution(Base):

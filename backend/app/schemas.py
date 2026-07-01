@@ -149,6 +149,39 @@ class MeOut(BaseModel):
     role: str                       # admin | contributor | viewer
     person_id: str | None           # linked tree person (per-viewer rooting)
     display_name: str | None
+    theme: str = "system"           # light | dark | system (per-user UI pref)
+
+
+class MePatch(BaseModel):
+    """Self-service viewer preferences (any role)."""
+    theme: str | None = None        # light | dark | system
+
+
+class CaptionReq(BaseModel):
+    caption: str | None = None
+
+
+class RepresentativeReq(BaseModel):
+    photo_id: int | None = None     # null clears it
+
+
+class UsageReq(BaseModel):
+    event_type: str                 # view | download | search
+    target: str | None = None
+
+
+class UsageStat(BaseModel):
+    key: str
+    label: str
+    count: int
+
+
+class UsageStats(BaseModel):
+    total_views: int
+    total_downloads: int
+    top_photos: list[UsageStat]
+    active_users: list[UsageStat]
+    recent: list[str]
 
 
 class UserOut(BaseModel):

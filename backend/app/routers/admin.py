@@ -24,10 +24,10 @@ from app.geocoding import geocode
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
-    BulkEventReq, BulkPersonReq, BulkPlaceReq,
+    BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
     EventCreate, EventMerge, EventOut, EventRename,
-    PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RotateReq,
-    UserCreate, UserOut, UserUpdate,
+    PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RepresentativeReq, RotateReq,
+    UsageStat, UsageStats, UserCreate, UserOut, UserUpdate,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -415,6 +415,58 @@ def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
     return {"rotated": deg, "source_file": p.source_file}
 
 
+@router.post("/photos/{photo_id}/caption")
+def edit_caption(photo_id: int, body: CaptionReq, db: Session = Depends(get_db),
+                 user: m.User = Depends(require_contributor)):
+    """Edit a photo's caption (SPEC §10.7). Contributor-level, undoable."""
+    p = db.get(m.Photo, photo_id)
+    if p is None:
+        raise HTTPException(404, "photo not found")
+    old = p.caption
+    p.caption = (body.caption or "").strip() or None
+    _log(db, user, "photo:caption", old, p.caption, photo_id=p.id,
+         inverse={"op": "photo_caption", "photo_id": p.id, "caption": old})
+    db.commit()
+    return {"caption": p.caption}
+
+
+@router.post("/people/{person_id}/representative")
+def set_representative(person_id: str, body: RepresentativeReq, db: Session = Depends(get_db),
+                       user: m.User = Depends(require_admin)):
+    """Set (or clear) a person's representative photo — their filter thumbnail (SPEC §9)."""
+    person = db.get(m.Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+    if body.photo_id is not None and db.get(m.Photo, body.photo_id) is None:
+        raise HTTPException(404, "photo not found")
+    old = person.representative_photo_id
+    person.representative_photo_id = body.photo_id
+    _log(db, user, "person:representative", str(old or ""), str(body.photo_id or ""),
+         inverse={"op": "person_representative", "person_id": person.id, "photo_id": old})
+    db.commit()
+    return {"person_id": person.id, "representative_photo_id": body.photo_id}
+
+
+@router.get("/usage/stats", response_model=UsageStats)
+def usage_stats(db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
+    """Admin usage panel: view/download totals, most-viewed photos, active users."""
+    U = m.UsageEvent
+    total_views = db.query(U).filter(U.event_type == "view").count()
+    total_downloads = db.query(U).filter(U.event_type == "download").count()
+    top = (db.query(U.target, func.count(U.id)).filter(U.event_type == "view", U.target.isnot(None))
+           .group_by(U.target).order_by(func.count(U.id).desc()).limit(10).all())
+    top_photos = [UsageStat(key=t or "", label=t or "—", count=c) for t, c in top]
+    active = (db.query(U.user_email, func.count(U.id))
+              .group_by(U.user_email).order_by(func.count(U.id).desc()).limit(15).all())
+    active_users = [UsageStat(key=e or "", label=e or "(unknown)", count=c) for e, c in active]
+    recent_rows = db.query(U).order_by(U.id.desc()).limit(20).all()
+    recent = [f"{(r.created_at.strftime('%m-%d %H:%M') if r.created_at else '')} · "
+              f"{r.user_email or '?'} · {r.event_type} · {r.target or ''}".strip()
+              for r in recent_rows]
+    return UsageStats(total_views=total_views, total_downloads=total_downloads,
+                      top_photos=top_photos, active_users=active_users, recent=recent)
+
+
 # ---------- undo ----------
 def _latest_undoable(db: Session) -> m.Contribution | None:
     return (db.query(m.Contribution)
@@ -504,6 +556,14 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         p = db.get(m.Photo, inv["photo_id"])
         if p and inv["degrees"] in (90, 180, 270):
             _rotate_file(p, inv["degrees"])
+    elif op == "photo_caption":
+        p = db.get(m.Photo, inv["photo_id"])
+        if p:
+            p.caption = inv["caption"]
+    elif op == "person_representative":
+        person = db.get(m.Person, inv["person_id"])
+        if person:
+            person.representative_photo_id = inv["photo_id"]
     else:
         raise HTTPException(400, f"don't know how to undo: {op}")
 

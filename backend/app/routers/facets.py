@@ -10,16 +10,45 @@ from app import models as m
 from app.auth import current_user
 from app.database import get_db
 from app.family import derive_relationships
-from app.schemas import EventOut, MagazineOut, MeOut, PersonOut, PlaceOut
+from app.schemas import (
+    EventOut, MagazineOut, MeOut, MePatch, PersonOut, PlaceOut, UsageReq,
+)
 
 router = APIRouter(prefix="/api", tags=["facets"])
+
+_THEMES = {"light", "dark", "system"}
+
+
+def _me(user: m.User) -> MeOut:
+    return MeOut(email=user.email, role=user.role, person_id=user.person_id,
+                 display_name=user.display_name, theme=user.theme or "system")
 
 
 @router.get("/me", response_model=MeOut)
 def whoami(user: m.User = Depends(current_user)):
     """The current viewer + role — the frontend gates its admin/contributor UI on this."""
-    return MeOut(email=user.email, role=user.role,
-                 person_id=user.person_id, display_name=user.display_name)
+    return _me(user)
+
+
+@router.patch("/me", response_model=MeOut)
+def update_me(body: MePatch, db: Session = Depends(get_db), user: m.User = Depends(current_user)):
+    """Self-service viewer preferences (theme). Any role."""
+    if body.theme is not None:
+        if body.theme not in _THEMES:
+            from fastapi import HTTPException
+            raise HTTPException(400, "theme must be light|dark|system")
+        user.theme = body.theme
+        db.commit()
+    return _me(user)
+
+
+@router.post("/usage")
+def log_usage(body: UsageReq, db: Session = Depends(get_db), user: m.User = Depends(current_user)):
+    """Lightweight usage beacon (fire-and-forget) for the admin stats panel."""
+    db.add(m.UsageEvent(user_email=user.email, event_type=body.event_type[:32],
+                        target=(body.target or "")[:200] or None))
+    db.commit()
+    return {"ok": True}
 
 # Stable display order for relationship groups in the People rail.
 REL_ORDER = ["Self", "Parent", "Sibling", "Child", "Grandparent",

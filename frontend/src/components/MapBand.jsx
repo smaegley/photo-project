@@ -52,7 +52,11 @@ export default function MapBand({ places, selectedPlaces, bbox, pinned, onToggle
   useEffect(() => {
     if (!map.current) return;
     markers.current.forEach((m) => m.remove());
-    markers.current = places.map((pl) => {
+    markers.current = places
+      // a selected region-level place is shown as a shaded state outline, so drop
+      // its centroid pin to avoid the redundant pin-in-the-middle-of-the-shading
+      .filter((pl) => !(pl.precision === "region" && selectedPlaces.includes(pl.id)))
+      .map((pl) => {
       const el = document.createElement("div");
       el.className = "map-pin" + (selectedPlaces.includes(pl.id) ? " sel" : "");
       el.title = `${pl.name} · ${pl.photo_count}`;

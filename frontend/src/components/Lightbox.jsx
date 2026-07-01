@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 
 export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
-                                  admin = false, events = [], people = [], places = [], magazines = [], onChanged }) {
+                                  admin = false, isAdmin = false, events = [], people = [], places = [], magazines = [], onChanged }) {
   const [detail, setDetail] = useState(null);
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
+  const [captionDraft, setCaptionDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -13,12 +14,12 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const dragRef = useRef(null);
   const photo = photos[index];
 
-  const reload = () => api.photo(photo.id).then(setDetail);
+  const reload = () => api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); });
 
   useEffect(() => {
     setDetail(null);
     setZoom(1); setPan({ x: 0, y: 0 }); // reset view per photo
-    api.photo(photo.id).then(setDetail);
+    api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); });
     if (index >= photos.length - 3) onLoadMore();
   }, [photo.id]); // eslint-disable-line
 
@@ -57,6 +58,11 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   // rotate persists on disk + regenerates the thumb; reload() then returns a
   // fresh mtime-versioned image_url so the new orientation shows immediately.
   const rotate = (deg) => edit(() => api.rotatePhoto(photo.id, deg));
+  const saveCaption = () => {
+    if (!detail || captionDraft.trim() === (detail.caption || "")) return;
+    edit(() => api.editCaption(photo.id, captionDraft.trim() || null));
+  };
+  const repOf = (personId) => people.find((pp) => pp.id === personId)?.representative_photo_id;
 
   const eventIdByName = Object.fromEntries(events.map((e) => [e.name, e.id]));
   // Lightbox shows the sized display derivative (originals can be 24MP); download
@@ -67,7 +73,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const rollCards = roll?.card_image_paths || [];
 
   return (
-    <div className="lightbox" onClick={close}>
+    <div className={`lightbox ${showNotes ? "" : "notes-hidden"}`} onClick={close}>
       <button className="lb-close" onClick={close}>✕</button>
       {index > 0 && (
         <button className="lb-nav left" onClick={(e) => { e.stopPropagation(); prev(); }}>‹</button>
@@ -101,7 +107,12 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
         </button>
         {showNotes && detail && (
           <div className="lb-notes-body">
-            <h3>{detail.caption || "—"}</h3>
+            {admin ? (
+              <textarea className="lb-caption-edit" value={captionDraft} placeholder="Add a caption…"
+                        disabled={busy} onChange={(e) => setCaptionDraft(e.target.value)} onBlur={saveCaption} />
+            ) : (
+              <h3>{detail.caption || "—"}</h3>
+            )}
             <div className="lb-meta">
               {detail.date_raw && <div><label>Date</label><span>{detail.date_raw}</span></div>}
               {detail.magazine_id && (
@@ -135,6 +146,9 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                 {detail.people.map((p) => (
                   <span key={p.person_id} className={`chip ${p.uncertain ? "uncertain" : ""}`}>
                     {p.name}{p.uncertain ? "?" : ""}
+                    {isAdmin && <button className={`chip-rep ${repOf(p.person_id) === photo.id ? "on" : ""}`}
+                      disabled={busy} title="Set this photo as their thumbnail"
+                      onClick={() => edit(() => api.setRepresentative(p.person_id, photo.id))}>★</button>}
                     {admin && <button className="chip-x" disabled={busy}
                       onClick={() => edit(() => api.bulkPerson([photo.id], p.person_id, "remove"))}>×</button>}
                   </span>
@@ -195,7 +209,8 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
             )}
 
             {detail.notes && <p className="lb-dadnotes">{detail.notes}</p>}
-            <a className="lb-download" href={downloadSrc} download>⬇ Download</a>
+            <a className="lb-download" href={downloadSrc} download
+               onClick={() => api.logUsage("download", photo.source_file)}>⬇ Download</a>
           </div>
         )}
       </aside>

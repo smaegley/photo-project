@@ -240,10 +240,17 @@ Frontend gates by role (hide Manage-events/places, Undo, pin editor for non-admi
 - **Index cards = 64** (32 rolls × 2), not 65: `Mag10_card_extra.jpg` was a duplicate of `Mag10_card_2.jpg` (removed). Steve cleaned all 64 (rotate/crop/white-balance) on his Mac; originals archived at `library/index_cards_original_raw/`.
 
 ### 10.7 Open / next (post-freeze)
-- **Deploy:** Docker Compose + Caddy + Cloudflare Access on LXC 207; invite flow (per-viewer rooting §10.2); two-tier admin enforcement (§10.5); SQLite backups (migraine `infra/` pattern).
-- **GitHub push pending** Steve's auth on the VM (`gh` not installed; commit ready on `main`, remote set).
-- **UX polish pass** (Places/Map) — deliberately batched for later (Steve's call): region pin-vs-shading redundancy, narrow lightbox notes panel for roll cards, un-pinned places absent from the rail's place filter.
-- **Smaller:** caption editing in lightbox; light/dark toggle; person `representative_photo_id` picker UI.
+- **Deploy:** ✅ done — live on LXC 209 behind Cloudflare Tunnel + Access (`infra/DEPLOY.md`).
+- **GitHub push:** ✅ done (`origin/main`).
+- **UX polish pass** — ✅ mostly done (§10.8): region pin-vs-shading redundancy ✅, un-pinned places in the rail filter ✅, caption editing ✅, person `representative_photo_id` picker ✅, light/dark ✅. **Still open (minor):** the roll-card scan in the lightbox notes panel is narrow (340px) — a wider/lightbox view of Dad's card would read better.
+
+### 10.8 UI polish + dark mode + usage tracking (built 2026-07-01, branch `ui-polish`)
+Batch after a screenshot UI/UX review (all P1/P2 + the two features):
+- **P1 fixes:** lightbox right-nav arrow now returns to the edge when the notes panel is collapsed (`.lightbox.notes-hidden`); the filter rail is hidden in Rolls view (it only applies to the gallery); the admin vocabulary/users/usage/undo buttons are consolidated into one **"Manage ▾" dropdown** (header was over-crowded).
+- **P2:** inline **caption editing** in the lightbox (admin; `POST /photos/{id}/caption`, undoable); **representative-photo** picker (a ★ on each tagged person chip; `POST /people/{id}/representative`, admin, undoable); a top **loading bar** on the gallery; the Places filter now lists **all** places incl. un-pinned (was mappable-only); the map **suppresses a region place's centroid pin when it's selected/shaded**.
+- **Dark mode** (§7 open item, resolved): per-user `user.theme` (`light|dark|system`, migration `e4f5a6b7c8d9`) via `GET/PATCH /api/me`; a ☾/☀ header toggle; `styles.css` fully tokenized with a `[data-theme="dark"]` palette + `color-scheme`. Default `system`.
+- **Usage tracking** (hybrid, Steve's choice): a minimal `usage_event` table + fire-and-forget `POST /api/usage` beacon (views on lightbox-open, downloads, debounced searches) + an admin **Usage** panel (`GET /api/admin/usage/stats`: view/download totals, most-viewed photos, active users, recent activity). Login/traffic analytics stay in **Cloudflare** (Zero Trust Access logs + Web Analytics) — the in-app log only covers what CF can't see inside the SPA.
+- **Color note:** the visible blue/magenta casts on many slides are **source data** (degraded 1962 film, best-effort corrected in Lightroom) — verified not an app/color-management bug (originals carry a correct sRGB profile). Not app work.
 
 ---
 

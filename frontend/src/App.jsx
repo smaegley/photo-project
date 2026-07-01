@@ -11,6 +11,7 @@ import AdminBar from "./components/AdminBar";
 import EventsAdmin from "./components/EventsAdmin";
 import PlacesAdmin from "./components/PlacesAdmin";
 import UsersAdmin from "./components/UsersAdmin";
+import UsageAdmin from "./components/UsageAdmin";
 
 export const YEAR_MIN = 1962;
 export const YEAR_MAX = 1976;
@@ -44,11 +45,16 @@ export default function App() {
   const canEdit = role === "admin" || role === "contributor";
   const isAdmin = role === "admin";
 
+  // theme (per-user setting, SPEC §7): raw pref light|dark|system + resolved bool
+  const [theme, setTheme] = useState("system");
+  const [dark, setDark] = useState(false);
+
   // admin / bulk-editing (SPEC §3.5)
   const [admin, setAdmin] = useState(false);
   const [showEvents, setShowEvents] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
+  const [showUsage, setShowUsage] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [undoInfo, setUndoInfo] = useState({ available: false });
 
@@ -68,7 +74,8 @@ export default function App() {
   const activeRoll = sel.magazineId ? magazines.find((m) => m.id === sel.magazineId) : null;
 
   useEffect(() => {
-    api.me().then((me) => setRole(me.role)).catch(() => setRole("viewer"));
+    api.me().then((me) => { setRole(me.role); setTheme(me.theme || "system"); })
+      .catch(() => setRole("viewer"));
     api.people().then(setPeople);
     api.events().then(setEvents);
     api.events(false).then(setAllEvents);
@@ -81,6 +88,41 @@ export default function App() {
   useEffect(() => {
     if (admin && isAdmin) api.undoPeek().then(setUndoInfo);
   }, [admin, isAdmin]);
+
+  // apply theme to <html data-theme>; resolve "system" via the OS preference
+  useEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const apply = () => {
+      const d = theme === "system" ? mq.matches : theme === "dark";
+      setDark(d);
+      document.documentElement.dataset.theme = d ? "dark" : "light";
+    };
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    const next = dark ? "light" : "dark";
+    setTheme(next);
+    api.updateMe({ theme: next }).catch(() => {});
+  }, [dark]);
+
+  // usage beacon: log a "search" once filters settle (debounced; SPEC hybrid tracking)
+  useEffect(() => {
+    if (!hasFilters) return;
+    const t = setTimeout(() => {
+      const parts = [];
+      if (sel.people.length) parts.push(`people:${sel.people.length}`);
+      if (sel.events.length) parts.push(`events:${sel.events.length}`);
+      if (sel.places.length) parts.push(`places:${sel.places.length}`);
+      if (sel.bbox) parts.push("map");
+      if (sel.magazineId) parts.push(`roll:${sel.magazineId}`);
+      if (years[0] !== YEAR_MIN || years[1] !== YEAR_MAX) parts.push(`${years[0]}-${years[1]}`);
+      api.logUsage("search", parts.join(" "));
+    }, 1500);
+    return () => clearTimeout(t);
+  }, [filters, hasFilters]); // eslint-disable-line
 
   // refetch page 1 whenever filters change
   useEffect(() => {
@@ -161,8 +203,11 @@ export default function App() {
         onManageEvents={() => setShowEvents(true)}
         onManagePlaces={() => setShowPlaces(true)}
         onManageUsers={() => setShowUsers(true)}
+        onShowUsage={() => setShowUsage(true)}
         undoInfo={undoInfo}
         onUndo={onUndo}
+        dark={dark}
+        onToggleTheme={toggleTheme}
       />
 
       <DateSlider years={years} onChange={setYears} />
@@ -180,18 +225,21 @@ export default function App() {
         />
       )}
 
-      <div className="body">
-        <FilterRail
-          people={people}
-          events={events}
-          places={places}
-          peopleCounts={result.people_counts}
-          eventCounts={result.event_counts}
-          sel={sel}
-          onToggle={toggle}
-          onReset={reset}
-          hasFilters={hasFilters}
-        />
+      <div className={`body ${view === "gallery" ? "" : "no-rail"}`}>
+        {/* The filter rail only applies to the gallery — hide it in Rolls view */}
+        {view === "gallery" && (
+          <FilterRail
+            people={people}
+            events={events}
+            places={allPlaces}
+            peopleCounts={result.people_counts}
+            eventCounts={result.event_counts}
+            sel={sel}
+            onToggle={toggle}
+            onReset={reset}
+            hasFilters={hasFilters}
+          />
+        )}
         <main className="gallery-pane">
           {view === "gallery" ? (
             <>
@@ -218,7 +266,7 @@ export default function App() {
                 photos={result.photos}
                 total={result.total}
                 loading={loading}
-                onOpen={setLightboxIdx}
+                onOpen={(i) => { setLightboxIdx(i); const p = result.photos[i]; if (p) api.logUsage("view", p.source_file); }}
                 onLoadMore={loadMore}
                 selectable={admin}
                 selectedIds={selectedIds}
@@ -242,6 +290,7 @@ export default function App() {
           onNav={(i) => setLightboxIdx(i)}
           onLoadMore={loadMore}
           admin={admin}
+          isAdmin={isAdmin}
           events={allEvents}
           people={people}
           places={allPlaces}
@@ -268,6 +317,10 @@ export default function App() {
 
       {showUsers && (
         <UsersAdmin onClose={() => setShowUsers(false)} />
+      )}
+
+      {showUsage && (
+        <UsageAdmin onClose={() => setShowUsage(false)} />
       )}
     </div>
   );

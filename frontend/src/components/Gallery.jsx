@@ -19,6 +19,8 @@ export default function Gallery({ photos, total, loading, onOpen, onLoadMore,
   }
 
   return (
+    <>
+      {loading && <div className="gallery-loading" />}
     <div className="gallery-scroll">
       <div className="grid">
         {photos.map((p, i) => {
@@ -43,5 +45,6 @@ export default function Gallery({ photos, total, loading, onOpen, onLoadMore,
         {loading ? "Loading…" : photos.length < total ? "Scroll for more" : `${total.toLocaleString()} photos`}
       </div>
     </div>
+    </>
   );
 }

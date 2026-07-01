@@ -46,6 +46,11 @@ export const api = {
     get(`/api/places${mappableOnly ? "?mappable_only=true" : ""}`),
   magazines: () => get("/api/magazines"),
   me: () => get("/api/me"),
+  updateMe: (body) => send("PATCH", "/api/me", body),
+  logUsage: (event_type, target) =>
+    // fire-and-forget beacon; never let tracking break the UI
+    fetch("/api/usage", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event_type, target }) }).catch(() => {}),
 
   // ---- admin (SPEC §3.5) ----
   createEvent: (name) => send("POST", "/api/admin/events", { name }),
@@ -63,6 +68,10 @@ export const api = {
   mergePlace: (id, intoId) => send("POST", `/api/admin/places/${id}/merge`, { into_id: intoId }),
   deletePlace: (id) => send("DELETE", `/api/admin/places/${id}`),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
+  editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
+  setRepresentative: (personId, photoId) =>
+    send("POST", `/api/admin/people/${personId}/representative`, { photo_id: photoId }),
+  usageStats: () => get("/api/admin/usage/stats"),
   geocode: (q) => get(`/api/admin/geocode?q=${encodeURIComponent(q)}`),
   undo: () => send("POST", "/api/admin/undo"),
   undoPeek: () => get("/api/admin/undo/peek"),
