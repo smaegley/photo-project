@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
-**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`); admin/curation layer + undo + map editor done. **§10 is the source of truth where it refines §§3–9.** **§11** is the agreed (not-yet-built) design for ingesting non-slide photos. Remaining v1: UX polish (§10.7).
-**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28
+**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then (§10.8–10.10, all on `main` @ `3691ac1`): UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** (People face grid, LR-region crops, manual crop editor) + infra (deploy pre-warm, refresh-dev-from-prod). **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); digital/scan ingest (Slice C) is next. Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -248,7 +248,7 @@ Frontend gates by role (hide Manage-events/places, Undo, pin editor for non-admi
 Batch after a screenshot UI/UX review (all P1/P2 + the two features):
 - **P1 fixes:** lightbox right-nav arrow now returns to the edge when the notes panel is collapsed (`.lightbox.notes-hidden`); the filter rail is hidden in Rolls view (it only applies to the gallery); the admin vocabulary/users/usage/undo buttons are consolidated into one **"Manage ▾" dropdown** (header was over-crowded).
 - **P2:** inline **caption editing** in the lightbox (admin; `POST /photos/{id}/caption`, undoable); **representative-photo** picker (a ★ on each tagged person chip; `POST /people/{id}/representative`, admin, undoable); a top **loading bar** on the gallery; the Places filter now lists **all** places incl. un-pinned (was mappable-only); the map **suppresses a region place's centroid pin when it's selected/shaded**.
-- **Dark mode** (§7 open item, resolved): per-user `user.theme` (`light|dark|system`, migration `e4f5a6b7c8d9`) via `GET/PATCH /api/me`; a ☾/☀ header toggle; `styles.css` fully tokenized with a `[data-theme="dark"]` palette + `color-scheme`. Default `system`.
+- **Dark mode** (§7 open item, resolved): per-user `user.theme` (`light|dark|system`, migration `e4f5a6b7c8d9`) via `GET/PATCH /api/me`; a ☾/☀ header toggle; `styles.css` fully tokenized with a `[data-theme="dark"]` palette + `color-scheme`. Default `system`. **Dark map:** the MapLibre OSM raster canvas is inverted via CSS filter in dark mode (`invert(1) hue-rotate(180deg)`) — keeps OSM's strong line/label contrast (CARTO's dark basemap was too faint); markers/controls are DOM siblings of the canvas so they stay correct, and the control buttons are theme-tokenized.
 - **Usage tracking** (hybrid, Steve's choice): a minimal `usage_event` table + fire-and-forget `POST /api/usage` beacon (views on lightbox-open, downloads, debounced searches) + an admin **Usage** panel (`GET /api/admin/usage/stats`: view/download totals, most-viewed photos, active users, recent activity). Login/traffic analytics stay in **Cloudflare** (Zero Trust Access logs + Web Analytics) — the in-app log only covers what CF can't see inside the SPA.
 - **Color note:** the visible blue/magenta casts on many slides are **source data** (degraded 1962 film, best-effort corrected in Lightroom) — verified not an app/color-management bug (originals carry a correct sRGB profile). Not app work.
 
@@ -256,6 +256,12 @@ Batch after a screenshot UI/UX review (all P1/P2 + the two features):
 - **Face thumbnails from Lightroom regions:** `mwg-rs` face regions carry the box (`stArea` x/y/w/h), not just the name — 644 named regions across all 20 tagged people. `apply_lr_people` now stores the box on `photo_person` (migration `f5a6b7c8d9e0`: `region_x/y/w/h`) and **auto-picks each person's representative** as their largest named region (15 people covered). `GET /api/faces/{person_id}` serves a padded square face crop (`derivatives.face_thumb`, cached in `library/faces/`); `PersonOut.face_url` exposes it. The lightbox ★ overrides the auto-pick (crops to that photo's region for the person). A **manual box-drag editor** (⛶ on the person chip → `FaceCropEditor`) sets the face crop for people ★'d on a photo with no Lightroom region (`POST /people/{id}/face-region`, undoable); the face URL/cache is versioned by rep-id + box so edits bust both caches (`derivatives.face_version`).
 - **People filter = face grid + list toggle:** circular face thumbnails (fallback initial) grouped by relationship, ▦/☰ toggle (remembered in `localStorage`), selected = accent ring.
 - **Usage panel detail:** most-viewed rows show a **thumbnail** (hover-enlarges); a **By user** table gives per-user view/download subtotals alongside the all-user totals.
+
+### 10.10 Infra / ops (2026-07-01)
+- **Derivative pre-warm:** `backend/app/derivatives.py` centralizes thumbnail/display/face generation behind one staleness predicate (missing / zero-byte / older-than-source) — used by the server (lazy self-heal) *and* the batch tool. `backend/app/prewarm.py` (`docker compose exec api python -m app.prewarm`, dev wrapper `importer/make_thumbnails.py`) pre-warms thumbnails + display **as a deploy step after a slide rsync**, so browsing never triggers the lazy regeneration burst. The mtime self-heal is preserved (a re-exported slide under the same name refreshes automatically). Lives in the backend package so it runs inside the prod container (`importer/` isn't in the image). See `infra/DEPLOY.md`.
+- **Refresh dev from prod** (`scripts/load-prod-snapshot.sh` + `infra/refresh-dev-from-prod.md`): now that prod is the source of truth, a **load-only** (prod→dev, never the reverse) script backs up the dev DB, integrity-checks a prod snapshot, swaps it in, and `alembic upgrade head`s (so a dev branch's newer migration applies on real data). Reuses prod's existing `infra/db-snapshot.sh` gz snapshots; prod pushes the snapshot to dev (LXC 209 → VM 201 works; the reverse isn't set up).
+- **Environments** (dev VM 201 `10.0.1.121` vs prod LXC 209 `10.0.1.178`, Cloudflare only on prod): documented in `README.md` "Environments" + `CLAUDE.md`. Dev backend **must** bind `--host 0.0.0.0`; app viewed at `http://10.0.1.121:5173/`.
+- **Deploy caveat:** the destructive `import_data.py` (wipe+rebuild) can't be re-run on a live DB (FK-blocked; photo ids regenerate). On prod, apply Lightroom people/faces with the non-destructive `apply_lr_people.py`, or **promote** the dev DB wholesale (Steve's chosen path — resets the prod `user` table, family re-added after).
 
 ---
 
@@ -273,7 +279,7 @@ Two new origins join `slide`:
 Slides stay `origin=slide`, untouched. **Magazines / the Rolls view stay slide-only** (§3.7) — new photos leave `magazine_id`/`slide_in_mag` null and live in the same flat stream (§3.2). All four facets, map, and timeline already handle them (`queries.py` is magazine-agnostic).
 
 ### 11.2 Authoring in Lightroom — the metadata contract
-Lightroom is the **authoring** tool (better at bulk metadata than the per-photo admin UI); the app is the **browser**. Steve populates as much as possible in LR, then exports; the importer reads a **fixed set of fields** via `exiftool`:
+Lightroom is the **authoring** tool (better at bulk metadata than the per-photo admin UI); the app is the **browser**. Steve populates as much as possible in LR, then exports; the importer reads a **fixed set of fields** via **Pillow** (XMP packet + EXIF — no `exiftool`/system dependency, confirmed working on the slides — §11.8):
 
 | Lightroom / file field | App target |
 |---|---|
@@ -309,7 +315,7 @@ Today `images.py` and `queries.py:_version` gate every image on `^Mag\d+_Slide\d
 
 ### 11.6 The non-destructive importer (`importer/import_photos.py`)
 A **separate** module from the slide `import_data.py`. It **never deletes or rebuilds the manifest-derived slide rows**.
-- **Input:** the exported files under `library/photos/` (+ `exiftool` JSON), or a **sidecar CSV exported from Lightroom**.
+- **Input:** the exported files under `library/photos/` (read with `importer/metadata.py`'s Pillow-based `extract()` — the same reader already used for slides), or a **sidecar CSV exported from Lightroom**.
 - **Resolution (reuse existing machinery):** keywords/face-regions → people (`person_alias`), → events (vocab, §3.6), → places (gazetteer, §3.4); GPS → reverse-geocode (`geocode.py` guards) → match/create a `place`; caption/title/date per §3.8.
 - **Idempotent + non-destructive:** upsert by storage key; re-running updates changed metadata, never duplicates, never touches slides.
 - **Review report** for unresolved keywords/people/places (like the slide importer), so the LR keyword hierarchy can be corrected and the run repeated.
