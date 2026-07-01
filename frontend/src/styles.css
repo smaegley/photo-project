@@ -405,3 +405,44 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .usage-row { display: flex; align-items: center; gap: 10px; padding: 5px 2px; font-size: 13px; border-bottom: 1px solid var(--border); }
 .usage-row .u-count { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
 .usage-recent { font-size: 12px; color: var(--muted); line-height: 1.7; font-variant-numeric: tabular-nums; }
+
+/* ---------- people filter: face grid + view toggle ---------- */
+.rail-head-action { margin-left: 8px; display: inline-flex; }
+.rail-viewtoggle { display: inline-flex; gap: 2px; background: var(--muted-bg); border-radius: 6px; padding: 2px; }
+.rail-viewtoggle button { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+.rail-viewtoggle button.on { background: var(--bg); color: var(--text); box-shadow: var(--shadow); }
+
+.people-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 2px 4px 6px; }
+.person-cell {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  border: 0; background: none; padding: 6px 2px; border-radius: 9px; cursor: pointer;
+}
+.person-cell:hover:not(:disabled) { background: var(--muted-bg); }
+.person-cell.active { background: var(--accent-soft); }
+.person-cell.disabled { opacity: .35; cursor: default; }
+.person-face {
+  width: 54px; height: 54px; border-radius: 50%; overflow: hidden;
+  background: var(--muted-bg); display: grid; place-items: center;
+  border: 2px solid transparent; transition: border-color .12s;
+}
+.person-cell.active .person-face { border-color: var(--accent); }
+.person-face img { width: 100%; height: 100%; object-fit: cover; }
+.person-face .initial { font-size: 20px; font-weight: 600; color: var(--muted); }
+.person-name { font-size: 11px; line-height: 1.15; text-align: center; color: var(--text);
+  max-width: 74px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.person-cell.active .person-name { color: var(--accent); font-weight: 600; }
+.person-count { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---------- usage: most-viewed thumbnails + per-user table ---------- */
+.usage-thumb { position: relative; flex-shrink: 0; }
+.usage-thumb img {
+  width: 34px; height: 34px; object-fit: cover; border-radius: 6px; display: block;
+  transition: transform .12s; transform-origin: left center;
+}
+.usage-thumb:hover img { transform: scale(4.2); z-index: 10; position: relative; box-shadow: 0 6px 24px rgba(0,0,0,.35); border-radius: 8px; }
+.usage-usertable { display: flex; flex-direction: column; }
+.usage-urow { display: grid; grid-template-columns: 1fr 60px 80px; align-items: center; gap: 8px;
+  padding: 5px 2px; font-size: 13px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.usage-urow span:not(.facet-label) { text-align: right; color: var(--muted); }
+.usage-uhead { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .03em; border-bottom: 1px solid var(--border); }
+.usage-uhead span { color: var(--muted) !important; }

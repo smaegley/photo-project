@@ -9,16 +9,6 @@ export default function UsageAdmin({ onClose }) {
   const [err, setErr] = useState(null);
   useEffect(() => { api.usageStats().then(setStats).catch((e) => setErr(e.message)); }, []);
 
-  const Rows = ({ items, empty }) =>
-    items.length === 0
-      ? <div className="usage-recent">{empty}</div>
-      : items.map((it) => (
-          <div key={it.key} className="usage-row">
-            <span className="facet-label">{it.label}</span>
-            <span className="u-count">{it.count.toLocaleString()}</span>
-          </div>
-        ));
-
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -36,12 +26,33 @@ export default function UsageAdmin({ onClose }) {
                 <div className="usage-total"><b>{stats.total_downloads.toLocaleString()}</b><span>downloads</span></div>
               </div>
               <div className="usage-sec">
-                <h3>Active users</h3>
-                <Rows items={stats.active_users} empty="No activity yet." />
+                <h3>By user</h3>
+                {stats.per_user.length === 0
+                  ? <div className="usage-recent">No activity yet.</div>
+                  : (
+                    <div className="usage-usertable">
+                      <div className="usage-urow usage-uhead"><span>User</span><span>Views</span><span>Downloads</span></div>
+                      {stats.per_user.map((u) => (
+                        <div key={u.email} className="usage-urow">
+                          <span className="facet-label">{u.email}</span>
+                          <span>{u.views.toLocaleString()}</span>
+                          <span>{u.downloads.toLocaleString()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
               </div>
               <div className="usage-sec">
                 <h3>Most-viewed photos</h3>
-                <Rows items={stats.top_photos} empty="No views yet." />
+                {stats.top_photos.length === 0
+                  ? <div className="usage-recent">No views yet.</div>
+                  : stats.top_photos.map((it) => (
+                      <div key={it.key} className="usage-row">
+                        <span className="usage-thumb"><img src={`/api/thumbnails/${it.key}`} alt="" loading="lazy" /></span>
+                        <span className="facet-label">{it.label}</span>
+                        <span className="u-count">{it.count.toLocaleString()}</span>
+                      </div>
+                    ))}
               </div>
               <div className="usage-sec">
                 <h3>Recent activity</h3>

@@ -27,7 +27,7 @@ from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
     EventCreate, EventMerge, EventOut, EventRename,
     PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RepresentativeReq, RotateReq,
-    UsageStat, UsageStats, UserCreate, UserOut, UserUpdate,
+    UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -454,17 +454,25 @@ def usage_stats(db: Session = Depends(get_db), _user: m.User = Depends(require_a
     total_views = db.query(U).filter(U.event_type == "view").count()
     total_downloads = db.query(U).filter(U.event_type == "download").count()
     top = (db.query(U.target, func.count(U.id)).filter(U.event_type == "view", U.target.isnot(None))
-           .group_by(U.target).order_by(func.count(U.id).desc()).limit(10).all())
+           .group_by(U.target).order_by(func.count(U.id).desc()).limit(12).all())
     top_photos = [UsageStat(key=t or "", label=t or "—", count=c) for t, c in top]
-    active = (db.query(U.user_email, func.count(U.id))
-              .group_by(U.user_email).order_by(func.count(U.id).desc()).limit(15).all())
-    active_users = [UsageStat(key=e or "", label=e or "(unknown)", count=c) for e, c in active]
+    # per-user views + downloads (subtotal by user, alongside the all-user totals)
+    rows = (db.query(U.user_email, U.event_type, func.count(U.id))
+            .group_by(U.user_email, U.event_type).all())
+    tally: dict[str, dict[str, int]] = {}
+    for email, etype, c in rows:
+        d = tally.setdefault(email or "(unknown)", {})
+        d[etype] = c
+    per_user = sorted(
+        (UsageUser(email=e, views=d.get("view", 0), downloads=d.get("download", 0))
+         for e, d in tally.items()),
+        key=lambda u: -(u.views + u.downloads))
     recent_rows = db.query(U).order_by(U.id.desc()).limit(20).all()
     recent = [f"{(r.created_at.strftime('%m-%d %H:%M') if r.created_at else '')} · "
               f"{r.user_email or '?'} · {r.event_type} · {r.target or ''}".strip()
               for r in recent_rows]
     return UsageStats(total_views=total_views, total_downloads=total_downloads,
-                      top_photos=top_photos, active_users=active_users, recent=recent)
+                      top_photos=top_photos, per_user=per_user, recent=recent)
 
 
 # ---------- undo ----------

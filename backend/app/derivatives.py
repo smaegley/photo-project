@@ -17,6 +17,7 @@ from PIL import Image
 
 THUMB_MAX = 400      # px, longest edge — gallery grid
 DISPLAY_MAX = 2560   # px, longest edge — lightbox (originals can be 24MP)
+FACE_MAX = 240       # px, square — People-filter face thumbnail
 
 
 def needs_regen(src: Path, cache: Path) -> bool:
@@ -42,3 +43,24 @@ def ensure(src: Path, cache: Path, max_edge: int) -> bool:
         return False
     generate(src, cache, max_edge)
     return True
+
+
+def face_thumb(src: Path, cache: Path, region, max_edge: int = FACE_MAX) -> None:
+    """Square face crop from a normalized region (cx,cy,w,h in 0..1), padded for
+    headroom. Falls back to a centre-square crop when there's no region."""
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(src) as im:
+        im = im.convert("RGB")
+        W, H = im.size
+        if region and all(v is not None for v in region):
+            cx, cy, w, h = region
+            side = max(min(w * 1.6, 1.0) * W, min(h * 1.9, 1.0) * H)  # pad + squarify
+            x, y = cx * W, cy * H
+            box = (x - side / 2, y - side / 2, x + side / 2, y + side / 2)
+        else:
+            s = min(W, H)
+            box = ((W - s) / 2, (H - s) / 2, (W + s) / 2, (H + s) / 2)
+        crop = im.crop((max(0, int(box[0])), max(0, int(box[1])),
+                        min(W, int(box[2])), min(H, int(box[3]))))
+        crop.thumbnail((max_edge, max_edge))
+        crop.save(cache, "JPEG", quality=85)

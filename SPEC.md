@@ -252,6 +252,11 @@ Batch after a screenshot UI/UX review (all P1/P2 + the two features):
 - **Usage tracking** (hybrid, Steve's choice): a minimal `usage_event` table + fire-and-forget `POST /api/usage` beacon (views on lightbox-open, downloads, debounced searches) + an admin **Usage** panel (`GET /api/admin/usage/stats`: view/download totals, most-viewed photos, active users, recent activity). Login/traffic analytics stay in **Cloudflare** (Zero Trust Access logs + Web Analytics) — the in-app log only covers what CF can't see inside the SPA.
 - **Color note:** the visible blue/magenta casts on many slides are **source data** (degraded 1962 film, best-effort corrected in Lightroom) — verified not an app/color-management bug (originals carry a correct sRGB profile). Not app work.
 
+### 10.9 Face thumbnails + People-filter grid + usage detail (2026-07-01, branch `ui-polish`)
+- **Face thumbnails from Lightroom regions:** `mwg-rs` face regions carry the box (`stArea` x/y/w/h), not just the name — 644 named regions across all 20 tagged people. `apply_lr_people` now stores the box on `photo_person` (migration `f5a6b7c8d9e0`: `region_x/y/w/h`) and **auto-picks each person's representative** as their largest named region (15 people covered). `GET /api/faces/{person_id}` serves a padded square face crop (`derivatives.face_thumb`, cached in `library/faces/`); `PersonOut.face_url` exposes it. The lightbox ★ overrides the auto-pick (crops to that photo's region for the person). *Deferred (minor):* a manual box-drag editor for people ★'d on a photo with no named region — all photo-appearing family are covered by auto-pick, so it's an edge case.
+- **People filter = face grid + list toggle:** circular face thumbnails (fallback initial) grouped by relationship, ▦/☰ toggle (remembered in `localStorage`), selected = accent ring.
+- **Usage panel detail:** most-viewed rows show a **thumbnail** (hover-enlarges); a **By user** table gives per-user view/download subtotals alongside the all-user totals.
+
 ---
 
 ## 11. Phase 2 — Library expansion: ingesting non-slide photos (design, 2026-06-28)

@@ -74,6 +74,31 @@ def people_from_xmp(xmp: str) -> set[str]:
     return {n for n in names if n}
 
 
+# Named face regions (mwg-rs): each carries the person's name + a normalized box
+# (center x/y, size w/h in 0..1). Lightroom leaves some regions unnamed — we skip
+# those. Used to auto-crop a face thumbnail for the person filter (SPEC §4.2).
+_REGION = re.compile(r"<rdf:li>\s*<rdf:Description(.*?)</rdf:Description>\s*</rdf:li>", re.S)
+_RNAME_EL = re.compile(r"<mwg-rs:Name>(.*?)</mwg-rs:Name>", re.S)
+_RNAME_ATTR = re.compile(r'mwg-rs:Name="([^"]*)"')
+_AREA = re.compile(r'stArea:([xywh])="([\d.]+)"')
+
+
+def face_regions_from_xmp(xmp: str) -> list[tuple[str, float, float, float, float]]:
+    """[(name, cx, cy, w, h)] for each NAMED face region (normalized 0..1)."""
+    out = []
+    for blk in _REGION.findall(xmp):
+        area = {k: float(v) for k, v in _AREA.findall(blk)}
+        if not {"x", "y", "w", "h"} <= area.keys():
+            continue
+        nm = _RNAME_EL.search(blk) or _RNAME_ATTR.search(blk)
+        if not nm:
+            continue
+        name = _clean(nm.group(1))
+        if name:
+            out.append((name, area["x"], area["y"], area["w"], area["h"]))
+    return out
+
+
 def keywords_from_xmp(xmp: str) -> list[str]:
     """dc:subject keywords (may include people + noise like a batch 'slides' tag)."""
     blk = _SUBJECT_BLOCK.search(xmp)

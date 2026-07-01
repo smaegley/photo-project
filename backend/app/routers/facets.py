@@ -73,8 +73,11 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
         n = counts.get(p.id, 0)
         if with_photos_only and n == 0:
             continue
-        out.append(PersonOut(id=p.id, name=p.canonical_name, relationship=rels.get(p.id),
-                             photo_count=n, representative_photo_id=p.representative_photo_id))
+        out.append(PersonOut(
+            id=p.id, name=p.canonical_name, relationship=rels.get(p.id),
+            photo_count=n, representative_photo_id=p.representative_photo_id,
+            face_url=(f"/api/faces/{p.id}?v={p.representative_photo_id}"
+                      if p.representative_photo_id else None)))
     out.sort(key=lambda x: (REL_ORDER.index(x.relationship) if x.relationship in REL_ORDER else 99,
                             -x.photo_count, x.name))
     return out

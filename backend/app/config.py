@@ -52,6 +52,11 @@ class Settings(BaseSettings):
         # Sized lightbox derivatives (SPEC §11.5) — originals can be 24MP.
         return Path(self.library_root) / "display"
 
+    @property
+    def faces_dir(self) -> Path:
+        # Cropped face thumbnails for the People filter (SPEC §4.2).
+        return Path(self.library_root) / "faces"
+
     model_config = {"extra": "ignore"}
 
 

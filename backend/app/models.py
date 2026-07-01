@@ -137,6 +137,12 @@ class PhotoPerson(Base):
     person_id: Mapped[str] = mapped_column(ForeignKey("person.id", ondelete="CASCADE"), primary_key=True)
     source: Mapped[str] = mapped_column(String, default=SOURCE_MANIFEST)
     uncertain: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Lightroom face-region box (normalized center + size, 0..1) for this person in
+    # this photo — used to crop a face thumbnail for the People filter (SPEC §4.2).
+    region_x: Mapped[float | None] = mapped_column(Float, nullable=True)
+    region_y: Mapped[float | None] = mapped_column(Float, nullable=True)
+    region_w: Mapped[float | None] = mapped_column(Float, nullable=True)
+    region_h: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     photo: Mapped["Photo"] = relationship(back_populates="people")
     person: Mapped["Person"] = relationship()

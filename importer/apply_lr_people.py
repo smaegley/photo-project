@@ -27,7 +27,7 @@ from app.database import SessionLocal  # noqa: E402
 from app import models as m  # noqa: E402
 from app.config import settings  # noqa: E402
 from importer.metadata import (  # noqa: E402
-    read_xmp, people_from_xmp, image_size, norm_text, canon_alias_key,
+    read_xmp, people_from_xmp, face_regions_from_xmp, image_size, norm_text, canon_alias_key,
 )
 
 PEOPLE_CANON = REPO_ROOT / "people_canon_firstpass.csv"
@@ -56,7 +56,10 @@ def run(dry_run: bool = False) -> None:
         valid_pids = {r[0] for r in db.query(m.Person.id).all()}
         unresolved: Counter = Counter()
         unresolved_samples: dict[str, str] = {}
-        added = scanned = no_file = sized = 0
+        added = scanned = no_file = sized = regions_set = 0
+
+        def resolve(name):
+            return {pid for pid in alias_map.get(norm_text(name), set()) if pid in valid_pids}
 
         for p in db.query(m.Photo).filter(m.Photo.origin == "slide").all():
             if not p.storage_path:
@@ -76,7 +79,7 @@ def run(dry_run: bool = False) -> None:
             if not xmp:
                 continue
             for name in people_from_xmp(xmp):
-                pids = {pid for pid in alias_map.get(norm_text(name), set()) if pid in valid_pids}
+                pids = resolve(name)
                 if not pids:
                     unresolved[name] += 1
                     unresolved_samples.setdefault(name, p.source_file)
@@ -92,7 +95,36 @@ def run(dry_run: bool = False) -> None:
                     existing.add((p.id, pid))
                     added += 1
 
+            # Named face-region boxes -> store on photo_person for face thumbnails.
+            for name, cx, cy, w, h in face_regions_from_xmp(xmp):
+                for pid in resolve(name):
+                    if dry_run:
+                        regions_set += 1
+                        continue
+                    pp = db.get(m.PhotoPerson, (p.id, pid))
+                    if pp is None:
+                        pp = m.PhotoPerson(photo_id=p.id, person_id=pid, source=m.SOURCE_HUMAN)
+                        db.add(pp)
+                        existing.add((p.id, pid))
+                    pp.region_x, pp.region_y, pp.region_w, pp.region_h = cx, cy, w, h
+                    regions_set += 1
+
         if not dry_run:
+            db.flush()
+
+        # Auto-pick a representative face for each person who doesn't have one:
+        # the largest named region wins (a manual ★ later overrides this).
+        picked = 0
+        if not dry_run:  # noqa: SIM102
+            for person in db.query(m.Person).filter(m.Person.representative_photo_id.is_(None)).all():
+                rows = (db.query(m.PhotoPerson)
+                        .filter(m.PhotoPerson.person_id == person.id,
+                                m.PhotoPerson.region_w.isnot(None)).all())
+                if not rows:
+                    continue
+                best = max(rows, key=lambda r: (r.region_w or 0) * (r.region_h or 0))
+                person.representative_photo_id = best.photo_id
+                picked += 1
             db.commit()
 
         REVIEW_DIR.mkdir(parents=True, exist_ok=True)
@@ -108,6 +140,8 @@ def run(dry_run: bool = False) -> None:
         print(f"missing files:        {no_file}")
         print(f"width/height set:     {sized}")
         print(f"LR tags {'to add' if dry_run else 'added'}: {added} (human-confirmed)")
+        print(f"face regions set:     {regions_set}")
+        print(f"representatives auto-picked: {picked}")
         print(f"unresolved LR names:  {len(unresolved)} distinct "
               f"({sum(unresolved.values())} instances) -> review/people_lr_unresolved.csv")
         for nm, c in unresolved.most_common():

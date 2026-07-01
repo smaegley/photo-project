@@ -62,6 +62,7 @@ class PersonOut(BaseModel):
     relationship: str | None          # derived relative to Steve (SPEC §3.3)
     photo_count: int
     representative_photo_id: int | None
+    face_url: str | None = None        # cropped face thumbnail (SPEC §4.2)
 
 
 class EventOut(BaseModel):
@@ -176,11 +177,17 @@ class UsageStat(BaseModel):
     count: int
 
 
+class UsageUser(BaseModel):
+    email: str
+    views: int
+    downloads: int
+
+
 class UsageStats(BaseModel):
     total_views: int
     total_downloads: int
-    top_photos: list[UsageStat]
-    active_users: list[UsageStat]
+    top_photos: list[UsageStat]     # most-viewed across all users
+    per_user: list[UsageUser]       # per-user view/download subtotals
     recent: list[str]
 
 

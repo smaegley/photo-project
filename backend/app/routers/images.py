@@ -72,6 +72,22 @@ def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(cur
     return FileResponse(cache, media_type="image/jpeg")
 
 
+@router.get("/faces/{person_id}")
+def face(person_id: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+    """Cropped face thumbnail for a person's representative photo (SPEC §4.2)."""
+    person = db.get(m.Person, person_id)
+    if not person or not person.representative_photo_id:
+        raise HTTPException(404, "no representative photo")
+    rep = db.get(m.Photo, person.representative_photo_id)
+    src = photo_file(rep)
+    pp = db.get(m.PhotoPerson, (rep.id, person_id))
+    region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
+    cache = settings.faces_dir / f"{_safe_key(person_id)}_{rep.id}.jpg"
+    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
+        derivatives.face_thumb(src, cache, region)
+    return FileResponse(cache, media_type="image/jpeg")
+
+
 @router.get("/cards/{filename}")
 def index_card(filename: str, _user=Depends(current_user)):
     if not CARD_RE.match(filename):
