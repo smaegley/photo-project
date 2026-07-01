@@ -448,7 +448,9 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .usage-uhead span { color: var(--muted) !important; }
 
 /* ---------- face crop editor ---------- */
-.facecrop-wrap { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; background: #000; }
+/* overflow:hidden clips the box's dimming "spotlight" to the image, so it doesn't
+   darken the footer / Save button (which sit outside the wrap) */
+.facecrop-wrap { position: relative; width: fit-content; max-width: 100%; margin: 0 auto; background: #000; overflow: hidden; }
 .facecrop-img { display: block; max-width: 100%; max-height: 62vh; cursor: crosshair; user-select: none; -webkit-user-drag: none; }
 .facecrop-box { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0,0,0,.45); pointer-events: none; border-radius: 2px; }
 .chip .chip-rep { font-size: 11px; }
