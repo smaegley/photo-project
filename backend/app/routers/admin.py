@@ -16,13 +16,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from PIL import Image
 
-from app import models as m
+from app import derivatives, models as m
 from app.auth import require_admin, require_contributor
 from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
-from app.routers.images import THUMB_MAX, photo_file, _safe_key
+from app.routers.images import photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq,
     EventCreate, EventMerge, EventOut, EventRename,
@@ -64,7 +64,7 @@ def _place_out(db: Session, pl: m.Place) -> PlaceOut:
 
 
 def _rotate_file(p: m.Photo, deg: int) -> None:
-    """Rotate the slide on disk (clockwise) and regenerate its thumbnail."""
+    """Rotate the slide on disk (clockwise) and refresh its cached derivatives."""
     rot_map = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180,
                270: Image.Transpose.ROTATE_90}
     path = photo_file(p)
@@ -72,11 +72,11 @@ def _rotate_file(p: m.Photo, deg: int) -> None:
         im.load()
         rot = im.transpose(rot_map[deg])
     rot.save(path, "JPEG", quality=95)
-    thumb = settings.thumbnails_dir / _safe_key(p.source_file)
-    thumb.parent.mkdir(parents=True, exist_ok=True)
-    t = rot.copy()
-    t.thumbnail((THUMB_MAX, THUMB_MAX))
-    t.convert("RGB").save(thumb, "JPEG", quality=82)
+    # Eagerly refresh both derivatives so the new orientation shows immediately
+    # (the server's mtime self-heal would also catch them on next request).
+    key = _safe_key(p.source_file)
+    derivatives.generate(path, settings.thumbnails_dir / key, derivatives.THUMB_MAX)
+    derivatives.generate(path, settings.display_dir / key, derivatives.DISPLAY_MAX)
 
 
 # ---------- event vocabulary ----------

@@ -42,7 +42,8 @@ cd backend && alembic upgrade head        # schema
 # (first build only — needs manifest + curation CSVs present:)
 #   python -m importer.import_data         # manifest + CSVs -> data/photos.db
 #   python -m importer.geocode             # fill gazetteer lat/lon
-#   python -m importer.make_thumbnails     # -> library/thumbnails/
+#   python -m importer.apply_lr_people     # merge Lightroom face-tags (SPEC §11.2)
+#   python -m importer.make_thumbnails     # pre-warm library/thumbnails/ + display/
 uvicorn app.main:app --host 0.0.0.0 --port 8077
 ```
 **Frontend** (http://localhost:5173, proxies `/api` -> 127.0.0.1:8077):

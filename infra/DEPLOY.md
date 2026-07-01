@@ -218,3 +218,22 @@ cd /opt/photo-project && git pull
 export DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0
 docker compose up -d --build      # migrations run on api start
 ```
+
+### After replacing/re-exporting slides (pre-warm derivatives)
+
+Whenever you rsync new/changed slide JPEGs into the library, **pre-warm the
+derivatives** so the gallery isn't regenerating thumbnails + display images lazily
+on first view (a burst on this 2-vCPU box). It's staleness-aware, so it only touches
+what changed:
+
+```bash
+# after the slides rsync + `docker compose up -d --build`
+docker compose exec api python -m app.prewarm          # regenerate stale only
+# docker compose exec api python -m app.prewarm --force  # if you need a full rebuild
+```
+
+If you cleared the caches (`rm -rf /mnt/photos/library/{thumbnails,display}/*`), the
+first `app.prewarm` run regenerates everything up front — do it before announcing the
+update so browsing stays fast. The server still self-heals anything missed (a slide
+re-exported under the same name refreshes automatically), so this is an optimization,
+not a correctness requirement.

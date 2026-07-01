@@ -9,10 +9,9 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from PIL import Image
 from sqlalchemy.orm import Session
 
-from app import models as m
+from app import derivatives, models as m
 from app.auth import current_user
 from app.config import settings
 from app.database import get_db
@@ -20,8 +19,6 @@ from app.database import get_db
 router = APIRouter(prefix="/api", tags=["images"])
 
 CARD_RE = re.compile(r"^Mag\d+_card_(?:\d+|extra)\.jpg$")
-THUMB_MAX = 400     # px, longest edge
-DISPLAY_MAX = 2560  # px, longest edge — lightbox derivative (originals can be 24MP)
 
 
 def photo_file(photo: "m.Photo | None") -> Path:
@@ -47,17 +44,6 @@ def _safe_key(source_file: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", source_file)
 
 
-def _derivative(src: Path, cache: Path, max_edge: int) -> None:
-    """(Re)generate a sized JPEG when it's missing or older than the source."""
-    if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
-        return
-    cache.parent.mkdir(parents=True, exist_ok=True)
-    with Image.open(src) as im:
-        im.draft("RGB", (max_edge, max_edge))
-        im.thumbnail((max_edge, max_edge))
-        im.convert("RGB").save(cache, "JPEG", quality=85)
-
-
 @router.get("/images/{source_file}")
 def full_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
     """The original (full-res) file — used for download."""
@@ -69,7 +55,7 @@ def display_image(source_file: str, db: Session = Depends(get_db), _user=Depends
     """Sized derivative for the lightbox (originals can be 24MP)."""
     src = _resolve(db, source_file)
     cache = settings.display_dir / _safe_key(source_file)
-    _derivative(src, cache, DISPLAY_MAX)
+    derivatives.ensure(src, cache, derivatives.DISPLAY_MAX)
     return FileResponse(cache, media_type="image/jpeg")
 
 
@@ -82,7 +68,7 @@ def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(cur
         if cache.exists():  # serve a stale thumb rather than 404 if the source is gone
             return FileResponse(cache, media_type="image/jpeg")
         raise
-    _derivative(src, cache, THUMB_MAX)
+    derivatives.ensure(src, cache, derivatives.THUMB_MAX)
     return FileResponse(cache, media_type="image/jpeg")
 
 
