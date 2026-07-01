@@ -101,10 +101,17 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .map { position: absolute; inset: 0; }
 .map-tools { position: absolute; top: 10px; left: 10px; z-index: 2; display: flex; gap: 6px; }
 .map-tools button {
-  border: 1px solid var(--border); background: rgba(255,255,255,.95); border-radius: 7px;
+  border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 7px;
   padding: 6px 10px; font-size: 12px; box-shadow: var(--shadow);
 }
 .map-tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+/* dark-mode the MapLibre zoom control + attribution to match the dark basemap */
+[data-theme="dark"] .maplibregl-ctrl-group { background: var(--field-bg); border: 1px solid var(--border); }
+[data-theme="dark"] .maplibregl-ctrl-group button + button { border-top-color: var(--border); }
+[data-theme="dark"] .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1) hue-rotate(180deg); }
+[data-theme="dark"] .maplibregl-ctrl-attrib { background: rgba(0,0,0,.5); }
+[data-theme="dark"] .maplibregl-ctrl-attrib a { color: var(--muted); }
 .map-pin {
   width: 12px; height: 12px; border-radius: 50%;
   background: var(--accent); border: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.2); cursor: pointer;
