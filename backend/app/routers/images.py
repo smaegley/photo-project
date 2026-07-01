@@ -1,59 +1,89 @@
-"""Image serving — full slides, thumbnails (generated on demand + cached), and
-index-card scans. All filenames are pattern-validated to prevent path traversal.
-Images are mounted read-only from /mnt/photos/library (SPEC §3.1/§8)."""
+"""Image serving — originals, sized display derivatives, thumbnails, and index
+cards. Photo files are located by **DB storage_path** (SPEC §11.5) and guarded to
+stay under the library root (path-traversal safe), so any origin — slide, scan, or
+digital — serves through the same path, not a filename regex. Derivatives are
+generated on demand and cached; they self-heal when the source is newer (e.g. a
+re-exported slide)."""
 import re
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from PIL import Image
+from sqlalchemy.orm import Session
 
+from app import models as m
 from app.auth import current_user
 from app.config import settings
+from app.database import get_db
 
 router = APIRouter(prefix="/api", tags=["images"])
 
-SLIDE_RE = re.compile(r"^Mag(\d+)_Slide(\d+)\.JPG$")
 CARD_RE = re.compile(r"^Mag\d+_card_(?:\d+|extra)\.jpg$")
-THUMB_MAX = 400  # px, longest edge
+THUMB_MAX = 400     # px, longest edge
+DISPLAY_MAX = 2560  # px, longest edge — lightbox derivative (originals can be 24MP)
 
 
-def _slide_path(source_file: str):
-    mm = SLIDE_RE.match(source_file)
-    if not mm:
-        raise HTTPException(400, "bad slide filename")
-    path = settings.slides_dir / f"Mag{int(mm.group(1))}" / source_file
+def photo_file(photo: "m.Photo | None") -> Path:
+    """Locate a photo's original file under the library root (path-guarded).
+    Works from the Photo row's storage_path — any origin, no filename regex."""
+    if not photo or not photo.storage_path:
+        raise HTTPException(404, "image not found")
+    root = Path(settings.library_root).resolve()
+    path = (root / photo.storage_path).resolve()
+    if root != path and root not in path.parents:
+        raise HTTPException(400, "bad storage path")
     if not path.exists():
         raise HTTPException(404, "image not found")
     return path
 
 
+def _resolve(db: Session, source_file: str) -> Path:
+    return photo_file(db.query(m.Photo).filter(m.Photo.source_file == source_file).first())
+
+
+def _safe_key(source_file: str) -> str:
+    """Filesystem-safe cache filename (slide names like Mag1_Slide01.JPG pass through)."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", source_file)
+
+
+def _derivative(src: Path, cache: Path, max_edge: int) -> None:
+    """(Re)generate a sized JPEG when it's missing or older than the source."""
+    if cache.exists() and cache.stat().st_mtime >= src.stat().st_mtime:
+        return
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with Image.open(src) as im:
+        im.draft("RGB", (max_edge, max_edge))
+        im.thumbnail((max_edge, max_edge))
+        im.convert("RGB").save(cache, "JPEG", quality=85)
+
+
 @router.get("/images/{source_file}")
-def full_image(source_file: str, _user=Depends(current_user)):
-    return FileResponse(_slide_path(source_file), media_type="image/jpeg")
+def full_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+    """The original (full-res) file — used for download."""
+    return FileResponse(_resolve(db, source_file), media_type="image/jpeg")
+
+
+@router.get("/display/{source_file}")
+def display_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+    """Sized derivative for the lightbox (originals can be 24MP)."""
+    src = _resolve(db, source_file)
+    cache = settings.display_dir / _safe_key(source_file)
+    _derivative(src, cache, DISPLAY_MAX)
+    return FileResponse(cache, media_type="image/jpeg")
 
 
 @router.get("/thumbnails/{source_file}")
-def thumbnail(source_file: str, _user=Depends(current_user)):
-    if not SLIDE_RE.match(source_file):
-        raise HTTPException(400, "bad slide filename")
-    thumb = settings.thumbnails_dir / source_file
-    # (Re)generate when missing OR when the slide is newer than its thumbnail, so a
-    # slide edited externally and dropped in under the same name (e.g. a Lightroom
-    # re-export) refreshes its thumbnail automatically. The batch pre-generates
-    # these; this is the fallback + self-heal. (Needs a writable library mount.)
+def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+    cache = settings.thumbnails_dir / _safe_key(source_file)
     try:
-        src = _slide_path(source_file)
+        src = _resolve(db, source_file)
     except HTTPException:
-        if thumb.exists():  # serve a stale thumb rather than 404 if the slide is gone
-            return FileResponse(thumb, media_type="image/jpeg")
+        if cache.exists():  # serve a stale thumb rather than 404 if the source is gone
+            return FileResponse(cache, media_type="image/jpeg")
         raise
-    if (not thumb.exists()) or thumb.stat().st_mtime < src.stat().st_mtime:
-        thumb.parent.mkdir(parents=True, exist_ok=True)
-        with Image.open(src) as im:
-            im.draft("RGB", (THUMB_MAX, THUMB_MAX))
-            im.thumbnail((THUMB_MAX, THUMB_MAX))
-            im.convert("RGB").save(thumb, "JPEG", quality=82)
-    return FileResponse(thumb, media_type="image/jpeg")
+    _derivative(src, cache, THUMB_MAX)
+    return FileResponse(cache, media_type="image/jpeg")
 
 
 @router.get("/cards/{filename}")

@@ -22,7 +22,7 @@ from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
-from app.routers.images import THUMB_MAX, _slide_path
+from app.routers.images import THUMB_MAX, photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq,
     EventCreate, EventMerge, EventOut, EventRename,
@@ -67,12 +67,12 @@ def _rotate_file(p: m.Photo, deg: int) -> None:
     """Rotate the slide on disk (clockwise) and regenerate its thumbnail."""
     rot_map = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180,
                270: Image.Transpose.ROTATE_90}
-    path = _slide_path(p.source_file)
+    path = photo_file(p)
     with Image.open(path) as im:
         im.load()
         rot = im.transpose(rot_map[deg])
     rot.save(path, "JPEG", quality=95)
-    thumb = settings.thumbnails_dir / p.source_file
+    thumb = settings.thumbnails_dir / _safe_key(p.source_file)
     thumb.parent.mkdir(parents=True, exist_ok=True)
     t = rot.copy()
     t.thumbnail((THUMB_MAX, THUMB_MAX))

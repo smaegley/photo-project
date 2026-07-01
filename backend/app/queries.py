@@ -16,18 +16,13 @@ from app import models as m
 from app.config import settings
 from app.schemas import FacetCount, PhotoOut, PersonTag
 
-_SLIDE_RE = re.compile(r"^Mag(\d+)_Slide")
-
-
-def _version(source_file: str) -> str:
-    """Cache-busting suffix tied to the file's mtime, so a rotated photo gets a
-    fresh URL and the browser stops serving the stale (pre-rotation) copy."""
-    mm = _SLIDE_RE.match(source_file)
-    if not mm:
+def _version(storage_path: str | None) -> str:
+    """Cache-busting suffix tied to the file's mtime, so a rotated/re-exported photo
+    gets a fresh URL and the browser stops serving the stale copy (SPEC §11.5)."""
+    if not storage_path:
         return ""
-    path = settings.slides_dir / f"Mag{int(mm.group(1))}" / source_file
     try:
-        return f"?v={int(path.stat().st_mtime)}"
+        return f"?v={int((settings.library_root_path / storage_path).stat().st_mtime)}"
     except OSError:
         return ""
 
@@ -71,17 +66,23 @@ def thumb_url(source_file: str) -> str:
     return f"/api/thumbnails/{source_file}"
 
 
+def display_url(source_file: str) -> str:
+    return f"/api/display/{source_file}"
+
+
 def image_url(source_file: str) -> str:
     return f"/api/images/{source_file}"
 
 
 def to_photo_out(p: m.Photo) -> PhotoOut:
-    v = _version(p.source_file)
+    v = _version(p.storage_path)
     return PhotoOut(
         id=p.id, source_file=p.source_file, caption=p.caption,
         date_raw=p.date_raw, date_start=p.date_start,
-        magazine_id=p.magazine_id, slide_in_mag=p.slide_in_mag,
-        thumb_url=thumb_url(p.source_file) + v, image_url=image_url(p.source_file) + v,
+        magazine_id=p.magazine_id, slide_in_mag=p.slide_in_mag, origin=p.origin,
+        thumb_url=thumb_url(p.source_file) + v,
+        display_url=display_url(p.source_file) + v,
+        image_url=image_url(p.source_file) + v,
     )
 
 

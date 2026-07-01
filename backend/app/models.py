@@ -98,7 +98,15 @@ class Photo(Base):
     __tablename__ = "photo"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_file: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # Mag<N>_Slide<NN>.JPG
+    source_file: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # slide: Mag<N>_Slide<NN>.JPG; else a stable key
+    # SPEC §11: non-slide ingest. origin drives serving path + UI; storage_path
+    # locates the file under library_root (DB lookup, not a filename regex).
+    origin: Mapped[str] = mapped_column(String, nullable=False, default="slide")   # slide|scan|digital
+    storage_path: Mapped[str | None] = mapped_column(String, nullable=True)        # relative to library_root
+    original_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject
     date_start: Mapped[datetime | None] = mapped_column(Date, nullable=True)

@@ -59,7 +59,10 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const rotate = (deg) => edit(() => api.rotatePhoto(photo.id, deg));
 
   const eventIdByName = Object.fromEntries(events.map((e) => [e.name, e.id]));
-  const src = detail?.image_url || photo.image_url;
+  // Lightbox shows the sized display derivative (originals can be 24MP); download
+  // still serves the full-resolution original.
+  const src = detail?.display_url || photo.display_url;
+  const downloadSrc = detail?.image_url || photo.image_url;
   const roll = detail && magazines.find((mg) => mg.id === detail.magazine_id);
   const rollCards = roll?.card_image_paths || [];
 
@@ -192,7 +195,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
             )}
 
             {detail.notes && <p className="lb-dadnotes">{detail.notes}</p>}
-            <a className="lb-download" href={src} download>⬇ Download</a>
+            <a className="lb-download" href={downloadSrc} download>⬇ Download</a>
           </div>
         )}
       </aside>

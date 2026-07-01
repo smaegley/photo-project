@@ -1,21 +1,69 @@
-# Family Slide Archive
+# Family Slide Archive — "Maegley Photo Album"
 
-Digitizing ~32 Airequipt magazines (**1140 slides**) of family 35mm slides (mid-1960s–mid-1970s) shot by Steve's father **Wendel**, each captioned from Wendel's handwritten index cards. Goal: a richly-tagged, browsable archive explorable by **people / place / date / event**, with map + timeline. Owner = **Steve** (steve@maegley.com), who appears in the photos.
+A private family archive of **1,140 digitized 35mm slides** (1962–1976) shot and
+hand-captioned by Steve's father **Wendel**, across 32 Airequipt magazines.
+Browsable by **people / place / date / event** with a map + timeline, plus an
+admin curation layer. Owner = **Steve** (steve@maegley.com), who appears in the
+photos.
 
-## Status
-- **Spec is NOT frozen.** Steve and Claude are building out the spec together *before* building any app. Do not start building until Steve says it's frozen.
-- A prior planning agent produced the handoff package; its prose docs were **patched, not rewritten**, and contradict each other. Trust the **manifest**, verify everything else.
+## Status — built, frozen, deployed
+- **App is built and live** at **`photos.maegley.org`** (do not treat this as a
+  greenfield project). Phase 1 complete: gallery, four facets, map, lightbox,
+  Rolls view, full admin/curation layer, undo, two-tier roles.
+- **Deployed** on **LXC 209** (`10.0.1.178`) — two Docker containers (FastAPI +
+  Caddy) behind a **Cloudflare Tunnel + Cloudflare Access**. See
+  `infra/DEPLOY.md` (all steps complete) and `infra/RESTORE.md` for backups.
+
+## Environments (dev vs prod) — full details in README "Environments"
+Two separate boxes, separate DBs. **Prod is behind Cloudflare; dev is NOT** — a dev
+box that's unreachable from the LAN is a *binding* problem, never a Cloudflare one.
+- **DEV = VM 201 (`10.0.1.121`)**, this repo. Run backend `uvicorn app.main:app
+  --host 0.0.0.0 --port 8077` (**must be `0.0.0.0`** or Steve's Mac can't reach it)
+  + frontend `npm run dev` (Vite `0.0.0.0:5173`, proxies `/api`→loopback backend).
+  Steve views it at **http://10.0.1.121:5173/**. Auth = dev-bypass (admin, no login).
+  Leave the servers running after testing.
+- **PROD = LXC 209 (`10.0.1.178`)**, `/opt/photo-project`, Docker Compose (api+caddy)
+  behind a `cloudflared` tunnel + Cloudflare Access at **https://photos.maegley.org**.
+  DB there is the source of truth. Deploy via `git pull && DOCKER_BUILDKIT=0
+  COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build` (see `infra/DEPLOY.md`).
+  **Never re-run the destructive `import_data.py` on prod** (SPEC §11.8) — use the
+  non-destructive `apply_lr_people.py` / `import_photos.py`.
+
+## Sources of truth (read these, in order)
+1. **`SPEC.md`** — §§1–9 are the **frozen v1.0** design; **§10 is the build log**
+   and is current where it refines §§1–9. This is the authoritative design doc.
+2. **`README.md`** — layout, dev run instructions, auth model.
+3. **`infra/DEPLOY.md`** — production topology + deploy/update steps.
+4. **Content data:** `/mnt/photos/photo-project/handoff/slide_manifest.csv`
+   (1,140 rows, 32 mags, all `status=ok`) is the source of truth for slide
+   metadata; the importer loads it + 3 curation CSVs into `data/photos.db`.
+
+> The prior planning agent's handoff prose at `/mnt/photos/photo-project/handoff/`
+> is superseded — kept for reference only. Trust the manifest, not that text.
+
+## Layout
+- `backend/` — FastAPI + SQLite + Alembic (routers: `facets`, `photos`,
+  `images`, `admin`; CF-Access JWT auth w/ dev bypass).
+- `frontend/` — React + Vite + MapLibre SPA.
+- `importer/` — manifest + curation CSVs → DB; build-time geocoder; thumbnails.
+- `infra/` — deploy, backup timer/scripts, restore docs.
+- **Not in git** (gitignored): `data/photos.db` (live source of truth, backed up
+  at the LXC level), the family-data CSVs (`*_firstpass.csv`,
+  `people_decisions.csv`), and the slide images under `/mnt/photos/library/`.
 
 ## Locations
-- `/mnt/photos` — dedicated 200GB drive for the photos.
-- `/mnt/photos/photo-project/` — handoff package from the prior agent (SPEC, manifest, scripts, QA, slide images).
-- `/home/aiuser/projects/photo-project/` — working project folder (this dir).
-- **Source of truth:** `/mnt/photos/photo-project/handoff/slide_manifest.csv` — 1140 rows, 32 mags, fully captioned, all `status=ok`. Columns: `seq, magazine, slide_in_mag, organized_file (Mag<N>_Slide<NN>.JPG), original_file, mag_subject, mag_date_span, card_caption, date_raw, people, place, validation, status, notes`.
-
-## Key decisions
-1. **No originals on this machine.** Archival masters stay on Steve's Mac. This build needs only **one final photo folder** named by **magazine + slide matching the manifest** (`Mag<N>_Slide<NN>`). The old `Originals/` concept and the entire `batch`/SD-reformat unique-key apparatus are dropped from the spec.
-2. The spec will be **rewritten together** from Steve's description — not by reconciling the old text. Steve is concurrently organizing the photos with another agent.
+- `/mnt/photos/library/{slides,index_cards,thumbnails}` — the image library
+  (mounted into the app; masters stay on Steve's Mac).
+- `/mnt/photos/photo-project/handoff/` — prior-agent handoff package (reference).
+- `/home/aiuser/projects/photo-project/` — this working repo.
 
 ## Working notes
-- When a **bulk photo copy/transfer is in progress**, do NOT audit folder/image completeness until Steve confirms it's done — partial/empty folders are expected mid-copy.
-- The package was authored on a Mac; macOS `._*` AppleDouble junk files are scattered through the folders (safe to delete once the copy finishes).
+- **No originals on this machine.** Archival masters stay on Steve's Mac; the app
+  works from the `library/` derivatives (it may rotate slides + regenerate
+  thumbnails — masters are safe).
+- macOS `._*` AppleDouble junk files may be scattered through the folders (safe to
+  delete).
+- Open / next items live in **SPEC §10.7** (UX polish on Places/Map, caption
+  editing, light/dark toggle, person thumbnail picker).
+</content>
+</invoke>

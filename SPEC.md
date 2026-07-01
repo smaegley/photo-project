@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
-**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** (current). Phase 1 built and running on dev VM; admin/curation layer + undo + map editor done. **§10 is the source of truth where it refines §§3–9.** Remaining: deploy + auth (invite flow, two-tier admin), then UX polish.
-**Version:** 1.0 frozen + §10 build log · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23
+**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`); admin/curation layer + undo + map editor done. **§10 is the source of truth where it refines §§3–9.** **§11** is the agreed (not-yet-built) design for ingesting non-slide photos. Remaining v1: UX polish (§10.7).
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -244,3 +244,78 @@ Frontend gates by role (hide Manage-events/places, Undo, pin editor for non-admi
 - **GitHub push pending** Steve's auth on the VM (`gh` not installed; commit ready on `main`, remote set).
 - **UX polish pass** (Places/Map) — deliberately batched for later (Steve's call): region pin-vs-shading redundancy, narrow lightbox notes panel for roll cards, un-pinned places absent from the rail's place filter.
 - **Smaller:** caption editing in lightbox; light/dark toggle; person `representative_photo_id` picker UI.
+
+---
+
+## 11. Phase 2 — Library expansion: ingesting non-slide photos (design, 2026-06-28)
+
+> **Status:** design agreed with Steve **2026-06-28**; **not yet built**. This realizes the §2 / §5 "library expansion" vision for two new photo origins beyond Wendel's slides. The data model (§3) was built for this — most of the work is **storage/serving generalization + a new ingest path**, not a schema redesign.
+>
+> **Decisions locked (2026-06-28):** (a) **masters stay in Lightroom on the Mac; the app serves exported derivatives** (mirrors the slide model — §3.1); (b) **Lightroom-first authoring** with a controlled keyword hierarchy; (c) a **separate, non-destructive importer** that never touches the manifest-derived slide rows.
+
+### 11.1 Scope & sources
+Two new origins join `slide`:
+- **`digital`** — born-digital photos carrying EXIF (capture date, often GPS) plus whatever Steve adds in Lightroom.
+- **`scan`** — scanned prints with little/no inherent metadata. **EXIF date = the scan date (unreliable)** — it must be set/approximated in Lightroom or left unknown; never let scan timestamps pollute the timeline (§4.1/§3.8).
+
+Slides stay `origin=slide`, untouched. **Magazines / the Rolls view stay slide-only** (§3.7) — new photos leave `magazine_id`/`slide_in_mag` null and live in the same flat stream (§3.2). All four facets, map, and timeline already handle them (`queries.py` is magazine-agnostic).
+
+### 11.2 Authoring in Lightroom — the metadata contract
+Lightroom is the **authoring** tool (better at bulk metadata than the per-photo admin UI); the app is the **browser**. Steve populates as much as possible in LR, then exports; the importer reads a **fixed set of fields** via `exiftool`:
+
+| Lightroom / file field | App target |
+|---|---|
+| Capture date (EXIF `DateTimeOriginal`) | `date_start` + `date_precision` (§3.8) |
+| GPS (EXIF lat/lon) | reverse-geocode → `place` (lat/lon) |
+| **People / face regions** (XMP `mwg-rs`) | `photo_person` — named, per-photo |
+| Caption/Description (IPTC / XMP `dc:description`) | `caption` |
+| Title | `original_subject` |
+| Keywords (XMP `dc:subject`, **hierarchical**) | events / places / people |
+| City / State / Country (IPTC location) | `place` |
+| Star rating / pick flag | favorites / `representative_photo_id` signal (later) |
+
+**The discipline that makes this work:** free-form keywords won't auto-resolve. Steve maintains a **controlled keyword hierarchy in Lightroom mapped to the existing vocabularies** — `People > <canon name>` (resolves via `person_alias`), `Events > <vocab term>` (§3.6), `Places > <gazetteer name>` (§3.4). The importer resolves them through the **same alias/gazetteer machinery as the slide importer**, and emits a review report for anything unresolved (as `import_data.py` does today). Lightroom keyword/preset conventions live in a maintained companion doc.
+
+**Provenance (§3.5):** LR human-entered tags import as **`human-confirmed`** (authoritative, like `manifest`); any future ML output is **`auto-suggested`**.
+
+### 11.3 Storage & identity (masters in Lightroom)
+- **Masters:** stay in the Lightroom catalog on the Mac — **not** on the serving LXC (consistent with §3.1's no-originals rule for slides).
+- **Derivatives:** a Lightroom **Export preset** → sized JPEG (long edge ~2560, sRGB, **metadata embedded**, **rotation baked into pixels** — the app ignores EXIF orientation, see §10.6 note) written into a new tree **`/mnt/photos/library/photos/<YYYY>/`** (alongside `slides/`, `index_cards/`, `thumbnails/`).
+- **Thumbnails + a display derivative** are generated by the serving/ingest layer (as for slides) — a high-res scan/photo should **not** be served full-res to the lightbox.
+- **Identity:** each asset gets a **stable storage key** (content hash or assigned slug) recorded as `Photo.source_file` (still globally unique); the original filename is kept separately. This avoids cross-folder filename collisions and decouples identity from the slide naming scheme.
+
+### 11.4 Schema additions (one new migration; backfill existing rows `origin=slide`)
+- `Photo.origin` — `slide | scan | digital` (default `slide`).
+- `Photo.storage_path` (or relative path) — **decouples serving from the hardcoded slide regex**; the row, not a filename pattern, tells the server where the file is.
+- Optional: `Photo.original_filename`, `imported_at`, `width`, `height`.
+
+### 11.5 Serving generalization (the current blocker — `images.py`)
+Today `images.py` and `queries.py:_version` gate every image on `^Mag\d+_Slide\d+\.JPG$` and reconstruct the path as `slides/Mag<N>/file`; any other filename 400s. Change:
+- Resolve the file path by **DB lookup** (`source_file` → `Photo.storage_path`), not regex path-reconstruction; path-guard by verifying the resolved path stays **under `library_root`** (containment check) instead of the slide regex.
+- Add a **display-derivative** path for large images (lightbox), keeping the existing thumbnail path.
+- Generalize `_version` to any file's mtime.
+
+### 11.6 The non-destructive importer (`importer/import_photos.py`)
+A **separate** module from the slide `import_data.py`. It **never deletes or rebuilds the manifest-derived slide rows**.
+- **Input:** the exported files under `library/photos/` (+ `exiftool` JSON), or a **sidecar CSV exported from Lightroom**.
+- **Resolution (reuse existing machinery):** keywords/face-regions → people (`person_alias`), → events (vocab, §3.6), → places (gazetteer, §3.4); GPS → reverse-geocode (`geocode.py` guards) → match/create a `place`; caption/title/date per §3.8.
+- **Idempotent + non-destructive:** upsert by storage key; re-running updates changed metadata, never duplicates, never touches slides.
+- **Review report** for unresolved keywords/people/places (like the slide importer), so the LR keyword hierarchy can be corrected and the run repeated.
+
+### 11.7 UI/UX for a mixed library
+- **Origin badge** in the lightbox; **Rolls view stays slide-only**.
+- A **"needs review / untagged"** filter to surface bare scans, curated via the **existing bulk-tag admin UI** (§10.3) — no new tagging UI required to start.
+- Facets / map / timeline already work for the new rows.
+
+### 11.8 Build plan (phased)
+- **Phase A — Decisions & conventions** ✅. Remaining: the **Lightroom keyword-hierarchy + export-preset companion doc**.
+- **Phase B — Storage & serving** ✅ (built 2026-07-01, branch `phase2-ingest`): migration `d3e4f5a6b7c8` adds `origin`/`storage_path`/`original_filename`/`width`/`height`/`imported_at` (existing rows backfilled `slide` + `slides/Mag<N>/<file>`); `images.py` now serves by **DB storage_path** with a containment guard (no slide regex) and generates a **display derivative** (`/api/display`, ≤2560px — originals are 24MP) + thumbnail on demand; `queries.py:_version` generalized; `PhotoOut.origin`/`display_url` added; lightbox uses the display derivative, download stays full-res. Shared metadata reader `importer/metadata.py` (Pillow XMP/EXIF — no exiftool). Still TODO for digital/scan: create `library/photos/<YYYY>/`.
+- **Phase C — Importer:**
+  - *Slide LR-people overlay* ✅ (built 2026-07-01): `importer/apply_lr_people.py` — **non-destructive, idempotent** overlay that reads each slide's Lightroom face-tags and union-merges them as `human-confirmed` (manifest wins on overlap); unresolved names → `review/people_lr_unresolved.csv`. On dev: 314 LR tags added over 687 manifest tags; the 4 non-family names correctly land in the review report. Four alias fixes added to `people_canon_firstpass.csv` (Mary Catherine/AJ "Mobius"→canon Moebius; Mary Francis→Mary Frances; Nick Hollenkamp Sr).
+  - *Digital/scan ingest* ☐: `import_photos.py` reading exported files (`metadata.extract`), reverse-geocode GPS, idempotent non-destructive upsert keyed by storage key.
+- **Phase D — UI** ☐: origin badge; "needs review/untagged" filter.
+- **Phase E — ML enrichment** ☐ (deferred, off-box, §5).
+
+> **⚠️ Prod-reimport caveat (learned 2026-07-01):** the destructive `import_data.py` (wipe + rebuild) **cannot be safely re-run on a populated DB** — `contribution.photo_id`, `person.representative_photo_id`, and `user.person_id` FK-block the wipe, and photo ids regenerate (breaking the contribution log's photo links). It is a **from-scratch builder only**. On the live LXC-209 DB, apply Lightroom people with the non-destructive `apply_lr_people.py` (and future photos with `import_photos.py`), **not** by re-running `import_data.py`. (`import_data` got a partial FK fix — it now clears `representative_photo_id` before wiping — but still isn't re-run-safe on a live DB.)
+
+**Out of scope for Phase 2 ingest:** face-recognition/ML at serve time (§5 is offline/deferred), per-line index-card hotspots (§3.7), mobile (§7).

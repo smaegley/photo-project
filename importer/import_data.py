@@ -20,7 +20,14 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app import models as m  # noqa: E402
+from app.config import settings  # noqa: E402
 from importer.dates import parse_date_raw  # noqa: E402
+from importer.metadata import image_size, norm_text as _norm, canon_alias_key  # noqa: E402
+
+
+def slide_rel_path(magazine: int, source_file: str) -> str:
+    """Library-relative path for a slide (SPEC §11.5 storage_path)."""
+    return f"slides/Mag{magazine}/{source_file}"
 
 # --- inputs ---
 MANIFEST = glob.glob("/mnt/photos/**/slide_manifest.csv", recursive=True)[0]
@@ -37,22 +44,7 @@ EVENT_VOCAB = [
 ]
 
 
-# ---------- normalization (SPEC §3.9 people rules) ----------
-def _norm(s: str) -> str:
-    s = s.strip().strip('"').strip().lower()
-    s = re.sub(r"[.“”]", "", s)
-    return re.sub(r"\s+", " ", s).strip()
-
-
-def canon_alias_key(a: str) -> str:
-    """Canon alias: a whole-parenthesized form is a GROUP label -> keep inner text."""
-    a = a.strip()
-    mm = re.fullmatch(r"\((.*)\)", a)
-    if mm:
-        a = mm.group(1)
-    return _norm(a)
-
-
+# ---------- normalization (SPEC §3.9 people rules; shared helpers in metadata.py) ----------
 def manifest_token_key(t: str) -> str:
     """Manifest people token: drop parenthetical role hints like (Dad)/(Mom)."""
     t = re.sub(r"\([^)]*\)", "", t)
@@ -173,7 +165,15 @@ def load_magazines(session, manifest_rows):
 
 # ---------- main pass ----------
 def wipe_content(session):
-    """Rebuild content tables; leave user/invite/contribution intact."""
+    """Rebuild content tables; leave user/invite/contribution intact.
+
+    Clear person.representative_photo_id (FK -> photo) first, otherwise deleting
+    photos trips the FK when an admin has chosen a person thumbnail. Persons are
+    recreated from the canon below, so this value isn't preserved across a reimport
+    anyway.
+    """
+    session.query(m.Person).update({m.Person.representative_photo_id: None})
+    session.flush()
     for model in (m.PhotoPerson, m.PhotoEvent, m.Photo, m.PersonAlias,
                   m.Person, m.Place, m.Event, m.Magazine):
         session.query(model).delete()
@@ -218,14 +218,23 @@ def run():
                 if place_id is None:
                     place_misses[r["place"].strip()] += 1
 
+            source_file = r["organized_file"].strip()
+            mag_num = int(r["magazine"])
+            rel_path = slide_rel_path(mag_num, source_file)
+            slide_path = Path(settings.library_root) / rel_path
+            w, h = image_size(slide_path) if slide_path.exists() else (None, None)
+
             photo = m.Photo(
-                source_file=r["organized_file"].strip(),
+                source_file=source_file,
+                origin="slide",
+                storage_path=rel_path,
+                width=w, height=h,
                 caption=r["card_caption"].strip() or None,
                 original_subject=r["mag_subject"].strip() or None,
                 date_start=ds, date_end=de, date_precision=prec,
                 date_raw=r["date_raw"].strip() or None,
                 place_id=place_id,
-                magazine_id=int(r["magazine"]),
+                magazine_id=mag_num,
                 slide_in_mag=int(r["slide_in_mag"]) if r["slide_in_mag"].strip() else None,
                 validation=r["validation"].strip() or None,
                 notes=r["notes"].strip() or None,
@@ -234,8 +243,8 @@ def run():
             session.flush()  # assign photo.id
 
             # --- people tags (SPEC §3.9) ---
+            tagged = set()  # (photo_id, person_id) already applied — dedupes across sources
             if r["people"].strip():
-                tagged = set()
                 for raw in r["people"].split(";"):
                     raw = raw.strip()
                     if not raw:
@@ -258,6 +267,8 @@ def run():
                         ))
                         tagged.add((photo.id, pid))
                         n_people_tags += 1
+            # Lightroom face-tag people are applied as a separate non-destructive
+            # overlay (importer/apply_lr_people.py, SPEC §11.6) — run after this.
 
             # --- event tags (SPEC §3.9) ---
             ev_row = events_by_file.get(r["organized_file"].strip())
@@ -304,7 +315,7 @@ def run():
         print(f"places:        {session.query(m.Place).count()}")
         print(f"  geocoded:    {session.query(m.Place).filter(m.Place.lat.isnot(None)).count()}")
         print(f"events vocab:  {session.query(m.Event).count()}")
-        print(f"photo_person:  {n_people_tags} tags "
+        print(f"photo_person:  {n_people_tags} manifest tags "
               f"({session.query(m.Photo).join(m.PhotoPerson).distinct().count()} photos)")
         print(f"photo_event:   {n_event_tags} tags "
               f"({session.query(m.Photo).join(m.PhotoEvent).distinct().count()} photos)")

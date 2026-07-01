@@ -20,7 +20,9 @@ class PhotoOut(BaseModel):
     date_start: date | None
     magazine_id: int | None
     slide_in_mag: int | None
+    origin: str                 # slide|scan|digital (SPEC §11)
     thumb_url: str
+    display_url: str            # sized derivative for the lightbox
     image_url: str
 
 

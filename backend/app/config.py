@@ -36,12 +36,21 @@ class Settings(BaseSettings):
         return Path(self.library_root) / "slides"
 
     @property
+    def library_root_path(self) -> Path:
+        return Path(self.library_root)
+
+    @property
     def cards_dir(self) -> Path:
         return Path(self.library_root) / "index_cards"
 
     @property
     def thumbnails_dir(self) -> Path:
         return Path(self.library_root) / "thumbnails"
+
+    @property
+    def display_dir(self) -> Path:
+        # Sized lightbox derivatives (SPEC §11.5) — originals can be 24MP.
+        return Path(self.library_root) / "display"
 
     model_config = {"extra": "ignore"}
 
