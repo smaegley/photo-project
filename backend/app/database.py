@@ -15,6 +15,10 @@ engine = create_engine(
 def _set_sqlite_pragma(dbapi_connection, _connection_record):
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    # Readers don't block the writer (and vice versa); required for multi-user use.
+    cursor.execute("PRAGMA journal_mode=WAL")
+    # Wait up to 5s on a locked DB instead of failing immediately.
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
 
 

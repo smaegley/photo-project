@@ -20,6 +20,10 @@ router = APIRouter(prefix="/api", tags=["images"])
 
 CARD_RE = re.compile(r"^Mag\d+_card_(?:\d+|extra)\.jpg$")
 
+# Image URLs are mtime-versioned (?v=), so a given URL's bytes never change.
+IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+DAY = {"Cache-Control": "public, max-age=86400"}
+
 
 def photo_file(photo: "m.Photo | None") -> Path:
     """Locate a photo's original file under the library root (path-guarded).
@@ -47,7 +51,7 @@ def _safe_key(source_file: str) -> str:
 @router.get("/images/{source_file}")
 def full_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
     """The original (full-res) file — used for download."""
-    return FileResponse(_resolve(db, source_file), media_type="image/jpeg")
+    return FileResponse(_resolve(db, source_file), media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/display/{source_file}")
@@ -56,7 +60,7 @@ def display_image(source_file: str, db: Session = Depends(get_db), _user=Depends
     src = _resolve(db, source_file)
     cache = settings.display_dir / _safe_key(source_file)
     derivatives.ensure(src, cache, derivatives.DISPLAY_MAX)
-    return FileResponse(cache, media_type="image/jpeg")
+    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/thumbnails/{source_file}")
@@ -66,10 +70,10 @@ def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(cur
         src = _resolve(db, source_file)
     except HTTPException:
         if cache.exists():  # serve a stale thumb rather than 404 if the source is gone
-            return FileResponse(cache, media_type="image/jpeg")
+            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
         raise
     derivatives.ensure(src, cache, derivatives.THUMB_MAX)
-    return FileResponse(cache, media_type="image/jpeg")
+    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/faces/{person_id}")
@@ -85,7 +89,7 @@ def face(person_id: str, db: Session = Depends(get_db), _user=Depends(current_us
     cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep.id, region)}.jpg"
     if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
         derivatives.face_thumb(src, cache, region)
-    return FileResponse(cache, media_type="image/jpeg")
+    return FileResponse(cache, media_type="image/jpeg", headers=DAY)
 
 
 @router.get("/cards/{filename}")
@@ -95,4 +99,4 @@ def index_card(filename: str, _user=Depends(current_user)):
     path = settings.cards_dir / filename
     if not path.exists():
         raise HTTPException(404, "card not found")
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(path, media_type="image/jpeg", headers=DAY)

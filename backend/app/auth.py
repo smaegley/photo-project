@@ -8,7 +8,7 @@ For local dev (no Access in front) the verification is bypassed and requests act
 as a configurable dev admin — controlled purely by whether CF Access settings
 are present, so production is never accidentally open.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Depends, Header, HTTPException, status
@@ -61,21 +61,34 @@ def current_user(
         email = _verify_access_jwt(cf_jwt)
         role = None  # role comes from our DB / default below
 
+    now = datetime.now(timezone.utc)
     user = db.query(m.User).filter(m.User.email == email).first()
     if user is None:
         user = m.User(email=email, role=role or "viewer",
                       person_id=settings.dev_user_person_id if dev else None,
-                      invited_at=datetime.now(timezone.utc))
+                      invited_at=now, last_login=now)
         db.add(user)
         db.commit()
         db.refresh(user)
-    else:
-        if role and user.role != role:  # dev override keeps the dev user as admin
-            user.role = role
-        if dev and not user.person_id:  # backfill the dev user's tree link
-            user.person_id = settings.dev_user_person_id
-    user.last_login = datetime.now(timezone.utc)
-    db.commit()
+        return user
+
+    dirty = False
+    if role and user.role != role:  # dev override keeps the dev user as admin
+        user.role = role
+        dirty = True
+    if dev and not user.person_id:  # backfill the dev user's tree link
+        user.person_id = settings.dev_user_person_id
+        dirty = True
+    # last_login is a coarse "seen" timestamp — refreshing it at most every
+    # 15 min keeps reads from turning into writes on every request.
+    last = user.last_login
+    if last is not None and last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)   # SQLite returns naive datetimes
+    if last is None or now - last > timedelta(minutes=15):
+        user.last_login = now
+        dirty = True
+    if dirty:
+        db.commit()
     return user
 
 

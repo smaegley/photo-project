@@ -58,6 +58,11 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [undoInfo, setUndoInfo] = useState({ available: false });
 
+  // Light-table selection anchor + a fetch-sequence token: seqRef is bumped per
+  // filter change so stale in-flight responses (loadMore/refresh) are dropped.
+  const anchorRef = useRef(null);
+  const seqRef = useRef(0);
+
   const filters = useMemo(() => {
     const full = years[0] === YEAR_MIN && years[1] === YEAR_MAX;
     return {
@@ -76,12 +81,12 @@ export default function App() {
   useEffect(() => {
     api.me().then((me) => { setRole(me.role); setTheme(me.theme || "system"); })
       .catch(() => setRole("viewer"));
-    api.people().then(setPeople);
-    api.events().then(setEvents);
-    api.events(false).then(setAllEvents);
-    api.places(true).then(setPlaces);
-    api.places(false).then(setAllPlaces);
-    api.magazines().then(setMagazines);
+    api.people().then(setPeople).catch(() => {});
+    api.events().then(setEvents).catch(() => {});
+    api.events(false).then(setAllEvents).catch(() => {});
+    api.places(true).then(setPlaces).catch(() => {});
+    api.places(false).then(setAllPlaces).catch(() => {});
+    api.magazines().then(setMagazines).catch(() => {});
   }, []);
 
   // keep the undo button in sync when admin mode turns on (undo is admin-only)
@@ -126,32 +131,37 @@ export default function App() {
 
   // refetch page 1 whenever filters change
   useEffect(() => {
-    let alive = true;
+    const seq = ++seqRef.current;
     setLoading(true);
     setPage(1);
     setSelectedIds(new Set()); // selection is tied to the current filter view
     anchorRef.current = null;
-    api.photos(filters, 1).then((r) => {
-      if (alive) { setResult(r); setLoading(false); }
-    });
-    return () => { alive = false; };
+    api.photos(filters, 1)
+      .then((r) => { if (seq === seqRef.current) setResult(r); })
+      .catch(() => {}) // keep the previous view; loading reset below re-enables retry-by-scroll
+      .finally(() => { if (seq === seqRef.current) setLoading(false); });
   }, [filters]);
 
   // after an admin edit: reload reference lists (counts change) and re-fetch the
   // pages currently loaded, so the gallery keeps its scroll extent instead of
   // snapping back to page 1 — only the edited photos change.
   const refresh = useCallback(async () => {
-    const [ev, aev, pl, apl, pe] = await Promise.all([
-      api.events(), api.events(false), api.places(true), api.places(false),
-      api.people()]);
-    setEvents(ev); setAllEvents(aev); setPlaces(pl); setAllPlaces(apl);
-    setPeople(pe);
-    if (isAdmin) api.undoPeek().then(setUndoInfo);
-    const pages = await Promise.all(
-      Array.from({ length: page }, (_, i) => api.photos(filters, i + 1))
-    );
-    setResult({ ...pages[0], photos: pages.flatMap((r) => r.photos) });
-    setSelectedIds(new Set());
+    const seq = seqRef.current;
+    try {
+      const [ev, aev, pl, apl, pe] = await Promise.all([
+        api.events(), api.events(false), api.places(true), api.places(false),
+        api.people()]);
+      if (seq !== seqRef.current) return;
+      setEvents(ev); setAllEvents(aev); setPlaces(pl); setAllPlaces(apl);
+      setPeople(pe);
+      if (isAdmin) api.undoPeek().then(setUndoInfo).catch(() => {});
+      const pages = await Promise.all(
+        Array.from({ length: page }, (_, i) => api.photos(filters, i + 1))
+      );
+      if (seq !== seqRef.current) return;
+      setResult({ ...pages[0], photos: pages.flatMap((r) => r.photos) });
+      setSelectedIds(new Set());
+    } catch { /* an admin edit already landed server-side; keep the current view */ }
   }, [filters, page, isAdmin]);
 
   const onUndo = useCallback(async () => {
@@ -166,7 +176,6 @@ export default function App() {
 
   // Light-table selection: plain checkbox / ⌘/Ctrl-click toggles one; Shift-click
   // selects the contiguous range from the last-clicked tile (the anchor).
-  const anchorRef = useRef(null);
   const onSelect = useCallback((i, e) => {
     const photos = result.photos;
     if (e?.shiftKey && anchorRef.current != null) {
@@ -187,13 +196,17 @@ export default function App() {
 
   const loadMore = useCallback(() => {
     if (loading || result.photos.length >= result.total) return;
+    const seq = seqRef.current;
     const next = page + 1;
     setLoading(true);
-    api.photos(filters, next).then((r) => {
-      setResult((prev) => ({ ...r, photos: [...prev.photos, ...r.photos] }));
-      setPage(next);
-      setLoading(false);
-    });
+    api.photos(filters, next)
+      .then((r) => {
+        if (seq !== seqRef.current) return; // filters changed mid-flight; drop it
+        setResult((prev) => ({ ...r, photos: [...prev.photos, ...r.photos] }));
+        setPage(next);
+      })
+      .catch(() => {})
+      .finally(() => { if (seq === seqRef.current) setLoading(false); });
   }, [filters, page, loading, result.photos.length, result.total]);
 
   const toggle = (key, id) =>
