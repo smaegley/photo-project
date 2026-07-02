@@ -101,26 +101,28 @@ def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
             .offset((page - 1) * page_size).limit(page_size).all())
     photos = [to_photo_out(p) for p in rows]
 
-    # people facet counts (people selection removed)
-    pq = _apply(db.query(m.Person.id, m.Person.canonical_name,
-                         func.count(func.distinct(m.PhotoPerson.photo_id)))
-                .join(m.PhotoPerson, m.Person.id == m.PhotoPerson.person_id)
-                .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id),
-                f, exclude="people").group_by(m.Person.id)
-    people_counts = [FacetCount(key=pid, label=name, count=c)
-                     for pid, name, c in pq.all()]
+    people_counts, event_counts = [], []
+    if page == 1:  # infinite-scroll pages reuse page 1's facet counts
+        # people facet counts (people selection removed)
+        pq = _apply(db.query(m.Person.id, m.Person.canonical_name,
+                             func.count(func.distinct(m.PhotoPerson.photo_id)))
+                    .join(m.PhotoPerson, m.Person.id == m.PhotoPerson.person_id)
+                    .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id),
+                    f, exclude="people").group_by(m.Person.id)
+        people_counts = [FacetCount(key=pid, label=name, count=c)
+                         for pid, name, c in pq.all()]
 
-    # event facet counts (events selection removed)
-    eq = _apply(db.query(m.Event.id, m.Event.name,
-                         func.count(func.distinct(m.PhotoEvent.photo_id)))
-                .join(m.PhotoEvent, m.Event.id == m.PhotoEvent.event_id)
-                .join(m.Photo, m.Photo.id == m.PhotoEvent.photo_id),
-                f, exclude="events").group_by(m.Event.id)
-    event_counts = [FacetCount(key=str(eid), label=name, count=c)
-                    for eid, name, c in eq.all()]
+        # event facet counts (events selection removed)
+        eq = _apply(db.query(m.Event.id, m.Event.name,
+                             func.count(func.distinct(m.PhotoEvent.photo_id)))
+                    .join(m.PhotoEvent, m.Event.id == m.PhotoEvent.event_id)
+                    .join(m.Photo, m.Photo.id == m.PhotoEvent.photo_id),
+                    f, exclude="events").group_by(m.Event.id)
+        event_counts = [FacetCount(key=str(eid), label=name, count=c)
+                        for eid, name, c in eq.all()]
 
-    people_counts.sort(key=lambda x: -x.count)
-    event_counts.sort(key=lambda x: -x.count)
+        people_counts.sort(key=lambda x: -x.count)
+        event_counts.sort(key=lambda x: -x.count)
     return total, photos, people_counts, event_counts
 
 

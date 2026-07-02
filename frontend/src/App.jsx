@@ -202,7 +202,9 @@ export default function App() {
     api.photos(filters, next)
       .then((r) => {
         if (seq !== seqRef.current) return; // filters changed mid-flight; drop it
-        setResult((prev) => ({ ...r, photos: [...prev.photos, ...r.photos] }));
+        // page>1 responses omit facet counts (backend Fix 7) — keep page 1's.
+        setResult((prev) => ({ ...r, photos: [...prev.photos, ...r.photos],
+          people_counts: prev.people_counts, event_counts: prev.event_counts }));
         setPage(next);
       })
       .catch(() => {})

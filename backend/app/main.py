@@ -1,5 +1,6 @@
 """Maegley Photo Album — FastAPI app (SPEC §6)."""
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,8 +8,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.routers import admin, facets, images, photos
 
+USAGE_RETENTION_DAYS = 180
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # created_at is stored naive-UTC, so compare against a naive cutoff
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=USAGE_RETENTION_DAYS)).replace(tzinfo=None)
+    from app.database import SessionLocal
+    from app import models as m
+    db = SessionLocal()
+    try:
+        n = (db.query(m.UsageEvent)
+             .filter(m.UsageEvent.created_at < cutoff)
+             .delete(synchronize_session=False))
+        db.commit()
+        if n:
+            print(f"[usage] pruned {n} events older than {USAGE_RETENTION_DAYS}d")
+    finally:
+        db.close()
+    yield
+
+
 app = FastAPI(title="Maegley Photo Album", version="1.0.0",
-              docs_url="/api/docs", redoc_url=None)
+              docs_url="/api/docs", redoc_url=None, lifespan=lifespan)
 
 # Dev convenience: the React dev server runs on another port. In production the
 # SPA is served by Caddy from the same origin, so this is harmless.

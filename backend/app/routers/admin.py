@@ -40,6 +40,17 @@ def _chunks(seq):
         yield seq[i:i + _CHUNK]
 
 
+def _check_photo_ids(db: Session, ids: list[int]) -> None:
+    """Reject unknown photo ids up front (a bad id would otherwise surface as a
+    500 FK IntegrityError from a bulk insert/update)."""
+    found: set[int] = set()
+    for ch in _chunks(ids):
+        found |= {r[0] for r in db.query(m.Photo.id).filter(m.Photo.id.in_(ch)).all()}
+    missing = set(ids) - found
+    if missing:
+        raise HTTPException(400, f"unknown photo ids: {sorted(missing)[:5]}")
+
+
 def _log(db: Session, user: m.User, field: str, old: str | None, new: str | None,
          photo_id: int | None = None, inverse: dict | None = None) -> None:
     db.add(m.Contribution(user_email=user.email, photo_id=photo_id, field=field,
@@ -176,18 +187,20 @@ def bulk_event(body: BulkEventReq, db: Session = Depends(get_db),
     ids = body.photo_ids
     if not ids:
         raise HTTPException(400, "no photos selected")
+    _check_photo_ids(db, ids)
 
     if body.op == "add":
-        existing = set()
+        existing: dict[int, m.PhotoEvent] = {}
         for ch in _chunks(ids):
-            existing |= {r[0] for r in db.query(m.PhotoEvent.photo_id).filter(
-                m.PhotoEvent.event_id == e.id, m.PhotoEvent.photo_id.in_(ch)).all()}
+            for pe in db.query(m.PhotoEvent).filter(
+                    m.PhotoEvent.event_id == e.id,
+                    m.PhotoEvent.photo_id.in_(ch)).all():
+                existing[pe.photo_id] = pe
         added, confirmed = [], []
         for pid in ids:
-            if pid in existing:
-                pe = db.query(m.PhotoEvent).filter(
-                    m.PhotoEvent.event_id == e.id, m.PhotoEvent.photo_id == pid).first()
-                if pe and pe.source != SOURCE_HUMAN:
+            pe = existing.get(pid)
+            if pe is not None:
+                if pe.source != SOURCE_HUMAN:
                     pe.source = SOURCE_HUMAN
                     confirmed.append(pid)
             else:
@@ -225,6 +238,7 @@ def bulk_person(body: BulkPersonReq, db: Session = Depends(get_db),
     ids = body.photo_ids
     if not ids:
         raise HTTPException(400, "no photos selected")
+    _check_photo_ids(db, ids)
 
     if body.op == "add":
         existing = set()
@@ -268,6 +282,7 @@ def bulk_place(body: BulkPlaceReq, db: Session = Depends(get_db),
     ids = body.photo_ids
     if not ids:
         raise HTTPException(400, "no photos selected")
+    _check_photo_ids(db, ids)
     name = None
     if body.place_id is not None:
         place = db.get(m.Place, body.place_id)

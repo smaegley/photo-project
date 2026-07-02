@@ -8,6 +8,7 @@ For local dev (no Access in front) the verification is bypassed and requests act
 as a configurable dev admin — controlled purely by whether CF Access settings
 are present, so production is never accidentally open.
 """
+import logging
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -17,6 +18,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app import models as m
+
+logger = logging.getLogger("app.auth")
 
 _jwk_client: jwt.PyJWKClient | None = None
 
@@ -37,8 +40,9 @@ def _verify_access_jwt(token: str) -> str:
             audience=settings.cf_access_aud,
         )
     except Exception as exc:  # noqa: BLE001
+        logger.warning("Access JWT rejected: %s", exc)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED,
-                            detail=f"Invalid Access token: {exc}")
+                            detail="Invalid Access token")
     email = claims.get("email")
     if not email:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="No email in token")

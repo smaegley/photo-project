@@ -2,7 +2,7 @@
 places (for the map), and magazines (rolls)."""
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -35,7 +35,6 @@ def update_me(body: MePatch, db: Session = Depends(get_db), user: m.User = Depen
     """Self-service viewer preferences (theme). Any role."""
     if body.theme is not None:
         if body.theme not in _THEMES:
-            from fastapi import HTTPException
             raise HTTPException(400, "theme must be light|dark|system")
         user.theme = body.theme
         db.commit()

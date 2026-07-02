@@ -27,17 +27,17 @@ export default function UsersAdmin({ onClose }) {
 
   async function run(label, fn) {
     setBusy(true); setMsg(null);
-    try { await fn(); await load(); setMsg(`✓ ${label}`); }
-    catch (e) { setMsg(`⚠ ${e.message}`); }
+    try { await fn(); await load(); setMsg(`✓ ${label}`); return true; }
+    catch (e) { setMsg(`⚠ ${e.message}`); return false; }
     finally { setBusy(false); }
   }
 
-  const invite = () => {
+  const invite = async () => {
     const e = email.trim().toLowerCase();
     if (!e) return;
-    run(`invited ${e}`, () =>
-      api.createUser({ email: e, role, person_id: personId || null }))
-      .then(() => { setEmail(""); setRole("viewer"); setPersonId(""); });
+    const ok = await run(`invited ${e}`, () =>
+      api.createUser({ email: e, role, person_id: personId || null }));
+    if (ok) { setEmail(""); setRole("viewer"); setPersonId(""); }
   };
   const changeRole = (u, r) => run(`${u.email} → ${r}`, () => api.updateUser(u.id, { role: r }));
   const changePerson = (u, pid) =>
