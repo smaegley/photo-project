@@ -109,12 +109,12 @@ class Photo(Base):
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject
-    date_start: Mapped[datetime | None] = mapped_column(Date, nullable=True)
+    date_start: Mapped[datetime | None] = mapped_column(Date, nullable=True, index=True)
     date_end: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     date_precision: Mapped[str | None] = mapped_column(String, nullable=True)      # day|month|season|year|approx
     date_raw: Mapped[str | None] = mapped_column(String, nullable=True)            # verbatim display label
-    place_id: Mapped[str | None] = mapped_column(ForeignKey("place.id"), nullable=True)
-    magazine_id: Mapped[int | None] = mapped_column(ForeignKey("magazine.id"), nullable=True)
+    place_id: Mapped[str | None] = mapped_column(ForeignKey("place.id"), nullable=True, index=True)
+    magazine_id: Mapped[int | None] = mapped_column(ForeignKey("magazine.id"), nullable=True, index=True)
     slide_in_mag: Mapped[int | None] = mapped_column(Integer, nullable=True)
     validation: Mapped[str | None] = mapped_column(String, nullable=True)          # match|uncertain
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -134,7 +134,7 @@ class PhotoPerson(Base):
     __tablename__ = "photo_person"
 
     photo_id: Mapped[int] = mapped_column(ForeignKey("photo.id", ondelete="CASCADE"), primary_key=True)
-    person_id: Mapped[str] = mapped_column(ForeignKey("person.id", ondelete="CASCADE"), primary_key=True)
+    person_id: Mapped[str] = mapped_column(ForeignKey("person.id", ondelete="CASCADE"), primary_key=True, index=True)
     source: Mapped[str] = mapped_column(String, default=SOURCE_MANIFEST)
     uncertain: Mapped[bool] = mapped_column(Boolean, default=False)
     # Lightroom face-region box (normalized center + size, 0..1) for this person in
@@ -153,7 +153,7 @@ class PhotoEvent(Base):
     __tablename__ = "photo_event"
 
     photo_id: Mapped[int] = mapped_column(ForeignKey("photo.id", ondelete="CASCADE"), primary_key=True)
-    event_id: Mapped[int] = mapped_column(ForeignKey("event.id", ondelete="CASCADE"), primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("event.id", ondelete="CASCADE"), primary_key=True, index=True)
     source: Mapped[str] = mapped_column(String, default=SOURCE_AUTO)
 
     photo: Mapped["Photo"] = relationship(back_populates="events")
@@ -195,7 +195,7 @@ class Contribution(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_email: Mapped[str | None] = mapped_column(String, nullable=True)
-    photo_id: Mapped[int | None] = mapped_column(ForeignKey("photo.id"), nullable=True)
+    photo_id: Mapped[int | None] = mapped_column(ForeignKey("photo.id"), nullable=True, index=True)
     field: Mapped[str] = mapped_column(String, nullable=False)
     old_value: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_value: Mapped[str | None] = mapped_column(Text, nullable=True)
