@@ -57,6 +57,11 @@ class Settings(BaseSettings):
         # Cropped face thumbnails for the People filter (SPEC §4.2).
         return Path(self.library_root) / "faces"
 
+    @property
+    def card_thumbs_dir(self) -> Path:
+        # Sized index-card derivatives for grid/panel views (full-res via /api/cards).
+        return Path(self.library_root) / "card_thumbs"
+
     model_config = {"extra": "ignore"}
 
 

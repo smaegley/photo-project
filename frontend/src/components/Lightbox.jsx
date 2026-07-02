@@ -205,7 +205,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                   <div className="lb-rollcards">
                     {rollCards.map((c) => (
                       <a key={c} href={`/api/cards/${c}`} target="_blank" rel="noreferrer" title="Open full size">
-                        <img className="lb-rollcard" src={`/api/cards/${c}`} alt={`Roll ${roll.id} index card`} loading="lazy" />
+                        <img className="lb-rollcard" src={`/api/card-thumbs/${c}`} alt={`Roll ${roll.id} index card`} loading="lazy" />
                       </a>
                     ))}
                   </div>

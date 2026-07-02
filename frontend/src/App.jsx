@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import Header from "./components/Header";
 import DateSlider from "./components/DateSlider";
 import FilterRail from "./components/FilterRail";
 import Gallery from "./components/Gallery";
 import Lightbox from "./components/Lightbox";
-import MapBand from "./components/MapBand";
+// maplibre is heavy (~1MB) and only needed when the map opens — load it on demand.
+const MapBand = lazy(() => import("./components/MapBand"));
 import RollsView from "./components/RollsView";
 import AdminBar from "./components/AdminBar";
 import EventsAdmin from "./components/EventsAdmin";
@@ -247,16 +248,18 @@ export default function App() {
       <DateSlider years={years} onChange={setYears} />
 
       {mapOpen && (
-        <MapBand
-          places={places}
-          selectedPlaces={sel.places}
-          bbox={sel.bbox}
-          pinned={mapPinned}
-          onTogglePin={() => setMapPinned((p) => !p)}
-          onClose={() => setMapOpen(false)}
-          onSelectPlace={(id) => toggle("places", id)}
-          onBbox={setBbox}
-        />
+        <Suspense fallback={<div className="mapband" />}>
+          <MapBand
+            places={places}
+            selectedPlaces={sel.places}
+            bbox={sel.bbox}
+            pinned={mapPinned}
+            onTogglePin={() => setMapPinned((p) => !p)}
+            onClose={() => setMapOpen(false)}
+            onSelectPlace={(id) => toggle("places", id)}
+            onBbox={setBbox}
+          />
+        </Suspense>
       )}
 
       <div className={`body ${view === "gallery" ? "" : "no-rail"}`}>

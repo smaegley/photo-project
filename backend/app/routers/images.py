@@ -100,3 +100,16 @@ def index_card(filename: str, _user=Depends(current_user)):
     if not path.exists():
         raise HTTPException(404, "card not found")
     return FileResponse(path, media_type="image/jpeg", headers=DAY)
+
+
+@router.get("/card-thumbs/{filename}")
+def index_card_thumb(filename: str, _user=Depends(current_user)):
+    """Sized card derivative for grid/panel views; /api/cards stays full-res."""
+    if not CARD_RE.match(filename):
+        raise HTTPException(400, "bad card filename")
+    src = settings.cards_dir / filename
+    if not src.exists():
+        raise HTTPException(404, "card not found")
+    cache = settings.card_thumbs_dir / filename
+    derivatives.ensure(src, cache, 640)
+    return FileResponse(cache, media_type="image/jpeg", headers=DAY)

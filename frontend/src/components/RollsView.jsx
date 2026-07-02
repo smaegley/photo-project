@@ -17,7 +17,7 @@ export default function RollsView({ magazines, onViewInGallery }) {
           <button key={m.id} className="roll-card" onClick={() => setRoll(m)}>
             <div className="roll-card-img">
               {m.card_image_paths[0] ? (
-                <img src={`/api/cards/${m.card_image_paths[0]}`} alt={`Roll ${m.id} index card`} loading="lazy" />
+                <img src={`/api/card-thumbs/${m.card_image_paths[0]}`} alt={`Roll ${m.id} index card`} loading="lazy" />
               ) : (
                 <div className="roll-card-blank">no card</div>
               )}

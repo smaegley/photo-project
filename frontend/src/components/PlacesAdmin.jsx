@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { api } from "../api";
-import PinEditor from "./PinEditor";
+// Pulls in maplibre — load it only when the pin editor opens.
+const PinEditor = lazy(() => import("./PinEditor"));
 
 const PRECISIONS = ["exact", "landmark", "city", "region", "unknown"];
 
@@ -117,7 +118,9 @@ export default function PlacesAdmin({ places, onClose, onChanged }) {
       </div>
     </div>
     {pinning && (
-      <PinEditor place={pinning} onClose={() => setPinning(null)} onSaved={onChanged} />
+      <Suspense fallback={null}>
+        <PinEditor place={pinning} onClose={() => setPinning(null)} onSaved={onChanged} />
+      </Suspense>
     )}
     </>
   );
