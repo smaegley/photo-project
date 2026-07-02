@@ -6,13 +6,18 @@ Browsable by **people / place / date / event** with a map + timeline, plus an
 admin curation layer. Owner = **Steve** (steve@maegley.com), who appears in the
 photos.
 
-## Status — built, frozen, deployed
+## Status — built, frozen, deployed, hardened
 - **App is built and live** at **`photos.maegley.org`** (do not treat this as a
   greenfield project). Phase 1 complete: gallery, four facets, map, lightbox,
   Rolls view, full admin/curation layer, undo, two-tier roles.
 - **Deployed** on **LXC 209** (`10.0.1.178`) — two Docker containers (FastAPI +
   Caddy) behind a **Cloudflare Tunnel + Cloudflare Access**. See
   `infra/DEPLOY.md` (all steps complete) and `infra/RESTORE.md` for backups.
+- **Pre-1.0 hardening done & deployed (2026-07-02, SPEC §10.11):** SQLite WAL +
+  `busy_timeout`, throttled `last_login`, image `Cache-Control`, the fixed
+  gallery infinite-scroll bug, facet indexes (migration `a6b7c8d9e0f1`), card
+  thumbnails, MapLibre code-split. **Phase 1 is closed out; ready for family
+  usability feedback.**
 
 ## Environments (dev vs prod) — full details in README "Environments"
 Two separate boxes, separate DBs. **Prod is behind Cloudflare; dev is NOT** — a dev
