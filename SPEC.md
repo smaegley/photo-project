@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
 **Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); digital/scan ingest (Slice C) is next. Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
-**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -271,6 +271,14 @@ A full-codebase review before inviting a second (non-Steve) user for usability f
 - **Correctness / robustness:** facet counts computed **page-1-only** (scroll pages reuse them); the **N+1** in bulk event-add replaced with one chunked fetch; the three bulk endpoints **reject unknown `photo_ids` with 400** (was a 500 FK error); JWT rejection now returns a **generic message** (detail logged server-side, not echoed to the client); **`usage_event` retention** (prune > 180 days at startup); the Users invite form **keeps its values on failure**.
 - **Polish:** **card thumbnails** (`/api/card-thumbs`, 640px — Rolls grid + lightbox panel load ~78 KB not ~3 MB; RollDetail keeps full-res for reading Wendel's hand); **MapLibre code-split** (lazy `MapBand`/`PinEditor` → main bundle **999 KB → 187 KB**, maplibre an 801 KB on-demand chunk); Caddy **`zstd`/`gzip`** compression.
 - **Deliberately not done:** a non-root API-container user — needs UID coordination with the LXC 209 host mounts (`./data`, the library LVM), so deferred to a deploy-time task with the Ops Agent.
+
+### 10.12 UX fixes + dev user switcher (2026-07-04, `main` @ `35abaa1`)
+Four changes made in preparation for inviting family members:
+
+- **Unlinked-viewer people list:** viewers with no `user.person_id` previously saw the People filter grouped by Steve's family relationships (Parent, Sibling, etc.) but with Steve himself absent — a confusing view. Fix: `facets.py` now returns `relationship=None` for all people when the viewer is unlinked; `FilterRail.jsx` renders them flat (sorted by photo count then name) with no group headers. Linked viewers are unaffected.
+- **Map pins filtered to current result:** the map always showed all 162 geocoded pins regardless of active filters. Fix: `run_query` now computes `place_counts` on page 1 (alongside `people_counts`/`event_counts`, places-selection excluded for facet consistency); `PhotoQueryResult` carries the new field; `App.jsx` derives `filteredPlaces` and passes it to `MapBand` in place of the static full list. Pins now reflect only the places present in the current filtered photo set.
+- **DateSlider hidden in Rolls view:** the date slider was always rendered even in Rolls view where it has no effect (the filter rail was already correctly hidden there). Wrapped in `{view === "gallery" && …}`.
+- **Dev user switcher:** in dev mode (no Cloudflare Access), the `👤` header menu now lists all registered users and lets you switch to any of them with one click — no config editing or server restart required. Implementation: `auth.py` reads a `dev_override` cookie and uses its email in place of `dev_user_email` (role taken from the DB, not forced to admin); `GET /api/dev/switch?email=xxx` sets the cookie + redirects to `/`; `GET /api/dev/users` returns the user list (both endpoints 404 in prod). `MeOut` gained `is_dev: bool` so the frontend can show the switcher vs. a real "Log out" link (prod only — logout redirects to the Cloudflare Access logout URL via `GET /api/logout`).
 
 ---
 
