@@ -101,7 +101,7 @@ def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
             .offset((page - 1) * page_size).limit(page_size).all())
     photos = [to_photo_out(p) for p in rows]
 
-    people_counts, event_counts = [], []
+    people_counts, event_counts, place_counts = [], [], []
     if page == 1:  # infinite-scroll pages reuse page 1's facet counts
         # people facet counts (people selection removed)
         pq = _apply(db.query(m.Person.id, m.Person.canonical_name,
@@ -121,9 +121,18 @@ def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
         event_counts = [FacetCount(key=str(eid), label=name, count=c)
                         for eid, name, c in eq.all()]
 
+        # place counts for the map (places selection removed, mappable only)
+        lq = _apply(db.query(m.Place.id, m.Place.canonical_name,
+                             func.count(func.distinct(m.Photo.id)))
+                    .join(m.Photo, m.Photo.place_id == m.Place.id)
+                    .filter(m.Place.lat.isnot(None), m.Place.lon.isnot(None)),
+                    f, exclude="places").group_by(m.Place.id)
+        place_counts = [FacetCount(key=str(plid), label=name, count=c)
+                        for plid, name, c in lq.all()]
+
         people_counts.sort(key=lambda x: -x.count)
         event_counts.sort(key=lambda x: -x.count)
-    return total, photos, people_counts, event_counts
+    return total, photos, people_counts, event_counts, place_counts
 
 
 def photo_people(db: Session, photo_id: int) -> list[PersonTag]:

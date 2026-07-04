@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Cookie, Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -52,12 +52,15 @@ def _verify_access_jwt(token: str) -> str:
 def current_user(
     db: Session = Depends(get_db),
     cf_jwt: str | None = Header(default=None, alias="Cf-Access-Jwt-Assertion"),
+    dev_override: str | None = Cookie(default=None),
 ) -> m.User:
     """Resolve the request to a User row (creating viewers on first sight)."""
     dev = not settings.cf_access_enabled
     if dev:
-        email = settings.dev_user_email
-        role = settings.dev_user_role
+        # dev_override cookie lets the dev switcher impersonate any registered user
+        # without editing config; ignored in prod where CF Access JWT governs all.
+        email = dev_override or settings.dev_user_email
+        role = settings.dev_user_role if not dev_override else None
     else:
         if not cf_jwt:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED,
@@ -80,7 +83,7 @@ def current_user(
     if role and user.role != role:  # dev override keeps the dev user as admin
         user.role = role
         dirty = True
-    if dev and not user.person_id:  # backfill the dev user's tree link
+    if dev and not dev_override and not user.person_id:  # backfill default dev user's tree link
         user.person_id = settings.dev_user_person_id
         dirty = True
     # last_login is a coarse "seen" timestamp — refreshing it at most every

@@ -375,6 +375,7 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
   border: 0; background: none; color: var(--text); padding: 8px 10px;
   border-radius: 7px; font-size: 13px;
 }
+a.menu-item { text-decoration: none; cursor: pointer; }
 .menu-item:hover:not(:disabled) { background: var(--muted-bg); }
 .menu-item:disabled { opacity: .45; cursor: default; }
 .menu-item.check::after { content: "✓"; margin-left: auto; color: var(--accent); }

@@ -3,11 +3,13 @@ places (for the map), and magazines (rolls)."""
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import derivatives, models as m
 from app.auth import current_user
+from app.config import settings
 from app.database import get_db
 from app.family import derive_relationships
 from app.schemas import (
@@ -21,13 +23,47 @@ _THEMES = {"light", "dark", "system"}
 
 def _me(user: m.User) -> MeOut:
     return MeOut(email=user.email, role=user.role, person_id=user.person_id,
-                 display_name=user.display_name, theme=user.theme or "system")
+                 display_name=user.display_name, theme=user.theme or "system",
+                 is_dev=not settings.cf_access_enabled)
 
 
 @router.get("/me", response_model=MeOut)
 def whoami(user: m.User = Depends(current_user)):
     """The current viewer + role — the frontend gates its admin/contributor UI on this."""
     return _me(user)
+
+
+@router.get("/logout")
+def logout():
+    """Redirect to Cloudflare Access logout in prod; back to root in dev (no-op)."""
+    if settings.cf_access_enabled:
+        return RedirectResponse(
+            url=f"https://{settings.cf_access_team_domain}/cdn-cgi/access/logout"
+        )
+    return RedirectResponse(url="/")
+
+
+@router.get("/dev/users")
+def dev_list_users(db: Session = Depends(get_db)):
+    """Dev-only: all registered users for the switcher UI. 404s in prod."""
+    if settings.cf_access_enabled:
+        raise HTTPException(404)
+    return [{"email": u.email, "display_name": u.display_name,
+             "person_id": u.person_id, "role": u.role}
+            for u in db.query(m.User).order_by(m.User.email).all()]
+
+
+@router.get("/dev/switch")
+def dev_switch(email: str = ""):
+    """Dev-only: set (or clear) the dev_override cookie and reload. 404s in prod."""
+    if settings.cf_access_enabled:
+        raise HTTPException(404)
+    r = RedirectResponse(url="/", status_code=302)
+    if email:
+        r.set_cookie("dev_override", email, max_age=30 * 86400, samesite="lax", path="/")
+    else:
+        r.delete_cookie("dev_override", path="/")
+    return r
 
 
 @router.patch("/me", response_model=MeOut)
@@ -63,7 +99,9 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
     if user.person_id:
         rels = derive_relationships(persons, root=user.person_id, mark_self=True)
     else:
-        rels = derive_relationships(persons, mark_self=False)
+        # Unlinked viewer has no place in the family tree — show everyone flat
+        # with no relationship labels rather than a Steve-rooted view that excludes Steve.
+        rels = {p.id: None for p in persons}
     counts = dict(db.query(m.PhotoPerson.person_id,
                            func.count(func.distinct(m.PhotoPerson.photo_id)))
                   .group_by(m.PhotoPerson.person_id).all())

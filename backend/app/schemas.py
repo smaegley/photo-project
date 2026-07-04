@@ -54,6 +54,7 @@ class PhotoQueryResult(BaseModel):
     # live per-facet counts for the current filter set (self-facet excluded)
     people_counts: list[FacetCount]
     event_counts: list[FacetCount]
+    place_counts: list[FacetCount]   # mappable places only; drives map pin filtering
 
 
 class PersonOut(BaseModel):
@@ -151,6 +152,7 @@ class MeOut(BaseModel):
     person_id: str | None           # linked tree person (per-viewer rooting)
     display_name: str | None
     theme: str = "system"           # light | dark | system (per-user UI pref)
+    is_dev: bool = False            # True when CF Access is absent (enables dev switcher)
 
 
 class MePatch(BaseModel):

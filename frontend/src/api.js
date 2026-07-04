@@ -78,6 +78,9 @@ export const api = {
   undo: () => send("POST", "/api/admin/undo"),
   undoPeek: () => get("/api/admin/undo/peek"),
 
+  // ---- dev-only user switcher ----
+  devUsers: () => get("/api/dev/users"),
+
   // ---- users / invites (SPEC §6.3, §10.5; admin-only) ----
   users: () => get("/api/admin/users"),
   createUser: (body) => send("POST", "/api/admin/users", body),

@@ -33,7 +33,7 @@ export default function App() {
   const [magazines, setMagazines] = useState([]);
 
   // gallery result
-  const [result, setResult] = useState({ total: 0, photos: [], people_counts: [], event_counts: [] });
+  const [result, setResult] = useState({ total: 0, photos: [], people_counts: [], event_counts: [], place_counts: [] });
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(false);
 
@@ -41,8 +41,10 @@ export default function App() {
   const [mapOpen, setMapOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(false);
 
-  // current viewer role (SPEC §6.3, §10.5) — gates the editing UI
-  const [role, setRole] = useState("viewer");
+  // current viewer (SPEC §6.3, §10.5) — gates the editing UI
+  const [me, setMe] = useState(null);
+  const [devUsers, setDevUsers] = useState([]);
+  const role = me?.role ?? "viewer";
   const canEdit = role === "admin" || role === "contributor";
   const isAdmin = role === "admin";
 
@@ -78,10 +80,28 @@ export default function App() {
     years[0] !== YEAR_MIN || years[1] !== YEAR_MAX;
 
   const activeRoll = sel.magazineId ? magazines.find((m) => m.id === sel.magazineId) : null;
+  const personName = useMemo(
+    () => me?.person_id ? (people.find((p) => p.id === me.person_id)?.name ?? null) : null,
+    [me, people]
+  );
+
+  // Map pins restricted to places represented in the current filtered result.
+  // place_counts uses places-excluded facet logic so selected pins stay visible.
+  const activePlaceIds = useMemo(
+    () => new Set(result.place_counts.map((c) => c.key)),
+    [result.place_counts]
+  );
+  const filteredPlaces = useMemo(
+    () => places.filter((pl) => activePlaceIds.has(pl.id)),
+    [places, activePlaceIds]
+  );
 
   useEffect(() => {
-    api.me().then((me) => { setRole(me.role); setTheme(me.theme || "system"); })
-      .catch(() => setRole("viewer"));
+    api.me().then((m) => {
+      setMe(m);
+      setTheme(m.theme || "system");
+      if (m.is_dev) api.devUsers().then(setDevUsers).catch(() => {});
+    }).catch(() => setMe({ role: "viewer", email: "", person_id: null, display_name: null, theme: "system", is_dev: false }));
     api.people().then(setPeople).catch(() => {});
     api.events().then(setEvents).catch(() => {});
     api.events(false).then(setAllEvents).catch(() => {});
@@ -203,9 +223,10 @@ export default function App() {
     api.photos(filters, next)
       .then((r) => {
         if (seq !== seqRef.current) return; // filters changed mid-flight; drop it
-        // page>1 responses omit facet counts (backend Fix 7) — keep page 1's.
+        // page>1 responses omit facet counts — keep page 1's.
         setResult((prev) => ({ ...r, photos: [...prev.photos, ...r.photos],
-          people_counts: prev.people_counts, event_counts: prev.event_counts }));
+          people_counts: prev.people_counts, event_counts: prev.event_counts,
+          place_counts: prev.place_counts }));
         setPage(next);
       })
       .catch(() => {})
@@ -243,14 +264,18 @@ export default function App() {
         onUndo={onUndo}
         dark={dark}
         onToggleTheme={toggleTheme}
+        userEmail={me?.email ?? null}
+        personName={personName}
+        isDev={me?.is_dev ?? false}
+        devUsers={devUsers}
       />
 
-      <DateSlider years={years} onChange={setYears} />
+      {view === "gallery" && <DateSlider years={years} onChange={setYears} />}
 
       {mapOpen && (
         <Suspense fallback={<div className="mapband" />}>
           <MapBand
-            places={places}
+            places={filteredPlaces}
             selectedPlaces={sel.places}
             bbox={sel.bbox}
             pinned={mapPinned}

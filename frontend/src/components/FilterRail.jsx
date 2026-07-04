@@ -53,7 +53,29 @@ export default function FilterRail({ people, events, places, peopleCounts, event
   const grouped = {};
   for (const p of people) (grouped[p.relationship] ||= []).push(p);
   const groups = REL_ORDER.filter((r) => grouped[r]);
+  // People with no relationship label (unlinked viewers who aren't in the family tree)
+  const ungrouped = grouped[null] ?? [];
   const byCount = (a, b) => (pCount[b.id] ?? b.photo_count) - (pCount[a.id] ?? a.photo_count);
+
+  function renderPeople(list) {
+    return grid ? (
+      <div className="people-grid">
+        {list.sort(byCount).map((p) => {
+          const live = pCount[p.id] ?? 0;
+          return <PersonCell key={p.id} p={p} count={live}
+            active={sel.people.includes(p.id)} disabled={live === 0}
+            onClick={() => onToggle("people", p.id)} />;
+        })}
+      </div>
+    ) : (
+      list.sort(byCount).map((p) => {
+        const live = pCount[p.id] ?? 0;
+        return <Row key={p.id} label={p.name} count={live}
+          active={sel.people.includes(p.id)} disabled={live === 0}
+          onClick={() => onToggle("people", p.id)} />;
+      })
+    );
+  }
 
   return (
     <aside className="rail">
@@ -70,25 +92,10 @@ export default function FilterRail({ people, events, places, peopleCounts, event
         {groups.map((rel) => (
           <div key={rel} className="rel-group">
             <div className="rel-label">{rel}</div>
-            {grid ? (
-              <div className="people-grid">
-                {grouped[rel].sort(byCount).map((p) => {
-                  const live = pCount[p.id] ?? 0;
-                  return <PersonCell key={p.id} p={p} count={live}
-                    active={sel.people.includes(p.id)} disabled={live === 0}
-                    onClick={() => onToggle("people", p.id)} />;
-                })}
-              </div>
-            ) : (
-              grouped[rel].sort(byCount).map((p) => {
-                const live = pCount[p.id] ?? 0;
-                return <Row key={p.id} label={p.name} count={live}
-                  active={sel.people.includes(p.id)} disabled={live === 0}
-                  onClick={() => onToggle("people", p.id)} />;
-              })
-            )}
+            {renderPeople(grouped[rel])}
           </div>
         ))}
+        {ungrouped.length > 0 && renderPeople(ungrouped)}
       </Section>
 
       <Section title="Events">

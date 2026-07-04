@@ -22,7 +22,8 @@ function Menu({ label, title, children }) {
 export default function Header({ view, total, hasFilters, onView, onReset, mapOpen, onToggleMap,
                                 admin, canEdit, isAdmin, onToggleAdmin,
                                 onManageEvents, onManagePlaces, onManageUsers, onShowUsage,
-                                undoInfo, onUndo, dark, onToggleTheme }) {
+                                undoInfo, onUndo, dark, onToggleTheme,
+                                userEmail, personName, isDev, devUsers }) {
   const undoLabel = undoInfo?.available
     ? `Undo: ${undoInfo.field} ${undoInfo.old ?? ""}${undoInfo.old && undoInfo.new ? " → " : ""}${undoInfo.new ?? ""}`.trim()
     : "Nothing to undo";
@@ -69,6 +70,30 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
         <button className="ghost" onClick={onToggleTheme} title={dark ? "Switch to light mode" : "Switch to dark mode"}>
           {dark ? "☀" : "☾"}
         </button>
+        {userEmail && (
+          <Menu label="👤" title={userEmail}>
+            <div className="menu-label">{userEmail}</div>
+            {personName && <div className="menu-label" style={{ fontWeight: "normal", opacity: 0.75 }}>{personName}</div>}
+            <div className="menu-sep" />
+            {isDev ? (
+              devUsers.length > 0 && (
+                <>
+                  <div className="menu-label">Switch user</div>
+                  {devUsers.map((u) => (
+                    <a key={u.email}
+                       className={`menu-item ${u.email === userEmail ? "check" : ""}`}
+                       href={`/api/dev/switch?email=${encodeURIComponent(u.email)}`}>
+                      <span>{u.display_name || u.email}</span>
+                      <span style={{ fontSize: 10, opacity: 0.55, marginLeft: "auto" }}>{u.role}</span>
+                    </a>
+                  ))}
+                </>
+              )
+            ) : (
+              <a className="menu-item" href="/api/logout">Log out</a>
+            )}
+          </Menu>
+        )}
       </div>
     </header>
   );

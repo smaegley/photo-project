@@ -40,10 +40,10 @@ def list_photos(
     f = PhotoFilter(date_start=date_start, date_end=date_end, people=people,
                     events=events, places=places, bbox=_parse_bbox(bbox),
                     magazine_id=magazine_id)
-    total, photos, people_counts, event_counts = queries.run_query(db, f, page, page_size)
+    total, photos, people_counts, event_counts, place_counts = queries.run_query(db, f, page, page_size)
     return PhotoQueryResult(
         total=total, page=page, page_size=page_size, photos=photos,
-        people_counts=people_counts, event_counts=event_counts,
+        people_counts=people_counts, event_counts=event_counts, place_counts=place_counts,
     )
 
 
