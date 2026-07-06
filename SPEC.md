@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
 **Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); digital/scan ingest (Slice C) is next. Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
-**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -279,6 +279,15 @@ Four changes made in preparation for inviting family members:
 - **Map pins filtered to current result:** the map always showed all 162 geocoded pins regardless of active filters. Fix: `run_query` now computes `place_counts` on page 1 (alongside `people_counts`/`event_counts`, places-selection excluded for facet consistency); `PhotoQueryResult` carries the new field; `App.jsx` derives `filteredPlaces` and passes it to `MapBand` in place of the static full list. Pins now reflect only the places present in the current filtered photo set.
 - **DateSlider hidden in Rolls view:** the date slider was always rendered even in Rolls view where it has no effect (the filter rail was already correctly hidden there). Wrapped in `{view === "gallery" && …}`.
 - **Dev user switcher:** in dev mode (no Cloudflare Access), the `👤` header menu now lists all registered users and lets you switch to any of them with one click — no config editing or server restart required. Implementation: `auth.py` reads a `dev_override` cookie and uses its email in place of `dev_user_email` (role taken from the DB, not forced to admin); `GET /api/dev/switch?email=xxx` sets the cookie + redirects to `/`; `GET /api/dev/users` returns the user list (both endpoints 404 in prod). `MeOut` gained `is_dev: bool` so the frontend can show the switcher vs. a real "Log out" link (prod only — logout redirects to the Cloudflare Access logout URL via `GET /api/logout`).
+
+### 10.13 Gallery sort: mag/slide# as canonical order (2026-07-06, `main` @ `de6d4f3`)
+Slide dates were tagged from Dad's index cards and have varying precision ("1963" stored as `1963-01-01`, "Mar 1963" as `1963-03-01`). Sorting by `date_start` scrambled slides within a magazine — e.g. Mag1 rendered `1,2,3,5,13,4,11…` because dates weren't monotone within the roll.
+
+**Decision:** Dad's magazine/slide numbering is the canonical chronological order (he organized them that way). The date tags are for filtering and display, not sorting.
+
+**New sort:** `magazine_id NULLS LAST, slide_in_mag NULLS LAST, date_start NULLS LAST` — slides sort by physical order; non-slide photos (Phase 2, no `magazine_id`) fall after all slides sorted by date. A proper `sort_key` for interleaving digital/scan photos with slides in the timeline is deferred to Phase 2 design (the likely approach: derive a sort key from each magazine's date range for slides, EXIF date for digital).
+
+The roll-gallery sort (when `magazine_id` filter is active) was already fixed in `ca99d09`; this commit extends the same logic to the general gallery.
 
 ---
 
