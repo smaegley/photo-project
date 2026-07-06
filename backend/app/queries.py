@@ -95,9 +95,13 @@ def matching_photo_ids(db: Session, f: PhotoFilter) -> list[int]:
 def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
     base = _apply(db.query(m.Photo), f, exclude=None)
     total = base.order_by(None).count()
-    rows = (base.order_by(
-                (m.Photo.date_start.is_(None)),  # null dates last
-                m.Photo.date_start, m.Photo.magazine_id, m.Photo.slide_in_mag)
+    # Within a roll, sort by slide number; otherwise sort chronologically.
+    if f.magazine_id:
+        order = [m.Photo.magazine_id, m.Photo.slide_in_mag]
+    else:
+        order = [(m.Photo.date_start.is_(None)), m.Photo.date_start,
+                 m.Photo.magazine_id, m.Photo.slide_in_mag]
+    rows = (base.order_by(*order)
             .offset((page - 1) * page_size).limit(page_size).all())
     photos = [to_photo_out(p) for p in rows]
 
