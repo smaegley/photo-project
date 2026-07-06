@@ -95,12 +95,13 @@ def matching_photo_ids(db: Session, f: PhotoFilter) -> list[int]:
 def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
     base = _apply(db.query(m.Photo), f, exclude=None)
     total = base.order_by(None).count()
-    # Within a roll, sort by slide number; otherwise sort chronologically.
-    if f.magazine_id:
-        order = [m.Photo.magazine_id, m.Photo.slide_in_mag]
-    else:
-        order = [(m.Photo.date_start.is_(None)), m.Photo.date_start,
-                 m.Photo.magazine_id, m.Photo.slide_in_mag]
+    # Slides are ordered by Wendel's magazine/slide numbering (the canonical
+    # chronological order). Non-slide photos (no magazine_id) fall after all
+    # slides, sorted by date. Phase 2 will need a derived sort_key to interleave
+    # digital/scan photos with slides properly.
+    order = [m.Photo.magazine_id.is_(None), m.Photo.magazine_id,
+             m.Photo.slide_in_mag.is_(None), m.Photo.slide_in_mag,
+             m.Photo.date_start.is_(None), m.Photo.date_start]
     rows = (base.order_by(*order)
             .offset((page - 1) * page_size).limit(page_size).all())
     photos = [to_photo_out(p) for p in rows]
