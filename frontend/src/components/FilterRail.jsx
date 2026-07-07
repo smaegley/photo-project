@@ -3,11 +3,20 @@ import { useState } from "react";
 const REL_ORDER = ["Self", "Parent", "Sibling", "Child", "Grandparent",
   "Aunt / Uncle", "Cousin", "Spouse", "Extended family"];
 
-function Section({ title, count, action, children, defaultOpen = true }) {
-  const [open, setOpen] = useState(defaultOpen);
+function Section({ title, count, action, children, storageKey, defaultOpen = true }) {
+  const [open, setOpen] = useState(() => {
+    if (!storageKey) return defaultOpen;
+    const saved = localStorage.getItem(`rail-open-${storageKey}`);
+    return saved === null ? defaultOpen : saved === "1";
+  });
+  const toggle = () => setOpen((o) => {
+    const next = !o;
+    if (storageKey) localStorage.setItem(`rail-open-${storageKey}`, next ? "1" : "0");
+    return next;
+  });
   return (
     <section className="rail-section">
-      <button className="rail-head" onClick={() => setOpen((o) => !o)}>
+      <button className="rail-head" onClick={toggle}>
         <span className={`chev ${open ? "open" : ""}`}>▸</span>
         {title}
         {count != null && <span className="rail-head-count">{count}</span>}
@@ -28,7 +37,6 @@ function Row({ label, count, active, disabled, onClick }) {
   );
 }
 
-// A face cell for the grid view: cropped face thumbnail (or an initial), name, count.
 function PersonCell({ p, count, active, disabled, onClick }) {
   return (
     <button className={`person-cell ${active ? "active" : ""} ${disabled ? "disabled" : ""}`}
@@ -53,9 +61,13 @@ export default function FilterRail({ people, events, places, peopleCounts, event
   const grouped = {};
   for (const p of people) (grouped[p.relationship] ||= []).push(p);
   const groups = REL_ORDER.filter((r) => grouped[r]);
-  // People with no relationship label (unlinked viewers who aren't in the family tree)
   const ungrouped = grouped[null] ?? [];
   const byCount = (a, b) => (pCount[b.id] ?? b.photo_count) - (pCount[a.id] ?? a.photo_count);
+
+  // Live counts for section headers
+  const activePeopleCount = peopleCounts.filter((c) => c.count > 0).length;
+  const activeEventCount  = eventCounts.filter((c) => c.count > 0).length;
+  const activePlaceCount  = places.filter((pl) => pl.photo_count > 0).length;
 
   function renderPeople(list) {
     return grid ? (
@@ -83,7 +95,26 @@ export default function FilterRail({ people, events, places, peopleCounts, event
         <button className="rail-reset" onClick={onReset}>✕ Clear all filters</button>
       )}
 
-      <Section title="People" action={
+      <Section title="Places" storageKey="places" defaultOpen={false} count={activePlaceCount}>
+        <div className="places-scroll">
+          {places.map((pl) => (
+            <Row key={pl.id} label={pl.name} count={pl.photo_count}
+              active={sel.places.includes(pl.id)} disabled={pl.photo_count === 0}
+              onClick={() => onToggle("places", pl.id)} />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Events" storageKey="events" defaultOpen={false} count={activeEventCount}>
+        {events.map((e) => {
+          const live = eCount[String(e.id)] ?? 0;
+          return <Row key={e.id} label={e.name} count={live}
+            active={sel.events.includes(e.id)} disabled={live === 0}
+            onClick={() => onToggle("events", e.id)} />;
+        })}
+      </Section>
+
+      <Section title="People" storageKey="people" count={activePeopleCount} action={
         <span className="rail-viewtoggle">
           <button className={grid ? "on" : ""} title="Face grid" onClick={() => setView(true)}>▦</button>
           <button className={!grid ? "on" : ""} title="List" onClick={() => setView(false)}>☰</button>
@@ -96,25 +127,6 @@ export default function FilterRail({ people, events, places, peopleCounts, event
           </div>
         ))}
         {ungrouped.length > 0 && renderPeople(ungrouped)}
-      </Section>
-
-      <Section title="Events">
-        {events.map((e) => {
-          const live = eCount[String(e.id)] ?? 0;
-          return <Row key={e.id} label={e.name} count={live}
-            active={sel.events.includes(e.id)} disabled={live === 0}
-            onClick={() => onToggle("events", e.id)} />;
-        })}
-      </Section>
-
-      <Section title="Places" defaultOpen={false}>
-        <div className="places-scroll">
-          {places.map((pl) => (
-            <Row key={pl.id} label={pl.name} count={pl.photo_count}
-              active={sel.places.includes(pl.id)} disabled={pl.photo_count === 0}
-              onClick={() => onToggle("places", pl.id)} />
-          ))}
-        </div>
       </Section>
     </aside>
   );
