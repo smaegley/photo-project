@@ -10,6 +10,7 @@ const MapBand = lazy(() => import("./components/MapBand"));
 import RollsView from "./components/RollsView";
 import AdminBar from "./components/AdminBar";
 import EventsAdmin from "./components/EventsAdmin";
+import PeopleAdmin from "./components/PeopleAdmin";
 import PlacesAdmin from "./components/PlacesAdmin";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
@@ -55,6 +56,7 @@ export default function App() {
   // admin / bulk-editing (SPEC §3.5)
   const [admin, setAdmin] = useState(false);
   const [showEvents, setShowEvents] = useState(false);
+  const [showPeople, setShowPeople] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
@@ -257,6 +259,7 @@ export default function App() {
         isAdmin={isAdmin}
         onToggleAdmin={() => { setAdmin((a) => !a); setSelectedIds(new Set()); }}
         onManageEvents={() => setShowEvents(true)}
+        onManagePeople={() => setShowPeople(true)}
         onManagePlaces={() => setShowPlaces(true)}
         onManageUsers={() => setShowUsers(true)}
         onShowUsage={() => setShowUsage(true)}
@@ -365,6 +368,13 @@ export default function App() {
         <EventsAdmin
           events={allEvents}
           onClose={() => setShowEvents(false)}
+          onChanged={refresh}
+        />
+      )}
+
+      {showPeople && (
+        <PeopleAdmin
+          onClose={() => setShowPeople(false)}
           onChanged={refresh}
         />
       )}

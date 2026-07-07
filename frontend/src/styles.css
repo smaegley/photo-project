@@ -319,6 +319,7 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
   background: var(--bg); border-radius: 14px; width: min(560px, 92vw); max-height: 86vh;
   overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,.3);
 }
+.modal.modal-wide { width: min(740px, 92vw); }
 .modal-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border); }
 .modal-head h2 { margin: 0; font-size: 17px; }
 .modal-head .lb-close { position: static; background: var(--muted-bg); color: var(--text); width: 32px; height: 32px; }
@@ -339,6 +340,10 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .merge-banner .merge-back { margin-left: auto; font-weight: 600; white-space: nowrap; }
 .event-admin-new { display: flex; gap: 8px; padding: 14px 20px; border-top: 1px solid var(--border); }
 .event-admin-new input { flex: 1; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; }
+.people-admin-new { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.people-admin-row { display: flex; gap: 8px; align-items: center; }
+.people-admin-row input { flex: 1; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); }
+.people-admin-row select { flex: 1; font: inherit; font-size: 13px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); }
 .modal-msg { padding: 10px 20px; font-size: 13px; color: var(--muted); border-top: 1px solid var(--border); }
 .modal-sub { font-size: 13px; font-weight: 500; color: var(--muted); }
 .modal-search { padding: 12px 20px 6px; }

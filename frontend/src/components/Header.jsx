@@ -21,7 +21,7 @@ function Menu({ label, title, children }) {
 
 export default function Header({ view, total, hasFilters, onView, onReset, mapOpen, onToggleMap,
                                 admin, canEdit, isAdmin, onToggleAdmin,
-                                onManageEvents, onManagePlaces, onManageUsers, onShowUsage,
+                                onManageEvents, onManagePeople, onManagePlaces, onManageUsers, onShowUsage,
                                 undoInfo, onUndo, dark, onToggleTheme,
                                 userEmail, personName, isDev, devUsers }) {
   const undoLabel = undoInfo?.available
@@ -57,6 +57,7 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
           <Menu label="Manage ▾" title="Vocabulary, users, usage, undo">
             <div className="menu-label">Vocabulary</div>
             <button className="menu-item" onClick={onManageEvents}>Manage events</button>
+            <button className="menu-item" onClick={onManagePeople}>Manage people</button>
             <button className="menu-item" onClick={onManagePlaces}>Manage places</button>
             <div className="menu-sep" />
             <div className="menu-label">Admin</div>

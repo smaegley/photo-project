@@ -26,8 +26,8 @@ from app.routers.images import photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
     EventCreate, EventMerge, EventOut, EventRename,
-    FaceRegionReq, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate, RepresentativeReq, RotateReq,
-    UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
+    FaceRegionReq, PersonCreate, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
+    RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -445,6 +445,42 @@ def edit_caption(photo_id: int, body: CaptionReq, db: Session = Depends(get_db),
     return {"caption": p.caption}
 
 
+@router.post("/people")
+def create_person(body: PersonCreate, db: Session = Depends(get_db),
+                  user: m.User = Depends(require_admin)):
+    """Add a new person to the family tree."""
+    if not re.match(r"^[a-z0-9_]+$", body.id):
+        raise HTTPException(400, "id must be lowercase letters, digits, and underscores only")
+    if db.get(m.Person, body.id):
+        raise HTTPException(409, f"person id '{body.id}' already exists")
+    for fk, val in [("father_id", body.father_id), ("mother_id", body.mother_id),
+                    ("spouse_id", body.spouse_id)]:
+        if val and db.get(m.Person, val) is None:
+            raise HTTPException(404, f"{fk} '{val}' not found")
+    person = m.Person(id=body.id, canonical_name=body.canonical_name.strip(),
+                      father_id=body.father_id, mother_id=body.mother_id,
+                      spouse_id=body.spouse_id)
+    db.add(person)
+    _log(db, user, "person:create", None, body.id)
+    db.commit()
+    return {"id": person.id, "canonical_name": person.canonical_name}
+
+
+@router.patch("/people/{person_id}")
+def rename_person(person_id: str, body: PersonRename, db: Session = Depends(get_db),
+                  user: m.User = Depends(require_admin)):
+    """Rename a person's canonical name (undoable)."""
+    person = db.get(m.Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+    old = person.canonical_name
+    person.canonical_name = body.canonical_name.strip()
+    _log(db, user, "person:rename", old, person.canonical_name,
+         inverse={"op": "person_rename", "person_id": person_id, "canonical_name": old})
+    db.commit()
+    return {"id": person.id, "canonical_name": person.canonical_name}
+
+
 @router.post("/people/{person_id}/representative")
 def set_representative(person_id: str, body: RepresentativeReq, db: Session = Depends(get_db),
                        user: m.User = Depends(require_admin)):
@@ -608,6 +644,10 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         p = db.get(m.Photo, inv["photo_id"])
         if p:
             p.caption = inv["caption"]
+    elif op == "person_rename":
+        person = db.get(m.Person, inv["person_id"])
+        if person:
+            person.canonical_name = inv["canonical_name"]
     elif op == "person_representative":
         person = db.get(m.Person, inv["person_id"])
         if person:

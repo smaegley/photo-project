@@ -160,6 +160,18 @@ class MePatch(BaseModel):
     theme: str | None = None        # light | dark | system
 
 
+class PersonCreate(BaseModel):
+    id: str                         # caller-supplied slug (validated server-side)
+    canonical_name: str
+    father_id: str | None = None
+    mother_id: str | None = None
+    spouse_id: str | None = None
+
+
+class PersonRename(BaseModel):
+    canonical_name: str
+
+
 class CaptionReq(BaseModel):
     caption: str | None = None
 
