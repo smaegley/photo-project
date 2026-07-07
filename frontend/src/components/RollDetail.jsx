@@ -4,17 +4,26 @@ import Lightbox from "./Lightbox";
 
 // One roll: Dad's index-card scan(s) beside the ordered, clickable caption list,
 // plus a thumbnail strip. Clicking a caption or thumbnail opens that slide (SPEC §3.7).
-export default function RollDetail({ roll, onBack, onViewInGallery }) {
+export default function RollDetail({ roll, onBack, onViewInGallery,
+                                     admin = false, isAdmin = false,
+                                     events = [], people = [], places = [], onChanged }) {
   const [photos, setPhotos] = useState([]);
   const [lightboxIdx, setLightboxIdx] = useState(null);
 
-  useEffect(() => {
+  function loadPhotos() {
     api.photos({ people: [], events: [], places: [], magazineId: roll.id }, 1, 300)
       .then((r) => {
         const sorted = [...r.photos].sort((a, b) => (a.slide_in_mag ?? 0) - (b.slide_in_mag ?? 0));
         setPhotos(sorted);
       });
-  }, [roll.id]);
+  }
+
+  useEffect(() => { loadPhotos(); }, [roll.id]); // eslint-disable-line
+
+  async function handleChanged() {
+    loadPhotos();
+    if (onChanged) await onChanged();
+  }
 
   return (
     <div className="gallery-scroll roll-detail">
@@ -55,6 +64,12 @@ export default function RollDetail({ roll, onBack, onViewInGallery }) {
           onClose={() => setLightboxIdx(null)}
           onNav={setLightboxIdx}
           onLoadMore={() => {}}
+          admin={admin}
+          isAdmin={isAdmin}
+          events={events}
+          people={people}
+          places={places}
+          onChanged={handleChanged}
         />
       )}
     </div>

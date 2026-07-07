@@ -344,6 +344,12 @@ export default function App() {
             <RollsView
               magazines={magazines}
               onViewInGallery={(id) => { setSel({ ...EMPTY, magazineId: id }); setView("gallery"); }}
+              admin={admin}
+              isAdmin={isAdmin}
+              events={allEvents}
+              people={allPeople}
+              places={allPlaces}
+              onChanged={refresh}
             />
           )}
         </main>

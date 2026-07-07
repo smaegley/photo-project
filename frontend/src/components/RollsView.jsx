@@ -3,11 +3,14 @@ import RollDetail from "./RollDetail";
 
 // Browse-by-roll (SPEC §3.7). Grid of magazines; click one to open its detail
 // (Dad's index-card scan + the ordered, clickable caption list for that roll).
-export default function RollsView({ magazines, onViewInGallery }) {
+export default function RollsView({ magazines, onViewInGallery,
+                                    admin, isAdmin, events, people, places, onChanged }) {
   const [roll, setRoll] = useState(null);
 
   if (roll) {
-    return <RollDetail roll={roll} onBack={() => setRoll(null)} onViewInGallery={onViewInGallery} />;
+    return <RollDetail roll={roll} onBack={() => setRoll(null)} onViewInGallery={onViewInGallery}
+                       admin={admin} isAdmin={isAdmin} events={events} people={people}
+                       places={places} onChanged={onChanged} />;
   }
 
   return (
