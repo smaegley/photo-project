@@ -25,6 +25,10 @@ photos.
 - **Gallery sort fixed (2026-07-07, SPEC §10.13, `main` @ `1817081`):** gallery
   now sorts by mag/slide# (Wendel's canonical order) rather than date; roll
   gallery sort also fixed. Phase 2 sort_key design deferred.
+- **Person management + fixes deployed (2026-07-07, SPEC §10.14, `main` @ `e0875cd`):**
+  rename/add/edit-family-links in "Manage people" modal; allPeople (zero-photo
+  included) used in admin pickers; Rolls view lightbox now has full admin props;
+  filter rail reordered Places → Events → People with live counts + localStorage.
 
 ## Environments (dev vs prod) — full details in README "Environments"
 Two separate boxes, separate DBs. **Prod is behind Cloudflare; dev is NOT** — a dev

@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
 **Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); digital/scan ingest (Slice C) is next. Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
-**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06 · **§10.14:** 2026-07-07
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -288,6 +288,20 @@ Slide dates were tagged from Dad's index cards and have varying precision ("1963
 **New sort:** `magazine_id NULLS LAST, slide_in_mag NULLS LAST, date_start NULLS LAST` — slides sort by physical order; non-slide photos (Phase 2, no `magazine_id`) fall after all slides sorted by date. A proper `sort_key` for interleaving digital/scan photos with slides in the timeline is deferred to Phase 2 design (the likely approach: derive a sort key from each magazine's date range for slides, EXIF date for digital).
 
 The roll-gallery sort (when `magazine_id` filter is active) was already fixed in `ca99d09`; this commit extends the same logic to the general gallery.
+
+### 10.14 Person management, admin fixes, filter rail UX (2026-07-07, `main` @ `e0875cd`)
+
+**Person management (admin-only):**
+- `PATCH /api/admin/people/{id}` — rename `canonical_name` (undoable).
+- `POST /api/admin/people` — create a new person; caller supplies a slug id (validated: lowercase/digits/underscores, 409 on duplicate), optional `father_id`/`mother_id`/`spouse_id`. Slug auto-generated from name in the UI.
+- `PATCH /api/admin/people/{id}/links` — update family tree links (father/mother/spouse); pass `null` to clear a link (undoable). `PersonOut` gained `father_id`/`mother_id`/`spouse_id` so the edit UI pre-populates current values.
+- **"Manage people"** modal added to the Manage ▾ header menu (wide variant at 740px): searchable list with rename action; per-row "edit links" toggle that expands inline with pre-filled dropdowns; add-person form at the bottom.
+
+**Admin picker fix:** `people` state (photo-filtered) and `allPeople` (all persons, incl. zero-photo) are now loaded separately. Lightbox and AdminBar bulk-picker use `allPeople` so untagged-yet people like Carol Hollenkamp are selectable. Filter rail still uses `people` (photo-filtered only).
+
+**Rolls view admin fix:** `RollDetail`'s `Lightbox` was missing all admin props — editing people/places/events was silently unavailable in Rolls mode. Props now thread `App → RollsView → RollDetail → Lightbox`; `RollDetail` reloads its photo list after each edit before bubbling `onChanged`.
+
+**Filter rail UX:** Sections reordered to **Places → Events → People** (People expanded, Places/Events collapsed by default) so the People face grid is always visible without scrolling. Section headers show **live counts** that update with active filters. Expand/collapse state persisted per-section in `localStorage`.
 
 ---
 
