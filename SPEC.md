@@ -1,7 +1,7 @@
 # Family Slide Archive — Build Specification
 
 **Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); digital/scan ingest (Slice C) is next. Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
-**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06 · **§10.14:** 2026-07-07
+**Version:** 1.0 frozen + §10 build log + §11 ingest design · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06 · **§10.14:** 2026-07-07 · **§10.15:** 2026-07-07
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
 > **How to read this doc:** Sections with filled content are decided. `> OPEN:` callouts mark decisions we still need to make together. The data model (§3) anchors everything; we fill it first.
@@ -302,6 +302,25 @@ The roll-gallery sort (when `magazine_id` filter is active) was already fixed in
 **Rolls view admin fix:** `RollDetail`'s `Lightbox` was missing all admin props — editing people/places/events was silently unavailable in Rolls mode. Props now thread `App → RollsView → RollDetail → Lightbox`; `RollDetail` reloads its photo list after each edit before bubbling `onChanged`.
 
 **Filter rail UX:** Sections reordered to **Places → Events → People** (People expanded, Places/Events collapsed by default) so the People face grid is always visible without scrolling. Section headers show **live counts** that update with active filters. Expand/collapse state persisted per-section in `localStorage`.
+
+### 10.15 Notes editing, UX fixes, snapshot hardening (2026-07-07)
+
+**Card notes editing (contributor+, undoable):**
+- `POST /api/admin/photos/{id}/notes` — new endpoint; accepts `{ notes: str | null }`, strips whitespace, stores null for blank, logs a `Contribution` row with `inverse` for undo.
+- Undo handler added for `op = "photo_notes"` in the undo switch block.
+- `NotesReq` schema added to `schemas.py`.
+- Frontend: `api.editNotes(id, notes)` added to `api.js`; `Lightbox` gains `notesDraft` state (set on load + reload); admin mode renders an editable `<textarea class="lb-notes-edit">` with `onBlur` save instead of the read-only `<p class="lb-dadnotes">`.
+- `scripts/apply-notes-patch-20260707.py` — standalone idempotent prod patch script with 3 caption + 440 notes changes from Ryan's OCR audit embedded as JSON; supports `--dry-run`.
+
+**Prod → dev snapshot hardening:**
+- `scripts/load-prod-snapshot.sh` — added WAL/SHM cleanup (`rm -f photos.db-wal photos.db-shm`) before the DB swap to prevent SQLite malformed-disk-image errors when the running backend's WAL was present on the dev box.
+
+**Ryan's UX fixes (5 items):**
+1. **"All rolls" back button** — replaced plain `.link` style with `.back-btn` (bordered, hover accent) for better visibility in the roll detail header.
+2. **Roll cards in lightbox from Rolls tab** — `RollDetail` now passes `magazines={[roll]}` to its `Lightbox`; the index card panel now appears when a slide is opened from the Rolls tab (was missing, worked only from Gallery tab).
+3. **Roll detail layout** — index cards moved to the right column; photo grid is now on the left. CSS grid template flipped from `minmax(280px,380px) 1fr` to `1fr minmax(280px,380px)`.
+4. **Download filename** — `Lightbox` builds a `download="Mag01_Slide09_Rock-City-Tenn.jpg"` filename from `magazine_id`, `slide_in_mag`, and the card note text (regex-extracted from `Card: '<text>'` format, slugified, capped at 40 chars). Falls back to browser default if detail not loaded.
+5. **Gallery image load errors + scroll restoration** — `Lightbox` image element gains `onError` handler; on failure shows "Photo failed to load / Try again" overlay with a reload button. Closing the lightbox now scrolls the gallery back to the last-viewed tile (`Gallery` gains `scrollToIdx` prop + `tileRefs` array; `App` tracks `galleryScrollTo` and passes it on close).
 
 ---
 

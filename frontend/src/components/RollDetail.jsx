@@ -28,7 +28,7 @@ export default function RollDetail({ roll, onBack, onViewInGallery,
   return (
     <div className="gallery-scroll roll-detail">
       <div className="roll-detail-head">
-        <button className="link" onClick={onBack}>‹ All rolls</button>
+        <button className="back-btn" onClick={onBack}>‹ All rolls</button>
         <div>
           <div className="roll-num">Roll {roll.id} · {roll.span_label}</div>
           <h2>{roll.title}</h2>
@@ -37,13 +37,6 @@ export default function RollDetail({ roll, onBack, onViewInGallery,
       </div>
 
       <div className="roll-detail-body">
-        <div className="roll-cards">
-          <div className="roll-cards-label">Dad's index card{roll.card_image_paths.length > 1 ? "s" : ""}</div>
-          {roll.card_image_paths.map((c) => (
-            <img key={c} className="roll-card-full" src={`/api/cards/${c}`} alt="index card" />
-          ))}
-        </div>
-
         <div className="roll-captions">
           <div className="roll-cards-label">Slides in this roll ({photos.length})</div>
           <div className="grid">
@@ -54,6 +47,13 @@ export default function RollDetail({ roll, onBack, onViewInGallery,
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="roll-cards">
+          <div className="roll-cards-label">Dad's index card{roll.card_image_paths.length > 1 ? "s" : ""}</div>
+          {roll.card_image_paths.map((c) => (
+            <img key={c} className="roll-card-full" src={`/api/cards/${c}`} alt="index card" />
+          ))}
         </div>
       </div>
 
@@ -69,6 +69,7 @@ export default function RollDetail({ roll, onBack, onViewInGallery,
           events={events}
           people={people}
           places={places}
+          magazines={[roll]}
           onChanged={handleChanged}
         />
       )}

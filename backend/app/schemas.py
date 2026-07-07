@@ -185,6 +185,10 @@ class CaptionReq(BaseModel):
     caption: str | None = None
 
 
+class NotesReq(BaseModel):
+    notes: str | None = None
+
+
 class RepresentativeReq(BaseModel):
     photo_id: int | None = None     # null clears it
 

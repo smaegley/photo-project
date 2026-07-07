@@ -40,6 +40,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   const [lightboxIdx, setLightboxIdx] = useState(null);
+  const [galleryScrollTo, setGalleryScrollTo] = useState(null);
   const [mapOpen, setMapOpen] = useState(false);
   const [mapPinned, setMapPinned] = useState(false);
 
@@ -333,11 +334,12 @@ export default function App() {
                 photos={result.photos}
                 total={result.total}
                 loading={loading}
-                onOpen={(i) => { setLightboxIdx(i); const p = result.photos[i]; if (p) api.logUsage("view", p.source_file); }}
+                onOpen={(i) => { setGalleryScrollTo(null); setLightboxIdx(i); const p = result.photos[i]; if (p) api.logUsage("view", p.source_file); }}
                 onLoadMore={loadMore}
                 selectable={admin}
                 selectedIds={selectedIds}
                 onSelect={onSelect}
+                scrollToIdx={galleryScrollTo}
               />
             </>
           ) : (
@@ -359,7 +361,7 @@ export default function App() {
         <Lightbox
           photos={result.photos}
           index={lightboxIdx}
-          onClose={() => setLightboxIdx(null)}
+          onClose={() => { setGalleryScrollTo(lightboxIdx); setLightboxIdx(null); }}
           onNav={(i) => setLightboxIdx(i)}
           onLoadMore={loadMore}
           admin={admin}

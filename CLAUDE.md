@@ -29,6 +29,11 @@ photos.
   rename/add/edit-family-links in "Manage people" modal; allPeople (zero-photo
   included) used in admin pickers; Rolls view lightbox now has full admin props;
   filter rail reordered Places → Events → People with live counts + localStorage.
+- **Notes editing + UX fixes (2026-07-07, SPEC §10.15):** card notes field now
+  editable in lightbox (admin, undoable); prod snapshot load script hardened
+  (WAL/SHM cleanup); Ryan's 5 UX fixes: prominent back button, roll cards in
+  Rolls-tab lightbox, index cards on right in roll detail, download filename from
+  card note, gallery scroll restoration + image load error handling.
 
 ## Environments (dev vs prod) — full details in README "Environments"
 Two separate boxes, separate DBs. **Prod is behind Cloudflare; dev is NOT** — a dev

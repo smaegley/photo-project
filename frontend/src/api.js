@@ -69,6 +69,7 @@ export const api = {
   deletePlace: (id) => send("DELETE", `/api/admin/places/${id}`),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
+  editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
   createPerson: (body) => send("POST", "/api/admin/people", body),
   renamePerson: (id, canonical_name) => send("PATCH", `/api/admin/people/${id}`, { canonical_name }),
   updatePersonLinks: (id, father_id, mother_id, spouse_id) =>

@@ -24,7 +24,7 @@ from app.geocoding import geocode
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
-    BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
+    BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq, NotesReq,
     EventCreate, EventMerge, EventOut, EventRename,
     FaceRegionReq, PersonCreate, PersonLinksUpdate, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
     RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
@@ -445,6 +445,21 @@ def edit_caption(photo_id: int, body: CaptionReq, db: Session = Depends(get_db),
     return {"caption": p.caption}
 
 
+@router.post("/photos/{photo_id}/notes")
+def edit_notes(photo_id: int, body: NotesReq, db: Session = Depends(get_db),
+               user: m.User = Depends(require_contributor)):
+    """Edit a photo's raw card notes. Contributor-level, undoable."""
+    p = db.get(m.Photo, photo_id)
+    if p is None:
+        raise HTTPException(404, "photo not found")
+    old = p.notes
+    p.notes = (body.notes or "").strip() or None
+    _log(db, user, "photo:notes", old, p.notes, photo_id=p.id,
+         inverse={"op": "photo_notes", "photo_id": p.id, "notes": old})
+    db.commit()
+    return {"notes": p.notes}
+
+
 @router.post("/people")
 def create_person(body: PersonCreate, db: Session = Depends(get_db),
                   user: m.User = Depends(require_admin)):
@@ -669,6 +684,10 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         p = db.get(m.Photo, inv["photo_id"])
         if p:
             p.caption = inv["caption"]
+    elif op == "photo_notes":
+        p = db.get(m.Photo, inv["photo_id"])
+        if p:
+            p.notes = inv["notes"]
     elif op == "person_rename":
         person = db.get(m.Person, inv["person_id"])
         if person:

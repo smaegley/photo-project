@@ -8,20 +8,23 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
+  const [notesDraft, setNotesDraft] = useState("");
   const [cropPerson, setCropPerson] = useState(null);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [imgError, setImgError] = useState(false);
   const dirty = useRef(false);
   const dragRef = useRef(null);
   const photo = photos[index];
 
-  const reload = () => api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); });
+  const reload = () => api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); setNotesDraft(d.notes || ""); });
 
   useEffect(() => {
     setDetail(null);
+    setImgError(false);
     setZoom(1); setPan({ x: 0, y: 0 }); // reset view per photo
-    api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); });
+    api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); setNotesDraft(d.notes || ""); });
     if (index >= photos.length - 3) onLoadMore();
   }, [photo.id]); // eslint-disable-line
 
@@ -64,6 +67,10 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
     if (!detail || captionDraft.trim() === (detail.caption || "")) return;
     edit(() => api.editCaption(photo.id, captionDraft.trim() || null));
   };
+  const saveNotes = () => {
+    if (!detail || notesDraft.trim() === (detail.notes || "")) return;
+    edit(() => api.editNotes(photo.id, notesDraft.trim() || null));
+  };
   const repOf = (personId) => people.find((pp) => pp.id === personId)?.representative_photo_id;
 
   const eventIdByName = Object.fromEntries(events.map((e) => [e.name, e.id]));
@@ -71,6 +78,20 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   // still serves the full-resolution original.
   const src = detail?.display_url || photo.display_url;
   const downloadSrc = detail?.image_url || photo.image_url;
+
+  function buildDownloadName(d) {
+    if (!d?.magazine_id) return null;
+    const mag   = String(d.magazine_id).padStart(2, "0");
+    const slide = String(d.slide_in_mag ?? 0).padStart(2, "0");
+    let name = `Mag${mag}_Slide${slide}`;
+    const m = d.notes?.match(/Card:\s*['"](.+?)['"]/);
+    if (m) {
+      const slug = m[1].replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "").substring(0, 40);
+      if (slug) name += `_${slug}`;
+    }
+    return `${name}.jpg`;
+  }
+  const downloadName = buildDownloadName(detail);
   const roll = detail && magazines.find((mg) => mg.id === detail.magazine_id);
   const rollCards = roll?.card_image_paths || [];
 
@@ -86,12 +107,21 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
 
       <div className="lb-stage" onClick={(e) => e.stopPropagation()}
            onWheel={onWheel} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
-        <img src={src} alt={photo.caption || photo.source_file} draggable={false}
-             className={zoom > 1 ? "zoomed" : ""}
-             style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                      cursor: zoom > 1 ? (dragRef.current ? "grabbing" : "grab") : "default" }}
-             onMouseDown={onDown}
-             onDoubleClick={() => (zoom > 1 ? resetZoom() : setZoom(2))} />
+        {imgError ? (
+          <div className="lb-img-error">
+            Photo failed to load.
+            <button onClick={() => { setImgError(false); reload(); }}>Try again</button>
+            <span className="lb-img-error-hint">If it keeps failing, refresh the page.</span>
+          </div>
+        ) : (
+          <img src={src} alt={photo.caption || photo.source_file} draggable={false}
+               className={zoom > 1 ? "zoomed" : ""}
+               style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+                        cursor: zoom > 1 ? (dragRef.current ? "grabbing" : "grab") : "default" }}
+               onMouseDown={onDown}
+               onDoubleClick={() => (zoom > 1 ? resetZoom() : setZoom(2))}
+               onError={() => setImgError(true)} />
+        )}
 
         <div className="lb-toolbar" onClick={(e) => e.stopPropagation()}>
           <button onClick={() => zoomBy(1 / 1.4)} disabled={zoom <= 1} title="Zoom out">−</button>
@@ -213,8 +243,13 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               </div>
             )}
 
-            {detail.notes && <p className="lb-dadnotes">{detail.notes}</p>}
-            <a className="lb-download" href={downloadSrc} download
+            {admin ? (
+              <textarea className="lb-notes-edit" value={notesDraft} placeholder="Card notes…"
+                        disabled={busy} onChange={(e) => setNotesDraft(e.target.value)} onBlur={saveNotes} />
+            ) : (
+              detail.notes && <p className="lb-dadnotes">{detail.notes}</p>
+            )}
+            <a className="lb-download" href={downloadSrc} download={downloadName || true}
                onClick={() => api.logUsage("download", photo.source_file)}>⬇ Download</a>
           </div>
         )}

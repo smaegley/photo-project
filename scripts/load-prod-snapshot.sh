@@ -54,11 +54,14 @@ c.close()
 PY
 
 # 2) Back up the current dev DB, then swap the snapshot in.
+#    Remove WAL/SHM sidecars first — if the dev backend was running they belong
+#    to the OLD db; replaying them against the new pages corrupts it.
 if [ -f "$DATA/photos.db" ]; then
   BK="$DATA/photos.db.devbak-$(date +%Y%m%d-%H%M%S)"
   cp "$DATA/photos.db" "$BK"
   echo "  dev DB backed up -> $BK"
 fi
+rm -f "$DATA/photos.db-wal" "$DATA/photos.db-shm"
 mv "$TMP" "$DATA/photos.db"
 trap - EXIT
 

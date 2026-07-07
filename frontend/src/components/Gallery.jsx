@@ -1,8 +1,16 @@
 import { useEffect, useRef } from "react";
 
 export default function Gallery({ photos, total, loading, onOpen, onLoadMore,
-                                 selectable = false, selectedIds, onSelect }) {
+                                 selectable = false, selectedIds, onSelect, scrollToIdx }) {
   const sentinel = useRef(null);
+  const tileRefs = useRef([]);
+
+  // When the lightbox closes, scroll the last-viewed photo into view.
+  useEffect(() => {
+    if (scrollToIdx == null) return;
+    const el = tileRefs.current[scrollToIdx];
+    if (el) el.scrollIntoView({ block: "center", behavior: "instant" });
+  }, [scrollToIdx]);
 
   useEffect(() => {
     if (!sentinel.current) return;
@@ -26,7 +34,8 @@ export default function Gallery({ photos, total, loading, onOpen, onLoadMore,
         {photos.map((p, i) => {
           const checked = selectable && selectedIds.has(p.id);
           return (
-            <div key={p.id} className={`tile ${selectable ? "selectable" : ""} ${checked ? "selected" : ""}`}>
+            <div key={p.id} ref={(el) => { tileRefs.current[i] = el; }}
+                 className={`tile ${selectable ? "selectable" : ""} ${checked ? "selected" : ""}`}>
               <button className="tile-img" title={p.caption || ""}
                       onClick={(e) => {
                         // in selection mode, ⌘/Ctrl-click toggles and Shift-click ranges;
