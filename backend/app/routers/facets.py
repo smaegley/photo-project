@@ -117,7 +117,8 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
             face_url = f"/api/faces/{p.id}?v={derivatives.face_version(p.representative_photo_id, region)}"
         out.append(PersonOut(
             id=p.id, name=p.canonical_name, relationship=rels.get(p.id),
-            photo_count=n, representative_photo_id=p.representative_photo_id, face_url=face_url))
+            photo_count=n, representative_photo_id=p.representative_photo_id, face_url=face_url,
+            father_id=p.father_id, mother_id=p.mother_id, spouse_id=p.spouse_id))
     out.sort(key=lambda x: (REL_ORDER.index(x.relationship) if x.relationship in REL_ORDER else 99,
                             -x.photo_count, x.name))
     return out

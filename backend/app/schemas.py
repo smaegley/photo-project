@@ -64,6 +64,9 @@ class PersonOut(BaseModel):
     photo_count: int
     representative_photo_id: int | None
     face_url: str | None = None        # cropped face thumbnail (SPEC §4.2)
+    father_id: str | None = None
+    mother_id: str | None = None
+    spouse_id: str | None = None
 
 
 class EventOut(BaseModel):
@@ -170,6 +173,12 @@ class PersonCreate(BaseModel):
 
 class PersonRename(BaseModel):
     canonical_name: str
+
+
+class PersonLinksUpdate(BaseModel):
+    father_id: str | None = None
+    mother_id: str | None = None
+    spouse_id: str | None = None
 
 
 class CaptionReq(BaseModel):

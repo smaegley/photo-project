@@ -26,7 +26,7 @@ from app.routers.images import photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq,
     EventCreate, EventMerge, EventOut, EventRename,
-    FaceRegionReq, PersonCreate, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
+    FaceRegionReq, PersonCreate, PersonLinksUpdate, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
     RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
@@ -481,6 +481,31 @@ def rename_person(person_id: str, body: PersonRename, db: Session = Depends(get_
     return {"id": person.id, "canonical_name": person.canonical_name}
 
 
+@router.patch("/people/{person_id}/links")
+def update_person_links(person_id: str, body: PersonLinksUpdate, db: Session = Depends(get_db),
+                        user: m.User = Depends(require_admin)):
+    """Update a person's father/mother/spouse links (undoable). Pass null to clear a link."""
+    person = db.get(m.Person, person_id)
+    if person is None:
+        raise HTTPException(404, "person not found")
+    for fk, val in [("father_id", body.father_id), ("mother_id", body.mother_id),
+                    ("spouse_id", body.spouse_id)]:
+        if val and db.get(m.Person, val) is None:
+            raise HTTPException(404, f"{fk} '{val}' not found")
+    old = {"father_id": person.father_id, "mother_id": person.mother_id,
+           "spouse_id": person.spouse_id}
+    person.father_id = body.father_id
+    person.mother_id = body.mother_id
+    person.spouse_id = body.spouse_id
+    _log(db, user, "person:links", json.dumps(old),
+         json.dumps({"father_id": body.father_id, "mother_id": body.mother_id,
+                     "spouse_id": body.spouse_id}),
+         inverse={"op": "person_links", "person_id": person_id, **old})
+    db.commit()
+    return {"id": person.id, "father_id": person.father_id,
+            "mother_id": person.mother_id, "spouse_id": person.spouse_id}
+
+
 @router.post("/people/{person_id}/representative")
 def set_representative(person_id: str, body: RepresentativeReq, db: Session = Depends(get_db),
                        user: m.User = Depends(require_admin)):
@@ -648,6 +673,12 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         person = db.get(m.Person, inv["person_id"])
         if person:
             person.canonical_name = inv["canonical_name"]
+    elif op == "person_links":
+        person = db.get(m.Person, inv["person_id"])
+        if person:
+            person.father_id = inv["father_id"]
+            person.mother_id = inv["mother_id"]
+            person.spouse_id = inv["spouse_id"]
     elif op == "person_representative":
         person = db.get(m.Person, inv["person_id"])
         if person:

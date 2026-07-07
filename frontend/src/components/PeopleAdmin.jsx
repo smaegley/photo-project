@@ -5,11 +5,21 @@ function slugify(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
+function nameOf(persons, id) {
+  return persons.find((p) => p.id === id)?.name ?? "—";
+}
+
 export default function PeopleAdmin({ onClose, onChanged }) {
   const [persons, setPersons] = useState([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [q, setQ] = useState("");
+  const [editingLinks, setEditingLinks] = useState(null); // person id being link-edited
+
+  // link editor state (populated when editingLinks is set)
+  const [lFather, setLFather] = useState("");
+  const [lMother, setLMother] = useState("");
+  const [lSpouse, setLSpouse] = useState("");
 
   // new-person form
   const [newName, setNewName] = useState("");
@@ -30,10 +40,21 @@ export default function PeopleAdmin({ onClose, onChanged }) {
     return persons.filter((p) => !needle || p.name.toLowerCase().includes(needle));
   }, [persons, q]);
 
-  // keep slug in sync with name unless user has manually edited it
   function handleNameChange(v) {
     setNewName(v);
     if (!idTouched) setNewId(slugify(v));
+  }
+
+  function startEditLinks(p) {
+    setEditingLinks(p.id);
+    setLFather(p.father_id ?? "");
+    setLMother(p.mother_id ?? "");
+    setLSpouse(p.spouse_id ?? "");
+    setMsg(null);
+  }
+
+  function cancelEditLinks() {
+    setEditingLinks(null);
   }
 
   async function run(label, fn) {
@@ -58,6 +79,13 @@ export default function PeopleAdmin({ onClose, onChanged }) {
       run(`renamed to ${name.trim()}`, () => api.renamePerson(p.id, name.trim()));
   };
 
+  const saveLinks = async (p) => {
+    const ok = await run(`updated ${p.name}'s family links`, () =>
+      api.updatePersonLinks(p.id, lFather || null, lMother || null, lSpouse || null)
+    );
+    if (ok) setEditingLinks(null);
+  };
+
   const create = async () => {
     const name = newName.trim();
     const id = newId.trim();
@@ -77,8 +105,6 @@ export default function PeopleAdmin({ onClose, onChanged }) {
     }
   };
 
-  const personOptions = persons;
-
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
@@ -94,14 +120,45 @@ export default function PeopleAdmin({ onClose, onChanged }) {
 
         <div className="event-admin-list">
           {list.map((p) => (
-            <div className="event-admin-row" key={p.id}>
-              <span className="event-admin-name">
-                {p.name}
-                <span className="modal-sub"> · {p.photo_count} photo{p.photo_count !== 1 ? "s" : ""}</span>
-              </span>
-              <span className="event-admin-actions">
-                <button className="link" onClick={() => rename(p)} disabled={busy}>rename</button>
-              </span>
+            <div key={p.id}>
+              <div className="event-admin-row">
+                <span className="event-admin-name">
+                  {p.name}
+                  <span className="modal-sub"> · {p.photo_count} photo{p.photo_count !== 1 ? "s" : ""}</span>
+                </span>
+                <span className="event-admin-actions">
+                  <button className="link" onClick={() => rename(p)} disabled={busy}>rename</button>
+                  <button className="link" onClick={() => editingLinks === p.id ? cancelEditLinks() : startEditLinks(p)}
+                          disabled={busy}>
+                    {editingLinks === p.id ? "cancel" : "edit links"}
+                  </button>
+                </span>
+              </div>
+              {editingLinks === p.id && (
+                <div className="people-link-editor">
+                  <div className="people-admin-row">
+                    <label>Father</label>
+                    <select value={lFather} onChange={(e) => setLFather(e.target.value)} disabled={busy}>
+                      <option value="">— none —</option>
+                      {persons.filter((x) => x.id !== p.id).map((x) =>
+                        <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                    <label>Mother</label>
+                    <select value={lMother} onChange={(e) => setLMother(e.target.value)} disabled={busy}>
+                      <option value="">— none —</option>
+                      {persons.filter((x) => x.id !== p.id).map((x) =>
+                        <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                    <label>Spouse</label>
+                    <select value={lSpouse} onChange={(e) => setLSpouse(e.target.value)} disabled={busy}>
+                      <option value="">— none —</option>
+                      {persons.filter((x) => x.id !== p.id).map((x) =>
+                        <option key={x.id} value={x.id}>{x.name}</option>)}
+                    </select>
+                    <button className="ghost" onClick={() => saveLinks(p)} disabled={busy}>Save</button>
+                  </div>
+                </div>
+              )}
             </div>
           ))}
           {list.length === 0 && <div className="modal-msg">No people match "{q}".</div>}
@@ -119,15 +176,15 @@ export default function PeopleAdmin({ onClose, onChanged }) {
           <div className="people-admin-row">
             <select value={newFather} onChange={(e) => setNewFather(e.target.value)} disabled={busy}>
               <option value="">— father —</option>
-              {personOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={newMother} onChange={(e) => setNewMother(e.target.value)} disabled={busy}>
               <option value="">— mother —</option>
-              {personOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
             <select value={newSpouse} onChange={(e) => setNewSpouse(e.target.value)} disabled={busy}>
               <option value="">— spouse —</option>
-              {personOptions.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
           <div className="people-admin-row" style={{ justifyContent: "flex-end" }}>

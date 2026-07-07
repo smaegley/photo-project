@@ -27,10 +27,11 @@ export default function App() {
 
   // reference data (loaded once)
   const [people, setPeople] = useState([]);
-  const [events, setEvents] = useState([]);       // photos-only, for the filter rail
-  const [allEvents, setAllEvents] = useState([]); // incl. empty events, for admin
-  const [places, setPlaces] = useState([]);       // mappable-only, for the map
-  const [allPlaces, setAllPlaces] = useState([]); // all places, for admin/assign
+  const [allPeople, setAllPeople] = useState([]);  // incl. zero-photo people, for admin pickers
+  const [events, setEvents] = useState([]);         // photos-only, for the filter rail
+  const [allEvents, setAllEvents] = useState([]);   // incl. empty events, for admin
+  const [places, setPlaces] = useState([]);         // mappable-only, for the map
+  const [allPlaces, setAllPlaces] = useState([]);   // all places, for admin/assign
   const [magazines, setMagazines] = useState([]);
 
   // gallery result
@@ -105,6 +106,7 @@ export default function App() {
       if (m.is_dev) api.devUsers().then(setDevUsers).catch(() => {});
     }).catch(() => setMe({ role: "viewer", email: "", person_id: null, display_name: null, theme: "system", is_dev: false }));
     api.people().then(setPeople).catch(() => {});
+    api.people(false).then(setAllPeople).catch(() => {});
     api.events().then(setEvents).catch(() => {});
     api.events(false).then(setAllEvents).catch(() => {});
     api.places(true).then(setPlaces).catch(() => {});
@@ -171,12 +173,12 @@ export default function App() {
   const refresh = useCallback(async () => {
     const seq = seqRef.current;
     try {
-      const [ev, aev, pl, apl, pe] = await Promise.all([
+      const [ev, aev, pl, apl, pe, ape] = await Promise.all([
         api.events(), api.events(false), api.places(true), api.places(false),
-        api.people()]);
+        api.people(), api.people(false)]);
       if (seq !== seqRef.current) return;
       setEvents(ev); setAllEvents(aev); setPlaces(pl); setAllPlaces(apl);
-      setPeople(pe);
+      setPeople(pe); setAllPeople(ape);
       if (isAdmin) api.undoPeek().then(setUndoInfo).catch(() => {});
       const pages = await Promise.all(
         Array.from({ length: page }, (_, i) => api.photos(filters, i + 1))
@@ -320,7 +322,7 @@ export default function App() {
                   total={result.total}
                   filterEventId={sel.events.length === 1 ? sel.events[0] : null}
                   events={allEvents}
-                  people={people}
+                  people={allPeople}
                   places={allPlaces}
                   onSelectAll={selectAll}
                   onClear={() => { setSelectedIds(new Set()); anchorRef.current = null; }}
@@ -357,7 +359,7 @@ export default function App() {
           admin={admin}
           isAdmin={isAdmin}
           events={allEvents}
-          people={people}
+          people={allPeople}
           places={allPlaces}
           magazines={magazines}
           onChanged={refresh}
