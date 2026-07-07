@@ -18,6 +18,13 @@ photos.
   gallery infinite-scroll bug, facet indexes (migration `a6b7c8d9e0f1`), card
   thumbnails, MapLibre code-split. **Phase 1 is closed out; ready for family
   usability feedback.**
+- **UX fixes + dev switcher deployed (2026-07-07, SPEC §10.12, `main` @ `35abaa1`):**
+  unlinked-viewer flat people list, map pins filtered to current result set,
+  DateSlider hidden in Rolls view, dev user switcher (👤 menu, `dev_override`
+  cookie) + prod logout via Cloudflare Access.
+- **Gallery sort fixed (2026-07-07, SPEC §10.13, `main` @ `1817081`):** gallery
+  now sorts by mag/slide# (Wendel's canonical order) rather than date; roll
+  gallery sort also fixed. Phase 2 sort_key design deferred.
 
 ## Environments (dev vs prod) — full details in README "Environments"
 Two separate boxes, separate DBs. **Prod is behind Cloudflare; dev is NOT** — a dev
