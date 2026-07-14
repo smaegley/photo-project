@@ -32,21 +32,37 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | §10.16 — image connection-pool fix (2026-07-14) |
-| Pushed to origin | check `git log origin/main..HEAD` |
-| Deployed to prod | **UNVERIFIED — check before assuming** (see below) |
-| Last verified deploy | §10.14 @ `e0875cd` (2026-07-07) |
-| Awaiting deploy | §10.15 (notes editing, UX) + §10.16 (**pool fix — real prod bug**) |
+| Repo HEAD (dev) | `d0d8ade` — §10.16 image connection-pool fix (2026-07-14) |
+| Pushed to origin | yes |
+| Deployed to prod | `d0d8ade` — 2026-07-14, shipping §10.15 + §10.16 (reported by Ops Agent) |
+| Last deploy before that | §10.14 @ `e0875cd` (2026-07-07) |
 
-§10.11–§10.14 are each explicitly recorded as deployed; **§10.15 and §10.16 are not**.
-Don't assume HEAD is live. Confirm with:
+Re-confirm prod's actual HEAD any time it matters — it's one command, and this table
+is only as good as its last update:
 
 ```bash
 ssh -i ~/.ssh/proxmox_lxc root@10.0.1.178 'cd /opt/photo-project && git rev-parse --short HEAD'
 ```
 
-**§10.16 needs `--build`** (backend code change), not a docs-safe pull. If prod is
-still at `e0875cd`, the same deploy also ships §10.15's app code — see that entry.
+**§10.16 is deployed but not yet behaviourally confirmed.** The fix only shows itself
+on a *cold* visit after >15 minutes away — a warm gallery never reproduced the bug in
+the first place, so "it looks fine" right after a deploy proves nothing. The real
+signal is this going quiet across a cold visit:
+
+```bash
+docker compose logs --tail=200 api | grep -i 'QueuePool\|TimeoutError'   # expect nothing
+```
+
+Also confirm `last_login` still advances on page loads (it moved from the tiles to the
+`/api/photos` call in §10.16). If it has stopped moving, the `touch=False` split is
+wrong. Check via **⚙ Admin → Manage users**, or:
+
+```bash
+docker compose exec api python -c "
+from app.database import SessionLocal; from app import models as m
+print([(u.email, str(u.last_login)) for u in SessionLocal().query(m.User).all()])"
+```
+
 Unrelated but easy to miss: `scripts/apply-notes-patch-20260707.py` (Ryan's 3 caption
 + 440 notes OCR corrections) is a **separate idempotent data patch** that no deploy
 applies; it supports `--dry-run`.
