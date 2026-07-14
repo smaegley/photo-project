@@ -6,6 +6,11 @@ Browsable by **people / place / date / event** with a map + timeline, plus an
 admin curation layer. Owner = **Steve** (steve@maegley.com), who appears in the
 photos.
 
+> **▶ Read `STATUS.md` first.** It is the drop-in entry point: current deployment
+> state, a triage playbook (prod issue / bug / enhancement), **known-and-accepted
+> issues that must not be "helpfully" fixed**, and the gotchas that waste time.
+> Start there, then dig into the sources of truth below only as needed.
+
 ## Status — built, frozen, deployed, hardened
 - **App is built and live** at **`photos.maegley.org`** (do not treat this as a
   greenfield project). Phase 1 complete: gallery, four facets, map, lightbox,
