@@ -34,6 +34,14 @@ photos.
   rename/add/edit-family-links in "Manage people" modal; allPeople (zero-photo
   included) used in admin pickers; Rolls view lightbox now has full admin props;
   filter rail reordered Places → Events → People with live counts + localStorage.
+- **Image pool-exhaustion fix (2026-07-14, SPEC §10.16):** thumbnails intermittently
+  failed to load on returning after a break — `QueuePool limit ... reached` 500s.
+  Two compounding causes on the image path: `Depends(get_db)` held a pooled
+  connection until *after* the body finished streaming (FastAPI tears yield-deps
+  down on the request stack, post-response), and a non-atomic `last_login` refresh
+  turned every tile in the burst into a write once the 15-min throttle lapsed.
+  Fixed via a no-write `image_user` dep + self-scoped sessions + an explicit pool
+  (20+30). A/B verified on dev: 9.56s → 0.03s under slow clients.
 - **Notes editing + UX fixes (2026-07-07, SPEC §10.15):** card notes field now
   editable in lightbox (admin, undoable); prod snapshot load script hardened
   (WAL/SHM cleanup); Ryan's 5 UX fixes: prominent back button, roll cards in

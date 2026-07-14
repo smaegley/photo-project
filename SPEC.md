@@ -324,6 +324,67 @@ The roll-gallery sort (when `magazine_id` filter is active) was already fixed in
 
 ---
 
+### 10.16 Image serving: DB connection-pool exhaustion (2026-07-14)
+
+**Symptom (prod):** returning to the gallery after being away — typically a day or
+two — a scatter of thumbnails failed to load. `docker compose logs api` showed:
+
+```
+sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached,
+connection timed out, timeout 30.00
+```
+
+Every broken tile was a 500 on `/api/thumbnails/...`. No OOM (`dmesg` clean), no
+container restarts — the process was healthy; individual requests died waiting for
+a DB connection.
+
+**Root cause — two compounding bugs, both on the image hot path:**
+
+1. **A pooled connection was held for the whole response transfer.** Image routes
+   took `db: Session = Depends(get_db)`. FastAPI registers yield-dependency teardown
+   on the *request* exit stack (`fastapi/routing.py`: `scope["fastapi_inner_astack"]
+   = request_stack`), and that stack unwinds **after** `await response(scope, receive,
+   send)` — i.e. after the body has streamed. So `get_db`'s `db.close()` ran only once
+   the JPEG had finished crossing the Cloudflare tunnel. Slow client = pinned
+   connection. With the SQLAlchemy default pool (5 + 10 overflow = **15**) sitting
+   *below* uvicorn's 40-thread sync pool, a gallery page of ~60 tiles exhausted the
+   pool and the remainder died on the 30s checkout wait.
+2. **A `last_login` write storm gated on absence.** `current_user` ran on every image
+   request and refreshed `last_login` on a 15-minute throttle. The check-then-write is
+   not atomic, so when the throttle had lapsed — i.e. **whenever you'd been away >15
+   min** — every tile in the burst read the same stale value and committed, serialising
+   ~60 writes on SQLite's single writer while each held its pool connection. This is
+   why the failure tracked "away for a day or two" and never reproduced in a warm
+   session (`dirty=False`, no writes, no herd).
+
+**Fix:**
+- `auth.py` — split `_identify()` (no DB) from `_load_user(..., touch: bool)`. New
+  `image_user` dependency authenticates image requests using a short-lived
+  `SessionLocal()` instead of `Depends(get_db)`, and passes `touch=False`. `last_login`
+  is now driven by the `/api/photos` call that renders the page, not by 60 tiles.
+- `routers/images.py` — all seven image routes moved to `image_user`; `_resolve()` and
+  `face()` scope their own sessions so no connection is held across PIL work or
+  streaming.
+- `database.py` — pool set explicitly to `pool_size=20, max_overflow=30` (50 > the
+  40-thread ceiling, so checkout can never queue) and `pool_timeout=10` to fail fast.
+
+**Verified on dev (VM 201), A/B against stashed original:**
+
+| test | original | patched |
+|---|---|---|
+| normal tile while 20 slow readers stream | **9.56s** (blocked on pool) | **0.03s** |
+| 60-tile burst w/ stale `last_login` | writes `last_login` (storm) | unchanged |
+| `/api/photos` still refreshes `last_login` | yes | yes |
+
+The 60-tile burst alone passes on *both* — localhost streaming is instant, so the
+connection-hold doesn't bite. Reproducing it requires slow-reading clients to stand in
+for tunnel latency. Worth remembering: **this class of bug is invisible on loopback.**
+
+**Note:** client-side retry on a failed tile was considered and rejected — under pool
+exhaustion it adds requests to the herd causing the failure.
+
+---
+
 ## 11. Phase 2 — Library expansion: ingesting non-slide photos (design, 2026-06-28)
 
 > **Status:** design agreed with Steve **2026-06-28**; **not yet built**. This realizes the §2 / §5 "library expansion" vision for two new photo origins beyond Wendel's slides. The data model (§3) was built for this — most of the work is **storage/serving generalization + a new ingest path**, not a schema redesign.

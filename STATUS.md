@@ -9,7 +9,7 @@ should tell you where to look and what's already known, so you don't re-derive i
 What lives *only* here: current deployment state, known-and-accepted issues, and the
 gotchas that burn time.
 
-**Last reviewed:** 2026-07-14 (full project + prod-setup review).
+**Last reviewed:** 2026-07-14 (full project + prod-setup review; image pool fix §10.16).
 
 ---
 
@@ -32,17 +32,24 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `1cb610d` — "Notes editing, UX fixes, snapshot hardening (SPEC §10.15)" |
-| Pushed to origin | yes (`origin/main` == local `main`) |
+| Repo HEAD (dev) | §10.16 — image connection-pool fix (2026-07-14) |
+| Pushed to origin | check `git log origin/main..HEAD` |
 | Deployed to prod | **UNVERIFIED — check before assuming** (see below) |
 | Last verified deploy | §10.14 @ `e0875cd` (2026-07-07) |
+| Awaiting deploy | §10.15 (notes editing, UX) + §10.16 (**pool fix — real prod bug**) |
 
-§10.11–§10.14 are each explicitly recorded as deployed; **§10.15 is not**. Don't
-assume `1cb610d` is live. Confirm with:
+§10.11–§10.14 are each explicitly recorded as deployed; **§10.15 and §10.16 are not**.
+Don't assume HEAD is live. Confirm with:
 
 ```bash
 ssh -i ~/.ssh/proxmox_lxc root@10.0.1.178 'cd /opt/photo-project && git rev-parse --short HEAD'
 ```
+
+**§10.16 needs `--build`** (backend code change), not a docs-safe pull. If prod is
+still at `e0875cd`, the same deploy also ships §10.15's app code — see that entry.
+Unrelated but easy to miss: `scripts/apply-notes-patch-20260707.py` (Ryan's 3 caption
++ 440 notes OCR corrections) is a **separate idempotent data patch** that no deploy
+applies; it supports `--dry-run`.
 
 ---
 
@@ -144,6 +151,11 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   them — prod deploys via `git pull` and would flip every file to `100755` for no
   benefit. Fix is `git config core.filemode false` (that `.git/config` is the VM's,
   shared over SMB — harmless there, since the VM's native filesystem already sees 644).
+- **Connection/streaming bugs are invisible on loopback.** §10.16's pool exhaustion
+  could not be reproduced by a 60-tile burst on dev — localhost streams instantly, so
+  nothing stays pinned. It only appeared with *slow-reading clients* standing in for
+  tunnel latency (9.56s vs 0.03s). If prod misbehaves under load and dev looks fine,
+  simulate the slow client before concluding it's environmental.
 - **Dev backend must bind `0.0.0.0`**, not `127.0.0.1`, or Steve's Mac can't reach it
   over the LAN. A dev box unreachable from the LAN is *always* a binding problem —
   dev has no Cloudflare in front of it.

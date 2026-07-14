@@ -6,6 +6,15 @@ from app.config import settings
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
+    # Sized above uvicorn's sync-route threadpool (40 by default) so a connection
+    # checkout can never queue: 20 + 30 overflow = 50 > 40. SQLite connections are
+    # cheap (a file handle), and WAL lets readers run concurrently. The default
+    # 5 + 10 = 15 was below the threadpool ceiling, so an image burst exhausted the
+    # pool and requests died on the 30s checkout wait (QueuePool TimeoutError).
+    pool_size=20,
+    max_overflow=30,
+    # Fail fast rather than hanging a tile for 30s if this is ever wrong again.
+    pool_timeout=10,
     connect_args={"check_same_thread": False},  # SQLite + FastAPI
 )
 

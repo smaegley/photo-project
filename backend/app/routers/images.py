@@ -9,12 +9,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
 
 from app import derivatives, models as m
-from app.auth import current_user
+from app.auth import image_user
 from app.config import settings
-from app.database import get_db
+from app.database import SessionLocal
 
 router = APIRouter(prefix="/api", tags=["images"])
 
@@ -39,8 +38,16 @@ def photo_file(photo: "m.Photo | None") -> Path:
     return path
 
 
-def _resolve(db: Session, source_file: str) -> Path:
-    return photo_file(db.query(m.Photo).filter(m.Photo.source_file == source_file).first())
+def _resolve(source_file: str) -> Path:
+    """Locate a photo's file, holding a pooled connection only for the lookup.
+
+    Image routes scope their own sessions rather than taking `Depends(get_db)`:
+    a yield-dependency's session is only released after the response body has
+    streamed, which would keep a connection checked out for the whole transfer.
+    See `auth.image_user` for the full explanation.
+    """
+    with SessionLocal() as db:
+        return photo_file(db.query(m.Photo).filter(m.Photo.source_file == source_file).first())
 
 
 def _safe_key(source_file: str) -> str:
@@ -49,25 +56,25 @@ def _safe_key(source_file: str) -> str:
 
 
 @router.get("/images/{source_file}")
-def full_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+def full_image(source_file: str, _user=Depends(image_user)):
     """The original (full-res) file — used for download."""
-    return FileResponse(_resolve(db, source_file), media_type="image/jpeg", headers=IMMUTABLE)
+    return FileResponse(_resolve(source_file), media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/display/{source_file}")
-def display_image(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+def display_image(source_file: str, _user=Depends(image_user)):
     """Sized derivative for the lightbox (originals can be 24MP)."""
-    src = _resolve(db, source_file)
+    src = _resolve(source_file)
     cache = settings.display_dir / _safe_key(source_file)
     derivatives.ensure(src, cache, derivatives.DISPLAY_MAX)
     return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/thumbnails/{source_file}")
-def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+def thumbnail(source_file: str, _user=Depends(image_user)):
     cache = settings.thumbnails_dir / _safe_key(source_file)
     try:
-        src = _resolve(db, source_file)
+        src = _resolve(source_file)
     except HTTPException:
         if cache.exists():  # serve a stale thumb rather than 404 if the source is gone
             return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
@@ -77,23 +84,24 @@ def thumbnail(source_file: str, db: Session = Depends(get_db), _user=Depends(cur
 
 
 @router.get("/faces/{person_id}")
-def face(person_id: str, db: Session = Depends(get_db), _user=Depends(current_user)):
+def face(person_id: str, _user=Depends(image_user)):
     """Cropped face thumbnail for a person's representative photo (SPEC §4.2)."""
-    person = db.get(m.Person, person_id)
-    if not person or not person.representative_photo_id:
-        raise HTTPException(404, "no representative photo")
-    rep = db.get(m.Photo, person.representative_photo_id)
-    src = photo_file(rep)
-    pp = db.get(m.PhotoPerson, (rep.id, person_id))
-    region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
-    cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep.id, region)}.jpg"
+    with SessionLocal() as db:
+        person = db.get(m.Person, person_id)
+        if not person or not person.representative_photo_id:
+            raise HTTPException(404, "no representative photo")
+        rep = db.get(m.Photo, person.representative_photo_id)
+        src = photo_file(rep)
+        pp = db.get(m.PhotoPerson, (rep.id, person_id))
+        region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
+        cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep.id, region)}.jpg"
     if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
         derivatives.face_thumb(src, cache, region)
     return FileResponse(cache, media_type="image/jpeg", headers=DAY)
 
 
 @router.get("/cards/{filename}")
-def index_card(filename: str, _user=Depends(current_user)):
+def index_card(filename: str, _user=Depends(image_user)):
     if not CARD_RE.match(filename):
         raise HTTPException(400, "bad card filename")
     path = settings.cards_dir / filename
@@ -103,7 +111,7 @@ def index_card(filename: str, _user=Depends(current_user)):
 
 
 @router.get("/card-thumbs/{filename}")
-def index_card_thumb(filename: str, _user=Depends(current_user)):
+def index_card_thumb(filename: str, _user=Depends(image_user)):
     """Sized card derivative for grid/panel views; /api/cards stays full-res."""
     if not CARD_RE.match(filename):
         raise HTTPException(400, "bad card filename")
