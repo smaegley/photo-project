@@ -111,7 +111,9 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
         <button className="lb-nav right" onClick={(e) => { e.stopPropagation(); next(); }}>›</button>
       )}
 
-      <div className="lb-stage" onClick={(e) => e.stopPropagation()}
+      {/* Clicks on the photo/toolbar (children) are swallowed; clicks on the empty
+          stage margin bubble to the backdrop `close`, so click-outside works. */}
+      <div className="lb-stage" onClick={(e) => { if (e.target !== e.currentTarget) e.stopPropagation(); }}
            onWheel={onWheel} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onUp}>
         {imgError ? (
           <div className="lb-img-error">
