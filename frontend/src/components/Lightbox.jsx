@@ -7,7 +7,6 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [detail, setDetail] = useState(null);
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
-  const [showBack, setShowBack] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [cropPerson, setCropPerson] = useState(null);
@@ -24,7 +23,6 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   useEffect(() => {
     setDetail(null);
     setImgError(false);
-    setShowBack(false);
     setZoom(1); setPan({ x: 0, y: 0 }); // reset view per photo
     api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); setNotesDraft(d.notes || ""); });
     if (index >= photos.length - 3) onLoadMore();
@@ -237,19 +235,16 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               )}
             </div>
 
-            {/* ---- Back of the photo (annotated scans, SPEC §12.8) ---- */}
+            {/* ---- Back of the photo (annotated scans, SPEC §12.8) — shown
+                 automatically, sized to the sidebar; click through for full size ---- */}
             {detail.back_url && (
               <div className="lb-rollcard-sec">
-                <button className="lb-rollcard-toggle" onClick={() => setShowBack((s) => !s)}>
-                  🖊 {showBack ? "Hide" : "Show"} photo back
-                </button>
-                {showBack && (
-                  <div className="lb-rollcards">
-                    <a href={detail.back_url} target="_blank" rel="noreferrer" title="Open full size">
-                      <img className="lb-rollcard" src={detail.back_url} alt="Back of photo" loading="lazy" />
-                    </a>
-                  </div>
-                )}
+                <label>Back of photo</label>
+                <div className="lb-rollcards">
+                  <a href={detail.back_url} target="_blank" rel="noreferrer" title="Open full size">
+                    <img className="lb-rollcard" src={detail.back_url} alt="Back of photo" loading="lazy" />
+                  </a>
+                </div>
               </div>
             )}
 

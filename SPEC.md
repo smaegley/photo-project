@@ -655,9 +655,10 @@ code). Run: `docker compose exec api python -m app.import_photos [--dry-run]`
   the fallback until it resolves; "All dates" logic compares against the fetched
   bounds. (Register the route before `/photos/{id}` — the `/photos/ids` precedent.)
 - **Lightbox:** origin badge for non-slides ("Scanned print" + batch name in the
-  notes panel); **"Show photo back"** reveal (same pattern as Show-roll-card, §10.3)
-  when `back_path` is set, served through the display-derivative pipeline; download
-  filename for scans = `original_filename`.
+  notes panel); the **back-of-photo scan is shown automatically** in the notes
+  sidebar (sized to the panel, click-through to full size) when `back_path` is set,
+  served through the display-derivative pipeline; download filename for scans =
+  `original_filename`.
 - **Untagged filter (stretch, admin-only — §11.7 Phase D):** a rail toggle filtering
   to photos with zero `photo_person` rows. Build last; drop if the batch runs long.
 
@@ -759,7 +760,8 @@ Slices 1–6 built and verified on VM 201 against the probe sample batches; slic
 - Frontend (§12.8): `All Photos | Slide Photos | Scanned Photos` toggle, origin scope,
   `/api/photos/meta` dynamic bounds (dev now shows 1962–**1992**), image routes
   `:path`-typed + URL-encoded (spaced/slashed scan paths serve 200), lightbox origin
-  badge + batch + "Show photo back" reveal + `original_filename` download name.
+  badge + batch + auto-shown back-of-photo (sized to the sidebar) + `original_filename`
+  download name.
 - `prewarm` extended to cover non-slide photos (path-based cache keys).
 
 **Deliberate deviations / deferrals (for the developer + Steve):**
