@@ -137,11 +137,13 @@ def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
         event_counts = [FacetCount(key=str(eid), label=name, count=c)
                         for eid, name, c in eq.all()]
 
-        # place counts for the map (places selection removed, mappable only)
+        # place counts for the current result (places selection removed). Covers
+        # ALL places, pinned or not, so the filter rail can live-count/grey them
+        # like people/events; the map intersects these with its own mappable-only
+        # list, so pins are unaffected (SPEC §12.8 fix).
         lq = _apply(db.query(m.Place.id, m.Place.canonical_name,
                              func.count(func.distinct(m.Photo.id)))
-                    .join(m.Photo, m.Photo.place_id == m.Place.id)
-                    .filter(m.Place.lat.isnot(None), m.Place.lon.isnot(None)),
+                    .join(m.Photo, m.Photo.place_id == m.Place.id),
                     f, exclude="places").group_by(m.Place.id)
         place_counts = [FacetCount(key=str(plid), label=name, count=c)
                         for plid, name, c in lq.all()]

@@ -63,7 +63,7 @@ class PhotoQueryResult(BaseModel):
     # live per-facet counts for the current filter set (self-facet excluded)
     people_counts: list[FacetCount]
     event_counts: list[FacetCount]
-    place_counts: list[FacetCount]   # mappable places only; drives map pin filtering
+    place_counts: list[FacetCount]   # all places in the result; drives rail live-counts + map pin filtering
 
 
 class PersonOut(BaseModel):

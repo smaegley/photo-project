@@ -51,12 +51,13 @@ function PersonCell({ p, count, active, disabled, onClick }) {
   );
 }
 
-export default function FilterRail({ people, events, places, peopleCounts, eventCounts, sel, onToggle, onReset, hasFilters }) {
+export default function FilterRail({ people, events, places, peopleCounts, eventCounts, placeCounts = [], sel, onToggle, onReset, hasFilters }) {
   const [grid, setGrid] = useState(() => localStorage.getItem("peopleView") !== "list");
   const setView = (g) => { setGrid(g); localStorage.setItem("peopleView", g ? "grid" : "list"); };
 
   const pCount = Object.fromEntries(peopleCounts.map((c) => [c.key, c.count]));
   const eCount = Object.fromEntries(eventCounts.map((c) => [c.key, c.count]));
+  const lCount = Object.fromEntries(placeCounts.map((c) => [c.key, c.count]));
 
   const grouped = {};
   for (const p of people) (grouped[p.relationship] ||= []).push(p);
@@ -64,10 +65,10 @@ export default function FilterRail({ people, events, places, peopleCounts, event
   const ungrouped = grouped[null] ?? [];
   const byCount = (a, b) => (pCount[b.id] ?? b.photo_count) - (pCount[a.id] ?? a.photo_count);
 
-  // Live counts for section headers
+  // Live counts for section headers (all scoped to the current result)
   const activePeopleCount = peopleCounts.filter((c) => c.count > 0).length;
   const activeEventCount  = eventCounts.filter((c) => c.count > 0).length;
-  const activePlaceCount  = places.filter((pl) => pl.photo_count > 0).length;
+  const activePlaceCount  = placeCounts.filter((c) => c.count > 0).length;
 
   function renderPeople(list) {
     return grid ? (
@@ -97,11 +98,12 @@ export default function FilterRail({ people, events, places, peopleCounts, event
 
       <Section title="Places" storageKey="places" defaultOpen={false} count={activePlaceCount}>
         <div className="places-scroll">
-          {places.map((pl) => (
-            <Row key={pl.id} label={pl.name} count={pl.photo_count}
-              active={sel.places.includes(pl.id)} disabled={pl.photo_count === 0}
-              onClick={() => onToggle("places", pl.id)} />
-          ))}
+          {places.map((pl) => {
+            const live = lCount[pl.id] ?? 0;
+            return <Row key={pl.id} label={pl.name} count={live}
+              active={sel.places.includes(pl.id)} disabled={live === 0}
+              onClick={() => onToggle("places", pl.id)} />;
+          })}
         </div>
       </Section>
 

@@ -328,6 +328,7 @@ export default function App() {
             places={allPlaces}
             peopleCounts={result.people_counts}
             eventCounts={result.event_counts}
+            placeCounts={result.place_counts}
             sel={sel}
             onToggle={toggle}
             onReset={reset}
