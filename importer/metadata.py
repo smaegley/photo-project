@@ -52,11 +52,24 @@ def canon_alias_key(a: str) -> str:
     return norm_text(a)
 
 
+_XMP_APP1_HEADER = b"http://ns.adobe.com/xap/1.0/\x00"
+
+
 def read_xmp(path) -> str | None:
-    """Return the raw XMP packet as text, or None if absent/unreadable."""
+    """Return the raw XMP packet as text, or None if absent/unreadable.
+
+    info['xmp'] is only populated by newer Pillow releases; older ones (e.g.
+    10.0.1) parse the JPEG APP segments but never surface the XMP one. Fall back
+    to scanning `applist` for the XMP APP1 segment ourselves.
+    """
     try:
         with Image.open(path) as im:
             x = im.info.get("xmp")
+            if not x:
+                for seg, data in getattr(im, "applist", []):
+                    if seg == "APP1" and data.startswith(_XMP_APP1_HEADER):
+                        x = data[len(_XMP_APP1_HEADER):]
+                        break
     except Exception:
         return None
     if not x:

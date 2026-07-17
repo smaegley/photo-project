@@ -102,7 +102,8 @@ Reading the signals:
 
 ### "Enhancement"
 - Open/deferred items: `SPEC.md` §10.7. Phase 2 (non-slide ingest) is designed in
-  §11 but **not built**.
+  §11; **Phase 2a "Scanned Photos" has a locked build spec in §12** (2026-07-17,
+  probes-first build order in §12.11) but is **not built**.
 - Ship path: dev → commit → push → on LXC 209
   `git pull && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build`
   (migrations auto-run on `api` start). Full runbook: `infra/DEPLOY.md`.
