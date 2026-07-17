@@ -307,6 +307,16 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .lb-rollcards { margin-top: 10px; display: flex; flex-direction: column; gap: 10px; }
 .lb-rollcard { width: 100%; display: block; border: 1px solid var(--border); border-radius: 8px; }
 
+/* Full-size back-of-photo overlay (above the lightbox) */
+.lb-backfull { position: fixed; inset: 0; z-index: 130; background: rgba(15,17,21,.92);
+  display: flex; align-items: center; justify-content: center; padding: 40px; }
+.lb-backfull img { max-width: 96vw; max-height: 92vh; object-fit: contain;
+  border-radius: 8px; box-shadow: 0 8px 40px rgba(0,0,0,.5); }
+.lb-backfull-close { position: absolute; top: 14px; right: 18px; z-index: 2; border: 0;
+  background: rgba(255,255,255,.12); color: #fff; width: 38px; height: 38px;
+  border-radius: 50%; font-size: 16px; cursor: pointer; }
+.lb-backfull-close:hover { background: rgba(255,255,255,.22); }
+
 /* ---------- admin bar (bulk apply/reject) ---------- */
 .admin-bar {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;

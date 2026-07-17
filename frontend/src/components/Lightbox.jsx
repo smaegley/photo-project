@@ -7,6 +7,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [detail, setDetail] = useState(null);
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
+  const [backFull, setBackFull] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [cropPerson, setCropPerson] = useState(null);
@@ -23,6 +24,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   useEffect(() => {
     setDetail(null);
     setImgError(false);
+    setBackFull(false);
     setZoom(1); setPan({ x: 0, y: 0 }); // reset view per photo
     api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); setNotesDraft(d.notes || ""); });
     if (index >= photos.length - 3) onLoadMore();
@@ -45,13 +47,15 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
 
   useEffect(() => {
     const h = (e) => {
+      // the full-size back overlay captures Escape/arrows first
+      if (backFull) { if (e.key === "Escape") setBackFull(false); return; }
       if (e.key === "Escape") close();
       if (e.key === "ArrowLeft") prev();
       if (e.key === "ArrowRight") next();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [index, photos.length, detail]); // eslint-disable-line
+  }, [index, photos.length, detail, backFull]); // eslint-disable-line
 
   async function edit(fn) {
     setBusy(true);
@@ -241,9 +245,9 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               <div className="lb-rollcard-sec">
                 <label>Back of photo</label>
                 <div className="lb-rollcards">
-                  <a href={detail.back_url} target="_blank" rel="noreferrer" title="Open full size">
-                    <img className="lb-rollcard" src={detail.back_url} alt="Back of photo" loading="lazy" />
-                  </a>
+                  <img className="lb-rollcard" src={detail.back_url} alt="Back of photo" loading="lazy"
+                       style={{ cursor: "zoom-in" }} title="View full size"
+                       onClick={() => setBackFull(true)} />
                 </div>
               </div>
             )}
@@ -282,6 +286,14 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
         <FaceCropEditor person={cropPerson} photo={photo}
           onClose={() => setCropPerson(null)}
           onSaved={() => { dirty.current = true; setCropPerson(null); reload(); onChanged?.(); }} />
+      )}
+
+      {backFull && detail?.back_url && (
+        <div className="lb-backfull" onClick={(e) => { e.stopPropagation(); setBackFull(false); }}>
+          <button className="lb-backfull-close" title="Close (Esc)"
+                  onClick={(e) => { e.stopPropagation(); setBackFull(false); }}>✕</button>
+          <img src={detail.back_url} alt="Back of photo" onClick={(e) => e.stopPropagation()} />
+        </div>
       )}
     </div>
   );
