@@ -26,7 +26,7 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 from app.database import SessionLocal  # noqa: E402
 from app import models as m  # noqa: E402
 from app.config import settings  # noqa: E402
-from importer.metadata import (  # noqa: E402
+from app.metadata import (  # noqa: E402
     read_xmp, people_from_xmp, face_regions_from_xmp, image_size, norm_text, canon_alias_key,
 )
 

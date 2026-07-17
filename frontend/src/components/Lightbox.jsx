@@ -7,6 +7,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [detail, setDetail] = useState(null);
   const [showNotes, setShowNotes] = useState(true);
   const [showCard, setShowCard] = useState(false);
+  const [showBack, setShowBack] = useState(false);
   const [captionDraft, setCaptionDraft] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [cropPerson, setCropPerson] = useState(null);
@@ -23,6 +24,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   useEffect(() => {
     setDetail(null);
     setImgError(false);
+    setShowBack(false);
     setZoom(1); setPan({ x: 0, y: 0 }); // reset view per photo
     api.photo(photo.id).then((d) => { setDetail(d); setCaptionDraft(d.caption || ""); setNotesDraft(d.notes || ""); });
     if (index >= photos.length - 3) onLoadMore();
@@ -80,6 +82,8 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const downloadSrc = detail?.image_url || photo.image_url;
 
   function buildDownloadName(d) {
+    // Scans/digital keep their original exported filename (SPEC §12.8).
+    if (d?.origin && d.origin !== "slide") return d.original_filename || null;
     if (!d?.magazine_id) return null;
     const mag   = String(d.magazine_id).padStart(2, "0");
     const slide = String(d.slide_in_mag ?? 0).padStart(2, "0");
@@ -149,6 +153,14 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               {detail.date_raw && <div><label>Date</label><span>{detail.date_raw}</span></div>}
               {detail.magazine_id && (
                 <div><label>Roll</label><span>Mag {detail.magazine_id} · slide {detail.slide_in_mag}</span></div>
+              )}
+              {detail.origin && detail.origin !== "slide" && (
+                <div><label>Source</label>
+                  <span>
+                    <span className="lb-origin-badge">{detail.origin === "scan" ? "Scanned print" : "Digital"}</span>
+                    {detail.batch && <span className="lb-batch"> · {detail.batch}</span>}
+                  </span>
+                </div>
               )}
             </div>
 
@@ -224,6 +236,22 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                 </select>
               )}
             </div>
+
+            {/* ---- Back of the photo (annotated scans, SPEC §12.8) ---- */}
+            {detail.back_url && (
+              <div className="lb-rollcard-sec">
+                <button className="lb-rollcard-toggle" onClick={() => setShowBack((s) => !s)}>
+                  🖊 {showBack ? "Hide" : "Show"} photo back
+                </button>
+                {showBack && (
+                  <div className="lb-rollcards">
+                    <a href={detail.back_url} target="_blank" rel="noreferrer" title="Open full size">
+                      <img className="lb-rollcard" src={detail.back_url} alt="Back of photo" loading="lazy" />
+                    </a>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* ---- Dad's roll index card ---- */}
             {rollCards.length > 0 && (

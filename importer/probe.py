@@ -17,7 +17,10 @@ from pathlib import Path
 from PIL import Image
 from PIL.ExifTags import GPSTAGS, TAGS
 
-from importer import metadata
+# The shared reader lives in the backend package (it must ship in the prod image);
+# put backend/ on the path so `from app import metadata` resolves when run from repo.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from app import metadata  # noqa: E402
 
 # IFDs worth walking: (label, pointer tag in the 0th IFD or None for the 0th itself)
 _EXIF_IFD = 0x8769

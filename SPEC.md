@@ -1,6 +1,6 @@
 # Family Slide Archive — Build Specification
 
-**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); **§12 (2026-07-17) is the build spec for scan ingest — Phase 2a "Scanned Photos" — decisions locked with Steve; build next.** Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
+**Status:** ✅ **FROZEN v1.0** (design) + **§10 build log** + **§11 Phase-2 ingest design**. Phase 1 built, **deployed and live** at `photos.maegley.org` (LXC 209 — see `infra/DEPLOY.md`). Since then: UI polish + dark mode (incl. dark map) + hybrid usage tracking + **face thumbnails** + infra (§10.8–10.10, `3691ac1`), then a **pre-1.0 hardening batch** — SQLite concurrency, the gallery scroll-bug fix, facet indexes, and polish (§10.11, `main` @ `1ae672b`, **deployed**). **Phase 1 is closed out and ready for family usability feedback.** **§10 is the source of truth where it refines §§3–9.** **§11** is the design for ingesting non-slide photos — its slide-side foundations (storage/serving, metadata reader, LR-people overlay) are **built** (§11.8); **§12 (2026-07-17): Phase 2a "Scanned Photos" (origin=scan) — BUILT & VERIFIED ON DEV; prod rollout (slice 7) pending (§12.12).** Remaining v1 (minor): wider roll-card view in the lightbox (§10.7).
 **Version:** 1.0 frozen + §10 build log + §11 ingest design + §12 Phase-2a build spec · **Frozen:** 2026-06-21 · **Build log:** 2026-06-23 · **§11:** 2026-06-28 · **§10.8–10.10:** 2026-07-01 · **§10.11:** 2026-07-02 · **§10.12:** 2026-07-04 · **§10.13:** 2026-07-06 · **§10.14:** 2026-07-07 · **§10.15:** 2026-07-07 · **§12:** 2026-07-17
 **Supersedes:** the prior planning agent's handoff package at `/mnt/photos/photo-project/handoff/` (kept for reference only; its prose lags the project — trust the manifest, not that text).
 
@@ -732,3 +732,53 @@ place names).
 **Out of scope for 2a:** digital ingest specifics (shares this code; needs no FastFoto
 parsing), ML enrichment (§5), any batch-browse UI (batches are provenance labels for
 now — a "browse by batch" view is a possible future analog of Rolls).
+
+### 12.12 Build status — BUILT & VERIFIED ON DEV (2026-07-17), prod rollout pending
+Slices 1–6 built and verified on VM 201 against the probe sample batches; slice 7
+(prod rollout) is the only remaining step. Migration `a7b8c9d0e1f2` (down_revision
+`a6b7c8d9e0f1`) applied on dev — 1,140 slides backfilled `sort_date`, all persons
+`is_family=1`.
+
+**Built:**
+- Schema/models + migration (§12.3); interleaved `sort_date` sort (§12.5) — verified a
+  1963 scan lands between Mag1 (span-start 1962-09) and Mag4.
+- Shared readers **moved into the backend package** (`app/metadata.py`, `app/dates.py`)
+  so the importer runs in the prod image; `importer/` scripts + `probe.py` updated to
+  `from app…`. `read_xmp` also gained an `applist` fallback (older Pillow) — committed
+  in `da8c18d`.
+- `metadata.extract` extended: `dc:description`/`dc:title`, IPTC location
+  (`photoshop:City/State/Country` + `Iptc4xmpCore:Location/CountryCode`),
+  `lr:hierarchicalSubject`, EXIF `ImageDescription` caption fallback, face regions.
+- `app/import_photos.py` (§12.6): non-destructive, idempotent (verified: 8 new →
+  re-run 0 new/0 tags), batch-date parsing, `_b` back pairing (4 linked), `_a` dedup,
+  union-add tags, fill-if-empty scalars, review CSVs. **Friend workflow verified**:
+  adding an unresolved LR name as `is_family=0` + re-run resolves it and groups it
+  under "Friends & others".
+- People family/others (§12.7): deriver short-circuit, `REL_ORDER`, `is_family` on
+  `PersonOut`/create/edit, Manage People checkbox + per-row toggle.
+- Frontend (§12.8): `All Photos | Slide Photos | Scanned Photos` toggle, origin scope,
+  `/api/photos/meta` dynamic bounds (dev now shows 1962–**1992**), image routes
+  `:path`-typed + URL-encoded (spaced/slashed scan paths serve 200), lightbox origin
+  badge + batch + "Show photo back" reveal + `original_filename` download name.
+- `prewarm` extended to cover non-slide photos (path-based cache keys).
+
+**Deliberate deviations / deferrals (for the developer + Steve):**
+- **Reverse-geocoding is NOT done in the importer.** `importer/geocode.py` isn't in
+  the container image and per-import network calls are undesirable on the prod DB.
+  GPS resolves by **proximity to existing gazetteer places** (≤25 km); IPTC text by
+  name match; genuine new places go to `review/unresolved_places.csv` for Steve to add
+  via the pin editor, then re-run. (Refines §12.6's "reverse-geocode … or create".)
+- **Scalar metadata is fill-if-empty on re-import** (caption/title/date/place), and
+  tags are **union-add only** — a re-run never clobbers in-app human edits, but also
+  won't propagate a later LR caption/tag *change* to an already-imported photo. A
+  `--refresh-meta` flag can be added if that's wanted.
+- **`_a` dedup / unpaired-back reports:** code paths present but not exercised (the
+  probe batches had no `_a` copies and no orphan backs).
+- **"Needs review / untagged" filter (§12.8 stretch): NOT built** — drop-if-long item.
+- Non-family rename toggle is **not undoable** (low-stakes, one-click reversible).
+
+**Rollout (slice 7, §12.10) — for the Ops step:** rsync LR-exported batches to prod
+`/mnt/photos/library/photos/<batch>/`, then in the container:
+`docker compose exec api python -m app.import_photos --dry-run` → review
+`./data/review/*.csv` → real run → `python -m app.prewarm`. Non-destructive; **never**
+`import_data.py`.

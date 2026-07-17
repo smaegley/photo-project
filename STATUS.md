@@ -102,8 +102,13 @@ Reading the signals:
 
 ### "Enhancement"
 - Open/deferred items: `SPEC.md` §10.7. Phase 2 (non-slide ingest) is designed in
-  §11; **Phase 2a "Scanned Photos" has a locked build spec in §12** (2026-07-17,
-  probes-first build order in §12.11) but is **not built**.
+  §11; **Phase 2a "Scanned Photos" (origin=scan) is BUILT & VERIFIED ON DEV**
+  (2026-07-17, migration `a7b8c9d0e1f2`, §12.12) — only the **prod rollout (slice 7)**
+  remains. Scan importer: `docker compose exec api python -m app.import_photos
+  [--dry-run]` then `python -m app.prewarm`; non-destructive, reviews to
+  `./data/review/*.csv`. **Dev carries sample scan rows + a `deirdre_carlile`
+  test person** from verification (harmless; cleared on the next prod-snapshot
+  refresh). Dev DB backed up to `/tmp/photos.db.pre-scan-bak` before the migration.
 - Ship path: dev → commit → push → on LXC 209
   `git pull && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build`
   (migrations auto-run on `api` start). Full runbook: `infra/DEPLOY.md`.

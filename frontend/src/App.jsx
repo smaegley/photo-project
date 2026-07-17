@@ -15,15 +15,23 @@ import PlacesAdmin from "./components/PlacesAdmin";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
 
+// Fallback timeline bounds (frozen slide range) until /api/photos/meta resolves the
+// live library extent, which grows as scans/digital arrive (SPEC §12.8).
 export const YEAR_MIN = 1962;
 export const YEAR_MAX = 1976;
 
 const EMPTY = { people: [], events: [], places: [], bbox: null, magazineId: null };
 
+// Views (SPEC §12.8): All Photos (mixed gallery), Slide Photos (Rolls), Scanned Photos.
+const GALLERY_VIEWS = new Set(["gallery", "scans"]);  // full chrome; "rolls" is the exception
+
 export default function App() {
   const [years, setYears] = useState([YEAR_MIN, YEAR_MAX]);
+  const [bounds, setBounds] = useState({ min: YEAR_MIN, max: YEAR_MAX });
+  const datesTouched = useRef(false);
   const [sel, setSel] = useState(EMPTY); // people/events/places/bbox selections
   const [view, setView] = useState("gallery");
+  const isGalleryView = GALLERY_VIEWS.has(view);
 
   // reference data (loaded once)
   const [people, setPeople] = useState([]);
@@ -71,17 +79,18 @@ export default function App() {
   const seqRef = useRef(0);
 
   const filters = useMemo(() => {
-    const full = years[0] === YEAR_MIN && years[1] === YEAR_MAX;
+    const full = years[0] === bounds.min && years[1] === bounds.max;
     return {
       ...sel,
+      origin: view === "scans" ? "scan" : null,  // Scanned Photos = hard origin scope
       dateStart: full ? null : `${years[0]}-01-01`,
       dateEnd: full ? null : `${years[1]}-12-31`,
     };
-  }, [sel, years]);
+  }, [sel, years, bounds, view]);
 
   const hasFilters =
     sel.people.length || sel.events.length || sel.places.length || sel.bbox || sel.magazineId ||
-    years[0] !== YEAR_MIN || years[1] !== YEAR_MAX;
+    years[0] !== bounds.min || years[1] !== bounds.max;
 
   const activeRoll = sel.magazineId ? magazines.find((m) => m.id === sel.magazineId) : null;
   const personName = useMemo(
@@ -113,7 +122,17 @@ export default function App() {
     api.places(true).then(setPlaces).catch(() => {});
     api.places(false).then(setAllPlaces).catch(() => {});
     api.magazines().then(setMagazines).catch(() => {});
+    // Dynamic timeline bounds (SPEC §12.8). If the user hasn't touched the slider,
+    // widen it to the live extent so scans/digital years become reachable.
+    api.photosMeta().then((mt) => {
+      if (mt.year_min == null || mt.year_max == null) return;
+      const b = { min: mt.year_min, max: mt.year_max };
+      setBounds(b);
+      if (!datesTouched.current) setYears([b.min, b.max]);
+    }).catch(() => {});
   }, []);
+
+  const changeYears = useCallback((y) => { datesTouched.current = true; setYears(y); }, []);
 
   // keep the undo button in sync when admin mode turns on (undo is admin-only)
   useEffect(() => {
@@ -149,7 +168,7 @@ export default function App() {
       if (sel.places.length) parts.push(`places:${sel.places.length}`);
       if (sel.bbox) parts.push("map");
       if (sel.magazineId) parts.push(`roll:${sel.magazineId}`);
-      if (years[0] !== YEAR_MIN || years[1] !== YEAR_MAX) parts.push(`${years[0]}-${years[1]}`);
+      if (years[0] !== bounds.min || years[1] !== bounds.max) parts.push(`${years[0]}-${years[1]}`);
       api.logUsage("search", parts.join(" "));
     }, 1500);
     return () => clearTimeout(t);
@@ -244,8 +263,15 @@ export default function App() {
       [key]: s[key].includes(id) ? s[key].filter((x) => x !== id) : [...s[key], id],
     }));
 
-  const reset = () => { setSel(EMPTY); setYears([YEAR_MIN, YEAR_MAX]); };
+  const reset = () => { setSel(EMPTY); datesTouched.current = false; setYears([bounds.min, bounds.max]); };
   const setBbox = (bbox) => setSel((s) => ({ ...s, bbox }));
+
+  // Switching views: leaving the mixed gallery drops any roll filter (scans/rolls
+  // have no magazine context), so the view starts clean.
+  const changeView = useCallback((v) => {
+    setView(v);
+    if (v !== "gallery") setSel((s) => (s.magazineId ? { ...s, magazineId: null } : s));
+  }, []);
 
   return (
     <div className="app">
@@ -253,7 +279,7 @@ export default function App() {
         view={view}
         total={result.total}
         hasFilters={hasFilters}
-        onView={setView}
+        onView={changeView}
         onReset={reset}
         mapOpen={mapOpen}
         onToggleMap={() => setMapOpen((o) => !o)}
@@ -276,9 +302,9 @@ export default function App() {
         devUsers={devUsers}
       />
 
-      {view === "gallery" && <DateSlider years={years} onChange={setYears} />}
+      {isGalleryView && <DateSlider years={years} onChange={changeYears} min={bounds.min} max={bounds.max} />}
 
-      {mapOpen && (
+      {mapOpen && isGalleryView && (
         <Suspense fallback={<div className="mapband" />}>
           <MapBand
             places={filteredPlaces}
@@ -293,9 +319,9 @@ export default function App() {
         </Suspense>
       )}
 
-      <div className={`body ${view === "gallery" ? "" : "no-rail"}`}>
-        {/* The filter rail only applies to the gallery — hide it in Rolls view */}
-        {view === "gallery" && (
+      <div className={`body ${isGalleryView ? "" : "no-rail"}`}>
+        {/* The filter rail applies to the mixed gallery + Scanned Photos, not Rolls */}
+        {isGalleryView && (
           <FilterRail
             people={people}
             events={events}
@@ -309,7 +335,7 @@ export default function App() {
           />
         )}
         <main className="gallery-pane">
-          {view === "gallery" ? (
+          {isGalleryView ? (
             <>
               {activeRoll && (
                 <div className="roll-banner">

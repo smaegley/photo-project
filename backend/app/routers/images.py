@@ -50,18 +50,19 @@ def _resolve(source_file: str) -> Path:
         return photo_file(db.query(m.Photo).filter(m.Photo.source_file == source_file).first())
 
 
-def _safe_key(source_file: str) -> str:
-    """Filesystem-safe cache filename (slide names like Mag1_Slide01.JPG pass through)."""
-    return re.sub(r"[^A-Za-z0-9._-]", "_", source_file)
+_safe_key = derivatives.safe_key  # shared with prewarm (SPEC §12.6)
 
 
-@router.get("/images/{source_file}")
+# source_file may be a library-relative path with slashes (scan photos,
+# photos/<batch>/<file>) — the :path converter captures those; slide names
+# (Mag1_Slide01.JPG) have no slash and match too (SPEC §12.6).
+@router.get("/images/{source_file:path}")
 def full_image(source_file: str, _user=Depends(image_user)):
     """The original (full-res) file — used for download."""
     return FileResponse(_resolve(source_file), media_type="image/jpeg", headers=IMMUTABLE)
 
 
-@router.get("/display/{source_file}")
+@router.get("/display/{source_file:path}")
 def display_image(source_file: str, _user=Depends(image_user)):
     """Sized derivative for the lightbox (originals can be 24MP)."""
     src = _resolve(source_file)
@@ -70,7 +71,27 @@ def display_image(source_file: str, _user=Depends(image_user)):
     return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
-@router.get("/thumbnails/{source_file}")
+@router.get("/photo-back/{photo_id}")
+def photo_back(photo_id: int, _user=Depends(image_user)):
+    """Display derivative of a scan's back-of-photo (_b) image (SPEC §12.8).
+
+    Keyed by photo id (the back has no Photo row of its own). Back scans skip
+    Lightroom, so they carry a live EXIF orientation flag — transpose it (§12.6)."""
+    with SessionLocal() as db:
+        photo = db.query(m.Photo).filter(m.Photo.id == photo_id).first()
+        back_path = photo.back_path if photo else None
+    if not back_path:
+        raise HTTPException(404, "no back image")
+    root = Path(settings.library_root).resolve()
+    src = (root / back_path).resolve()
+    if root not in src.parents or not src.exists():
+        raise HTTPException(404, "back image not found")
+    cache = settings.display_dir / _safe_key(back_path)
+    derivatives.ensure(src, cache, derivatives.DISPLAY_MAX, transpose=True)
+    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+
+
+@router.get("/thumbnails/{source_file:path}")
 def thumbnail(source_file: str, _user=Depends(image_user)):
     cache = settings.thumbnails_dir / _safe_key(source_file)
     try:

@@ -7,7 +7,7 @@ provenance overlay. Two-tier provenance on every tag (SPEC §3.5).
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text,
+    Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -60,6 +60,10 @@ class Person(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)  # slug, e.g. herb_beck
     canonical_name: Mapped[str] = mapped_column(String, nullable=False)
+    # False = friend / other (non-family), grouped separately in the People filter
+    # and skipped by the family-tree deriver (SPEC §12.7). Slides pre-date this and
+    # backfill to True.
+    is_family: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     father_id: Mapped[str | None] = mapped_column(ForeignKey("person.id"), nullable=True)
     mother_id: Mapped[str | None] = mapped_column(ForeignKey("person.id"), nullable=True)
     spouse_id: Mapped[str | None] = mapped_column(ForeignKey("person.id"), nullable=True)
@@ -96,14 +100,22 @@ class Event(Base):
 class Photo(Base):
     """One row per image — the spine of the stream (SPEC §3.2)."""
     __tablename__ = "photo"
+    # Composite index backing the interleaved gallery sort (SPEC §12.5).
+    __table_args__ = (
+        Index("ix_photo_sort", "sort_date", "magazine_id", "slide_in_mag"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_file: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # slide: Mag<N>_Slide<NN>.JPG; else a stable key
+    source_file: Mapped[str] = mapped_column(String, unique=True, nullable=False)  # slide: Mag<N>_Slide<NN>.JPG; scan: photos/<batch>/<file>; else a stable key
     # SPEC §11: non-slide ingest. origin drives serving path + UI; storage_path
     # locates the file under library_root (DB lookup, not a filename regex).
     origin: Mapped[str] = mapped_column(String, nullable=False, default="slide")   # slide|scan|digital
     storage_path: Mapped[str | None] = mapped_column(String, nullable=True)        # relative to library_root
     original_filename: Mapped[str | None] = mapped_column(String, nullable=True)
+    # SPEC §12.3: scan provenance. batch = FastFoto subject folder (null for slides);
+    # back_path = library-relative path of the paired back-of-photo (_b) scan.
+    batch: Mapped[str | None] = mapped_column(String, nullable=True)
+    back_path: Mapped[str | None] = mapped_column(String, nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -113,6 +125,10 @@ class Photo(Base):
     date_end: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     date_precision: Mapped[str | None] = mapped_column(String, nullable=True)      # day|month|season|year|approx
     date_raw: Mapped[str | None] = mapped_column(String, nullable=True)            # verbatim display label
+    # Materialized sort key for the mixed timeline (SPEC §12.5): slides = their
+    # magazine's date_start (a roll stays contiguous, in card order); scans/digital
+    # = their own date_start. Null sorts last.
+    sort_date: Mapped[datetime | None] = mapped_column(Date, nullable=True)
     place_id: Mapped[str | None] = mapped_column(ForeignKey("place.id"), nullable=True, index=True)
     magazine_id: Mapped[int | None] = mapped_column(ForeignKey("magazine.id"), nullable=True, index=True)
     slide_in_mag: Mapped[int | None] = mapped_column(Integer, nullable=True)

@@ -11,13 +11,22 @@ lazy first-view regeneration *burst* after a bulk slide update, run the batch
 pre-warm at deploy time — it uses the same predicate, so it only touches what
 actually changed and leaves browsing with nothing to regenerate.
 """
+import re
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
 
 THUMB_MAX = 400      # px, longest edge — gallery grid
 DISPLAY_MAX = 2560   # px, longest edge — lightbox (originals can be 24MP)
 FACE_MAX = 240       # px, square — People-filter face thumbnail
+
+
+def safe_key(source_file: str) -> str:
+    """Filesystem-safe cache filename for a photo's derivative. Slide names
+    (Mag1_Slide01.JPG) pass through unchanged; scan paths (photos/<batch>/<file>)
+    have their slashes/spaces flattened, so the key is unique and path-free. Shared
+    by the image server and the prewarm tool so both address the same cache file."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", source_file)
 
 
 def needs_regen(src: Path, cache: Path) -> bool:
@@ -28,20 +37,28 @@ def needs_regen(src: Path, cache: Path) -> bool:
     return st.st_size == 0 or st.st_mtime < src.stat().st_mtime
 
 
-def generate(src: Path, cache: Path, max_edge: int) -> None:
-    """Write a downscaled JPEG (longest edge <= max_edge)."""
+def generate(src: Path, cache: Path, max_edge: int, transpose: bool = False) -> None:
+    """Write a downscaled JPEG (longest edge <= max_edge).
+
+    `transpose` applies the EXIF orientation to the pixels — needed for raw scans
+    that skip Lightroom (back-of-photo _b images), which carry a live orientation
+    flag. It is a no-op when there's no flag, so it's safe but off by default to
+    keep slide/LR derivatives (rotation already baked, orientation=1) untouched."""
     cache.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(src) as im:
-        im.draft("RGB", (max_edge, max_edge))  # fast downscale on decode
+        if not transpose:
+            im.draft("RGB", (max_edge, max_edge))  # fast downscale on decode
+        if transpose:
+            im = ImageOps.exif_transpose(im)
         im.thumbnail((max_edge, max_edge))
         im.convert("RGB").save(cache, "JPEG", quality=82 if max_edge <= THUMB_MAX else 85)
 
 
-def ensure(src: Path, cache: Path, max_edge: int) -> bool:
+def ensure(src: Path, cache: Path, max_edge: int, transpose: bool = False) -> bool:
     """(Re)generate only if stale. Returns True if it regenerated."""
     if not needs_regen(src, cache):
         return False
-    generate(src, cache, max_edge)
+    generate(src, cache, max_edge, transpose=transpose)
     return True
 
 

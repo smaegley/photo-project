@@ -120,6 +120,67 @@ def keywords_from_xmp(xmp: str) -> list[str]:
     return [k for k in (_clean(li) for li in _RDF_LI.findall(blk.group(1))) if k]
 
 
+# --- Lightroom hierarchical keywords, caption/title, IPTC location (SPEC §12.6,
+#     confirmed by probe P2 2026-07-17) ---
+_HIER_BLOCK = re.compile(r"<lr:hierarchicalSubject>(.*?)</lr:hierarchicalSubject>", re.S)
+# dc:title / dc:description are rdf:Alt with an x-default rdf:li.
+_TITLE_BLOCK = re.compile(r"<dc:title>(.*?)</dc:title>", re.S)
+_DESC_BLOCK = re.compile(r"<dc:description>(.*?)</dc:description>", re.S)
+# IPTC location — Lightroom writes these as attributes on the rdf:Description, but
+# some tools use child elements; match either form.
+_IPTC_FIELDS = {
+    "sublocation": "Iptc4xmpCore:Location",
+    "city": "photoshop:City",
+    "state": "photoshop:State",
+    "country": "photoshop:Country",
+    "country_code": "Iptc4xmpCore:CountryCode",
+}
+
+
+def hierarchical_keywords_from_xmp(xmp: str) -> list[str]:
+    """lr:hierarchicalSubject entries (pipe-delimited, e.g. 'Places|Ohio|Cincinnati').
+    Preferred over flat dc:subject when present — the leaf resolves to a vocab term
+    and the parent ('Places'/'Events'/'People') disambiguates it (SPEC §12.6)."""
+    blk = _HIER_BLOCK.search(xmp)
+    if not blk:
+        return []
+    return [k for k in (_clean(li) for li in _RDF_LI.findall(blk.group(1))) if k]
+
+
+def _alt_default(block_re: re.Pattern, xmp: str) -> str | None:
+    """First rdf:li text inside an rdf:Alt block (dc:title / dc:description)."""
+    blk = block_re.search(xmp)
+    if not blk:
+        return None
+    li = _RDF_LI.search(blk.group(1))
+    if not li:
+        return None
+    val = _clean(li.group(1))
+    return val or None
+
+
+def title_from_xmp(xmp: str) -> str | None:
+    return _alt_default(_TITLE_BLOCK, xmp)
+
+
+def description_from_xmp(xmp: str) -> str | None:
+    return _alt_default(_DESC_BLOCK, xmp)
+
+
+def location_from_xmp(xmp: str) -> dict[str, str]:
+    """IPTC location fields (sublocation/city/state/country/country_code). Values as
+    hand-typed in Lightroom — forms vary ('OH' vs 'Ohio'); caller normalizes."""
+    out: dict[str, str] = {}
+    for key, tag in _IPTC_FIELDS.items():
+        m = (re.search(rf'{tag}="([^"]*)"', xmp)
+             or re.search(rf"<{tag}>(.*?)</{tag}>", xmp, re.S))
+        if m:
+            v = _clean(m.group(1))
+            if v:
+                out[key] = v
+    return out
+
+
 # --- EXIF (for digital/scan photos; slides have no camera EXIF date/GPS) ---
 def _exif(path):
     try:
@@ -156,6 +217,19 @@ def capture_date_from_exif(path) -> date | None:
         return None
 
 
+def image_description_from_exif(path) -> str | None:
+    """EXIF ImageDescription (0x010e) — a caption fallback when XMP dc:description
+    is absent; probe P2 showed the LR caption survives here too (SPEC §12.6)."""
+    ex, _ = _exif(path)
+    if not ex:
+        return None
+    raw = ex.get(0x010E)
+    if not raw:
+        return None
+    v = str(raw).strip()
+    return v or None
+
+
 def gps_from_exif(path) -> tuple[float, float] | None:
     """(lat, lon) in signed decimal degrees, or None."""
     ex, _ = _exif(path)
@@ -185,12 +259,17 @@ def gps_from_exif(path) -> tuple[float, float] | None:
 
 
 def extract(path) -> dict:
-    """One-shot bundle for the non-slide importer (SPEC §11.6)."""
+    """One-shot bundle for the non-slide importer (SPEC §11.6 / §12.6)."""
     xmp = read_xmp(path) or ""
     w, h = image_size(path)
     return {
         "people": people_from_xmp(xmp) if xmp else set(),
+        "face_regions": face_regions_from_xmp(xmp) if xmp else [],
         "keywords": keywords_from_xmp(xmp) if xmp else [],
+        "hierarchical_keywords": hierarchical_keywords_from_xmp(xmp) if xmp else [],
+        "caption": (description_from_xmp(xmp) if xmp else None) or image_description_from_exif(path),
+        "title": title_from_xmp(xmp) if xmp else None,
+        "location": location_from_xmp(xmp) if xmp else {},
         "capture_date": capture_date_from_exif(path),
         "gps": gps_from_exif(path),
         "width": w,

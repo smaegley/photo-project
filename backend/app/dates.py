@@ -143,3 +143,46 @@ def parse_date_raw(raw: str):
         y = int(years[0])
         return date(y, 1, 1), date(y, 12, 31), "year"
     return None, None, None
+
+
+# --- Scan filename/batch date tokens (SPEC §12.4) --------------------------------
+# FastFoto encodes the batch date as the leading tokens of the subject folder (and
+# each filename): <Year|Decade>[_<MonthName|Season>]_<Subject>. Decade = e.g. 1980s.
+_DECADE_RE = re.compile(r"^(\d{4})s$")
+_YEAR_RE = re.compile(r"^(19|20)\d{2}$")
+
+
+def parse_scan_date(name: str):
+    """Parse scan batch/filename date tokens -> (date_start, date_end, precision, date_raw).
+
+    Reuses §3.8 conventions (seasons, month spans) and adds decade support. Returns
+    (None, None, None, None) when the leading token isn't a year/decade (a
+    subject-only or 'Scanned_NNNN' root file has no date). date_raw is the verbatim
+    display label, mirroring the manifest's date_raw."""
+    if not name:
+        return None, None, None, None
+    tokens = name.replace("/", "_").split("_")
+    # Drop trailing sequence/back tokens from a filename stem (…_0001, …_0001_b).
+    while tokens and (tokens[-1].isdigit() or tokens[-1].lower() == "b"):
+        tokens.pop()
+    if not tokens:
+        return None, None, None, None
+
+    head = tokens[0]
+    dec = _DECADE_RE.match(head)
+    if dec:
+        y0 = int(dec.group(1))
+        return date(y0, 1, 1), date(y0 + 9, 12, 31), "approx", f"{y0}s"
+    if not _YEAR_RE.match(head):
+        return None, None, None, None  # no leading year -> undated batch
+
+    y = int(head)
+    refine = tokens[1].lower() if len(tokens) > 1 else ""
+    if refine in SEASONS:
+        s_start, e_end, _ = _season_range(refine, y)
+        return s_start, e_end, "season", f"{refine.capitalize()} {y}"
+    if refine in MONTHS:
+        mo = MONTHS[refine]
+        return (date(y, mo, 1), date(y, mo, _eom(y, mo)), "month",
+                f"{calendar.month_abbr[mo]} {y}")
+    return date(y, 1, 1), date(y, 12, 31), "year", str(y)

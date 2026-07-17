@@ -21,8 +21,8 @@ sys.path.insert(0, str(REPO_ROOT / "backend"))
 from app.database import Base, SessionLocal, engine  # noqa: E402
 from app import models as m  # noqa: E402
 from app.config import settings  # noqa: E402
-from importer.dates import parse_date_raw  # noqa: E402
-from importer.metadata import image_size, norm_text as _norm, canon_alias_key  # noqa: E402
+from app.dates import parse_date_raw  # noqa: E402
+from app.metadata import image_size, norm_text as _norm, canon_alias_key  # noqa: E402
 
 
 def slide_rel_path(magazine: int, source_file: str) -> str:

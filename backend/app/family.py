@@ -31,6 +31,11 @@ def derive_relationships(
     out: dict[str, str | None] = {}
     for p in persons:
         pid = p.id
+        # Non-family (friends/others) have no tree position — group them separately
+        # rather than letting them fall through to "Extended family" (SPEC §12.7).
+        if not getattr(p, "is_family", True):
+            out[pid] = "Friends & others"
+            continue
         if pid == root:
             out[pid] = "Self" if mark_self else None
             continue

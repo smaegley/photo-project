@@ -36,8 +36,17 @@ class PhotoDetail(PhotoOut):
     place: "PlaceOut | None"
     magazine_id: int | None
     slide_in_mag: int | None
+    batch: str | None = None            # scan provenance folder (SPEC §12.3)
+    original_filename: str | None = None  # scan download filename
+    back_url: str | None = None         # back-of-photo scan, when present (SPEC §12.8)
     people: list[PersonTag]
     events: list[str]
+
+
+class PhotoMeta(BaseModel):
+    """Library timeline bounds for the date slider (SPEC §12.8)."""
+    year_min: int | None
+    year_max: int | None
 
 
 class FacetCount(BaseModel):
@@ -67,6 +76,7 @@ class PersonOut(BaseModel):
     father_id: str | None = None
     mother_id: str | None = None
     spouse_id: str | None = None
+    is_family: bool = True             # False = friend/other (SPEC §12.7)
 
 
 class EventOut(BaseModel):
@@ -169,10 +179,12 @@ class PersonCreate(BaseModel):
     father_id: str | None = None
     mother_id: str | None = None
     spouse_id: str | None = None
+    is_family: bool = True          # False = friend/other (SPEC §12.7)
 
 
 class PersonRename(BaseModel):
     canonical_name: str
+    is_family: bool | None = None   # optional non-family toggle (SPEC §12.7)
 
 
 class PersonLinksUpdate(BaseModel):

@@ -5,9 +5,9 @@ people and events facets selections are OR'd (any-of). Per-facet "live counts"
 are computed with that facet's own selection removed, so the count shows what
 *adding* a value would yield — standard faceted-search behaviour.
 """
-import re
 from dataclasses import dataclass, field
 from datetime import date
+from urllib.parse import quote
 
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -36,9 +36,14 @@ class PhotoFilter:
     places: list[str] = field(default_factory=list)
     bbox: tuple[float, float, float, float] | None = None  # (min_lon,min_lat,max_lon,max_lat)
     magazine_id: int | None = None
+    origin: str | None = None  # slide|scan|digital — a hard view scope (SPEC §12.8)
 
 
 def _apply(query, f: PhotoFilter, exclude: str | None):
+    # origin is a view scope, not a facet: it constrains results AND every facet
+    # count (no self-exclusion), so it is applied regardless of `exclude`.
+    if f.origin:
+        query = query.filter(m.Photo.origin == f.origin)
     if exclude != "date" and f.date_start and f.date_end:
         # overlap: the photo's range touches the slider range (SPEC §3.8/§4.1)
         query = query.filter(m.Photo.date_end >= f.date_start,
@@ -62,16 +67,19 @@ def _apply(query, f: PhotoFilter, exclude: str | None):
     return query
 
 
+# Scan source_files are library-relative paths (photos/<batch>/<file>) that carry
+# slashes and spaces; encode them for the URL (slides pass through unchanged). The
+# matching routes are declared with a :path converter (SPEC §12.6).
 def thumb_url(source_file: str) -> str:
-    return f"/api/thumbnails/{source_file}"
+    return f"/api/thumbnails/{quote(source_file)}"
 
 
 def display_url(source_file: str) -> str:
-    return f"/api/display/{source_file}"
+    return f"/api/display/{quote(source_file)}"
 
 
 def image_url(source_file: str) -> str:
-    return f"/api/images/{source_file}"
+    return f"/api/images/{quote(source_file)}"
 
 
 def to_photo_out(p: m.Photo) -> PhotoOut:
@@ -95,13 +103,16 @@ def matching_photo_ids(db: Session, f: PhotoFilter) -> list[int]:
 def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
     base = _apply(db.query(m.Photo), f, exclude=None)
     total = base.order_by(None).count()
-    # Slides are ordered by Wendel's magazine/slide numbering (the canonical
-    # chronological order). Non-slide photos (no magazine_id) fall after all
-    # slides, sorted by date. Phase 2 will need a derived sort_key to interleave
-    # digital/scan photos with slides properly.
-    order = [m.Photo.magazine_id.is_(None), m.Photo.magazine_id,
-             m.Photo.slide_in_mag.is_(None), m.Photo.slide_in_mag,
-             m.Photo.date_start.is_(None), m.Photo.date_start]
+    # Interleaved timeline (SPEC §12.5): everything sorts by materialized sort_date
+    # (slides = their magazine's start, so a roll stays contiguous; scans = their
+    # own date). Where a roll's start ties a scan's date, the roll's slides come
+    # first (magazine_id-not-null); slides keep card order via slide_in_mag.
+    # Unknown-date photos sort last, stable by id.
+    order = [m.Photo.sort_date.is_(None), m.Photo.sort_date,
+             m.Photo.magazine_id.is_(None), m.Photo.magazine_id,
+             m.Photo.slide_in_mag,
+             m.Photo.date_start.is_(None), m.Photo.date_start,
+             m.Photo.id]
     rows = (base.order_by(*order)
             .offset((page - 1) * page_size).limit(page_size).all())
     photos = [to_photo_out(p) for p in rows]

@@ -28,6 +28,7 @@ export default function PeopleAdmin({ onClose, onChanged }) {
   const [newFather, setNewFather] = useState("");
   const [newMother, setNewMother] = useState("");
   const [newSpouse, setNewSpouse] = useState("");
+  const [newNonFamily, setNewNonFamily] = useState(false);
 
   async function load() {
     const p = await api.people(false);
@@ -79,6 +80,10 @@ export default function PeopleAdmin({ onClose, onChanged }) {
       run(`renamed to ${name.trim()}`, () => api.renamePerson(p.id, name.trim()));
   };
 
+  const toggleFamily = (p) =>
+    run(`${p.name} is now ${p.is_family ? "non-family" : "family"}`,
+        () => api.renamePerson(p.id, p.name, !p.is_family));
+
   const saveLinks = async (p) => {
     const ok = await run(`updated ${p.name}'s family links`, () =>
       api.updatePersonLinks(p.id, lFather || null, lMother || null, lSpouse || null)
@@ -94,14 +99,15 @@ export default function PeopleAdmin({ onClose, onChanged }) {
       api.createPerson({
         id,
         canonical_name: name,
-        father_id: newFather || null,
-        mother_id: newMother || null,
-        spouse_id: newSpouse || null,
+        father_id: newNonFamily ? null : (newFather || null),
+        mother_id: newNonFamily ? null : (newMother || null),
+        spouse_id: newNonFamily ? null : (newSpouse || null),
+        is_family: !newNonFamily,
       })
     );
     if (ok) {
       setNewName(""); setNewId(""); setIdTouched(false);
-      setNewFather(""); setNewMother(""); setNewSpouse("");
+      setNewFather(""); setNewMother(""); setNewSpouse(""); setNewNonFamily(false);
     }
   };
 
@@ -124,14 +130,21 @@ export default function PeopleAdmin({ onClose, onChanged }) {
               <div className="event-admin-row">
                 <span className="event-admin-name">
                   {p.name}
+                  {!p.is_family && <span className="lb-origin-badge" style={{ marginLeft: 6 }}>friend / other</span>}
                   <span className="modal-sub"> · {p.photo_count} photo{p.photo_count !== 1 ? "s" : ""}</span>
                 </span>
                 <span className="event-admin-actions">
                   <button className="link" onClick={() => rename(p)} disabled={busy}>rename</button>
-                  <button className="link" onClick={() => editingLinks === p.id ? cancelEditLinks() : startEditLinks(p)}
-                          disabled={busy}>
-                    {editingLinks === p.id ? "cancel" : "edit links"}
+                  <button className="link" onClick={() => toggleFamily(p)} disabled={busy}
+                          title={p.is_family ? "Move to Friends & others" : "Move back into the family tree"}>
+                    {p.is_family ? "mark friend" : "mark family"}
                   </button>
+                  {p.is_family && (
+                    <button className="link" onClick={() => editingLinks === p.id ? cancelEditLinks() : startEditLinks(p)}
+                            disabled={busy}>
+                      {editingLinks === p.id ? "cancel" : "edit links"}
+                    </button>
+                  )}
                 </span>
               </div>
               {editingLinks === p.id && (
@@ -174,18 +187,25 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                    title="Unique slug identifier (auto-generated from name)" />
           </div>
           <div className="people-admin-row">
-            <select value={newFather} onChange={(e) => setNewFather(e.target.value)} disabled={busy}>
+            <select value={newFather} onChange={(e) => setNewFather(e.target.value)} disabled={busy || newNonFamily}>
               <option value="">— father —</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <select value={newMother} onChange={(e) => setNewMother(e.target.value)} disabled={busy}>
+            <select value={newMother} onChange={(e) => setNewMother(e.target.value)} disabled={busy || newNonFamily}>
               <option value="">— mother —</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <select value={newSpouse} onChange={(e) => setNewSpouse(e.target.value)} disabled={busy}>
+            <select value={newSpouse} onChange={(e) => setNewSpouse(e.target.value)} disabled={busy || newNonFamily}>
               <option value="">— spouse —</option>
               {persons.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+          </div>
+          <div className="people-admin-row">
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, opacity: 0.85 }}>
+              <input type="checkbox" checked={newNonFamily}
+                     onChange={(e) => setNewNonFamily(e.target.checked)} disabled={busy} />
+              Non-family (friend / other) — no family-tree links
+            </label>
           </div>
           <div className="people-admin-row" style={{ justifyContent: "flex-end" }}>
             <button className="ghost" onClick={create}

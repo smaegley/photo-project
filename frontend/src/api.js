@@ -9,6 +9,7 @@ function qs(filters, extra = {}) {
   (filters.places || []).forEach((id) => p.append("places", id));
   if (filters.bbox) p.set("bbox", filters.bbox.join(","));
   if (filters.magazineId) p.set("magazine_id", filters.magazineId);
+  if (filters.origin) p.set("origin", filters.origin);
   Object.entries(extra).forEach(([k, v]) => p.set(k, v));
   return p.toString();
 }
@@ -37,6 +38,7 @@ export const api = {
   photos: (filters, page = 1, pageSize = 80) =>
     get(`/api/photos?${qs(filters, { page, page_size: pageSize })}`),
   photoIds: (filters) => get(`/api/photos/ids?${qs(filters)}`),
+  photosMeta: () => get("/api/photos/meta"),
   photo: (id) => get(`/api/photos/${id}`),
   people: (withPhotosOnly = true) =>
     get(`/api/people${withPhotosOnly ? "" : "?with_photos_only=false"}`),
@@ -71,7 +73,9 @@ export const api = {
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
   createPerson: (body) => send("POST", "/api/admin/people", body),
-  renamePerson: (id, canonical_name) => send("PATCH", `/api/admin/people/${id}`, { canonical_name }),
+  renamePerson: (id, canonical_name, is_family) =>
+    send("PATCH", `/api/admin/people/${id}`,
+      is_family === undefined ? { canonical_name } : { canonical_name, is_family }),
   updatePersonLinks: (id, father_id, mother_id, spouse_id) =>
     send("PATCH", `/api/admin/people/${id}/links`, { father_id, mother_id, spouse_id }),
   setRepresentative: (personId, photoId) =>

@@ -42,6 +42,13 @@ photos.
   turned every tile in the burst into a write once the 15-min throttle lapsed.
   Fixed via a no-write `image_user` dep + self-scoped sessions + an explicit pool
   (20+30). A/B verified on dev: 9.56s → 0.03s under slow clients.
+- **Scanned Photos — Phase 2a built on dev (2026-07-17, SPEC §12):** `origin=scan`
+  ingest for FastFoto prints (1970s–90s). Migration `a7b8c9d0e1f2` (photo
+  batch/back_path/sort_date, person.is_family). New `All Photos | Slide Photos |
+  Scanned Photos` views; interleaved timeline sort; non-destructive importer
+  `app/import_photos.py`; family vs "Friends & others" people; lightbox origin badge +
+  back-of-photo reveal. Shared readers moved to `app/metadata.py`/`app/dates.py` (the
+  importer runs in the prod image). **Verified on dev; prod rollout pending (§12.12).**
 - **Notes editing + UX fixes (2026-07-07, SPEC §10.15):** card notes field now
   editable in lightbox (admin, undoable); prod snapshot load script hardened
   (WAL/SHM cleanup); Ryan's 5 UX fixes: prominent back button, roll cards in

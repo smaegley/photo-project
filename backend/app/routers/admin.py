@@ -474,11 +474,12 @@ def create_person(body: PersonCreate, db: Session = Depends(get_db),
             raise HTTPException(404, f"{fk} '{val}' not found")
     person = m.Person(id=body.id, canonical_name=body.canonical_name.strip(),
                       father_id=body.father_id, mother_id=body.mother_id,
-                      spouse_id=body.spouse_id)
+                      spouse_id=body.spouse_id, is_family=body.is_family)
     db.add(person)
     _log(db, user, "person:create", None, body.id)
     db.commit()
-    return {"id": person.id, "canonical_name": person.canonical_name}
+    return {"id": person.id, "canonical_name": person.canonical_name,
+            "is_family": person.is_family}
 
 
 @router.patch("/people/{person_id}")
@@ -492,8 +493,13 @@ def rename_person(person_id: str, body: PersonRename, db: Session = Depends(get_
     person.canonical_name = body.canonical_name.strip()
     _log(db, user, "person:rename", old, person.canonical_name,
          inverse={"op": "person_rename", "person_id": person_id, "canonical_name": old})
+    # Non-family toggle rides along with the basic edit (SPEC §12.7); not undoable
+    # (a low-stakes, one-click-reversible flag).
+    if body.is_family is not None:
+        person.is_family = body.is_family
     db.commit()
-    return {"id": person.id, "canonical_name": person.canonical_name}
+    return {"id": person.id, "canonical_name": person.canonical_name,
+            "is_family": person.is_family}
 
 
 @router.patch("/people/{person_id}/links")

@@ -280,6 +280,9 @@ input, select, textarea { background: var(--field-bg); color: var(--text); }
 .lb-notes-body h3 { margin: 0 0 16px; font-size: 16px; }
 .lb-meta div { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); font-size: 13px; }
 .lb-meta label { color: var(--muted); min-width: 56px; }
+.lb-origin-badge { display: inline-block; padding: 1px 7px; border-radius: 10px; background: var(--accent);
+  color: #fff; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; }
+.lb-batch { color: var(--muted); }
 .lb-dadnotes { margin-top: 16px; padding: 12px; background: var(--muted-bg); border-radius: 8px; font-size: 13px; line-height: 1.5; color: var(--text); }
 .lb-download { display: inline-block; margin-top: 18px; color: var(--accent); text-decoration: none; font-size: 14px; }
 

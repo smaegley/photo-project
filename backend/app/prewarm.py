@@ -42,8 +42,37 @@ def prewarm_all(force: bool = False) -> tuple[int, int, int]:
                 errors += 1
         if i % 200 == 0:
             print(f"  {i}/{len(slides)} ...")
+
+    # Non-slide photos (scan/digital, SPEC §12.6): keyed by the path-based cache
+    # name the image server uses, located by DB storage_path (not a filename glob).
+    from app.database import SessionLocal
+    from app import models as m
+    n_scan = 0
+    with SessionLocal() as db:
+        rows = (db.query(m.Photo.source_file, m.Photo.storage_path)
+                .filter(m.Photo.origin != "slide",
+                        m.Photo.storage_path.isnot(None)).all())
+    for source_file, storage_path in rows:
+        src = settings.library_root_path / storage_path
+        if not src.exists():
+            continue
+        n_scan += 1
+        for out_dir, max_edge in kinds:
+            cache = out_dir / derivatives.safe_key(source_file)
+            try:
+                if force:
+                    derivatives.generate(src, cache, max_edge)
+                    made += 1
+                elif derivatives.ensure(src, cache, max_edge):
+                    made += 1
+                else:
+                    skipped += 1
+            except Exception as e:  # noqa: BLE001
+                print(f"  ! {source_file}: {type(e).__name__}: {e}", file=sys.stderr)
+                errors += 1
+
     print(f"derivatives: {made} made, {skipped} fresh/skipped, {errors} errors "
-          f"in {time.time()-t0:.1f}s  (thumbnails/ + display/)")
+          f"in {time.time()-t0:.1f}s  ({len(slides)} slides + {n_scan} scan/digital)")
     return made, skipped, errors
 
 
