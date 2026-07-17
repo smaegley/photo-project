@@ -32,10 +32,35 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `d0d8ade` — §10.16 image connection-pool fix (2026-07-14) |
-| Pushed to origin | yes |
-| Deployed to prod | `d0d8ade` — 2026-07-14, shipping §10.15 + §10.16 (reported by Ops Agent) |
+| Repo HEAD (dev) | `c9fcf03` — §12 Scanned Photos build + lightbox/rail fixes (2026-07-17) |
+| Pushed to origin | yes (`origin/main` @ `c9fcf03`) |
+| Deployed to prod | `d0d8ade` — 2026-07-14, §10.15 + §10.16 (**prod is BEHIND main by the §12 work**) |
 | Last deploy before that | §10.14 @ `e0875cd` (2026-07-07) |
+
+> **⏸ DEPLOY DELIBERATELY HELD (2026-07-17).** The §12 "Scanned Photos" build is done,
+> verified on dev, pushed to origin — but **not deployed to prod, by Steve's choice.**
+> Reason: with no real scans yet, a deploy would (a) reshuffle the slide gallery —
+> **17 of 32 rolls move** under the new date-interleaved sort (§12.5) — and (b) add an
+> empty "Scanned Photos" tab + rename Gallery/Rolls → All Photos/Slide Photos, all with
+> no payoff. **Plan: Steve returns with a real scanned-photo set, then we deploy the
+> whole thing together.** Deploying is safe whenever (additive migration, non-destructive
+> importer) — the hold is purely to avoid a puzzling half-state for the family.
+>
+> **Deploy-day runbook (when the scans are ready):** on LXC 209
+> `git pull && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build`
+> (migration `a7b8c9d0e1f2` auto-runs) → rsync batches to
+> `/mnt/photos/library/photos/<batch>/` → `docker compose exec api python -m
+> app.import_photos --dry-run` → review `./data/review/*.csv` → real run →
+> `docker compose exec api python -m app.prewarm`. Full detail: SPEC §12.10 / §12.12.
+> **Never** `import_data.py` on prod. Three of the held commits are also general UX
+> fixes (click-outside-to-close, close ✕ top-right, Places rail live counts) — they
+> ship with this deploy.
+>
+> **Dev carries throwaway test data** from verification: ~8 sample scan rows under
+> `/mnt/photos/library/photos/` + a `deirdre_carlile` test person. Harmless; wiped by
+> the next `load-prod-snapshot.sh` refresh. Pre-migration dev DB backup at
+> `/tmp/photos.db.pre-scan-bak`. A dev backend (uvicorn :8077, no --reload) was left
+> running for the verification.
 
 Re-confirm prod's actual HEAD any time it matters — it's one command, and this table
 is only as good as its last update:
