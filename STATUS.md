@@ -32,35 +32,31 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `c9fcf03` — §12 Scanned Photos build + lightbox/rail fixes (2026-07-17) |
-| Pushed to origin | yes (`origin/main` @ `c9fcf03`) |
-| Deployed to prod | `d0d8ade` — 2026-07-14, §10.15 + §10.16 (**prod is BEHIND main by the §12 work**) |
-| Last deploy before that | §10.14 @ `e0875cd` (2026-07-07) |
+| Repo HEAD (dev) | `116b475` — §12.13 catalog-read scan pipeline + §13 B2 design (2026-07-24) |
+| Pushed to origin | yes (`origin/main` @ `116b475`) |
+| Deployed to prod | `116b475` — **2026-07-24, §12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + 4 lightbox/Places fixes; migration `a7b8c9d0e1f2` applied |
+| Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
-> **⏸ DEPLOY DELIBERATELY HELD (2026-07-17).** The §12 "Scanned Photos" build is done,
-> verified on dev, pushed to origin — but **not deployed to prod, by Steve's choice.**
-> Reason: with no real scans yet, a deploy would (a) reshuffle the slide gallery —
-> **17 of 32 rolls move** under the new date-interleaved sort (§12.5) — and (b) add an
-> empty "Scanned Photos" tab + rename Gallery/Rolls → All Photos/Slide Photos, all with
-> no payoff. **Plan: Steve returns with a real scanned-photo set, then we deploy the
-> whole thing together.** Deploying is safe whenever (additive migration, non-destructive
-> importer) — the hold is purely to avoid a puzzling half-state for the family.
+> **✅ SCANNED PHOTOS DEPLOYED & VERIFIED ON PROD (2026-07-24).** The whole §12 build
+> plus Steve's **770 real FastFoto scans** (1940s–2000s) are live: All Photos mixed
+> timeline, Scanned Photos tab, 78 scan people (incl. pets Abby/Toby/Floyd/Muffy),
+> back-of-photo scans. This single deploy also cleared the §10.15/§10.16 backlog and
+> the 4 held lightbox/Places-rail fixes, and applied migration `a7b8c9d0e1f2`.
 >
-> **THE SCANS ARE READY (2026-07-24).** 770 real FastFoto photos + 36 backs, built &
-> verified on dev with a **catalog-read people pipeline** (see §12.6 note + memory
-> `scan-rollout`). People/event tags are read straight from the Lightroom catalog
-> (file XMP was unreliable — 18-yr-old keywords had `includeOnExport=0`), so the
-> rollout carries **two CSVs**, not the catalog. **Ops-agent runbook is in the
-> "Scanned-photos rollout" section below.**
-> **Never** `import_data.py` on prod. Three of the held commits are also general UX
-> fixes (click-outside-to-close, close ✕ top-right, Places rail live counts) — they
-> ship with this deploy.
+> **People/events came from the Lightroom catalog, not file XMP** (§12.13): file
+> export silently drops keywords whose `includeOnExport=0` (18-yr-old person keywords
+> had it off — 113 photos exported empty). `read_lrcat.py` → sidecar `lr_people.csv`;
+> `import_photos --people-csv`; `seed_people.py`. The `.lrcat` stayed on the Mac.
 >
-> **Dev carries throwaway test data** from verification: ~8 sample scan rows under
-> `/mnt/photos/library/photos/` + a `deirdre_carlile` test person. Harmless; wiped by
-> the next `load-prod-snapshot.sh` refresh. Pre-migration dev DB backup at
-> `/tmp/photos.db.pre-scan-bak`. A dev backend (uvicorn :8077, no --reload) was left
-> running for the verification.
+> **Re-scans / new batches later:** repeat the §12.13 path — Steve exports + tags in
+> LR → `read_lrcat` (Lightroom closed) regenerates the two CSVs → review
+> `people_seed.csv` → `seed_people` → `import_photos --people-csv` → `prewarm`. All
+> idempotent + additive; **never** `import_data.py`.
+>
+> **Dev leftovers (harmless, wiped by next `load-prod-snapshot.sh`):** the 806 sorted
+> files under `/mnt/photos/library/photos/`, the seeded scan people, ~8 older probe
+> rows + `deirdre_carlile`, the 933 MB `Lightroom Database-v13-3.lrcat` in
+> `/mnt/photos/lrcat-drop/`, and a dev backend on :8077.
 
 Re-confirm prod's actual HEAD any time it matters — it's one command, and this table
 is only as good as its last update:
