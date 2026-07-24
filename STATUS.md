@@ -32,9 +32,9 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `116b475` — §12.13 catalog-read scan pipeline + §13 B2 design (2026-07-24) |
-| Pushed to origin | yes (`origin/main` @ `116b475`) |
-| Deployed to prod | `116b475` — **2026-07-24, §12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + 4 lightbox/Places fixes; migration `a7b8c9d0e1f2` applied |
+| Repo HEAD (dev) | `d62b1f6` — People-rail + Manage-People UI fixes (2026-07-24) |
+| Pushed to origin | yes (`origin/main` @ `d62b1f6`) |
+| Deployed to prod | `d62b1f6` — **2026-07-24, §12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2` applied. Two follow-up frontend fixes shipped same day: FilterRail renders "Friends & others" for linked viewers; Manage-People modal widened so the edit-links Save button can't clip |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
 > **✅ SCANNED PHOTOS DEPLOYED & VERIFIED ON PROD (2026-07-24).** The whole §12 build
