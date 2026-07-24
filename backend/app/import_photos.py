@@ -142,13 +142,30 @@ def classify_folder(files: list[Path]):
     return chosen, dup_pairs, unpaired
 
 
+# ---- sidecar (Lightroom-catalog people/events, SPEC §11.6) ----------------------
+def load_people_csv(path: Path) -> dict[str, tuple[set, set]]:
+    """base_name -> (people, events) from a `read_lrcat` sidecar. The catalog is
+    authoritative for people/events (file XMP silently drops includeOnExport=0
+    keywords), so these are unioned onto whatever the file carries."""
+    if not path.is_absolute():
+        path = REVIEW_DIR / path
+    by_stem: dict[str, tuple[set, set]] = {}
+    with open(path, newline="") as fh:
+        for r in csv.DictReader(fh):
+            ppl = {p for p in (r.get("people") or "").split("|") if p}
+            evt = {e for e in (r.get("events") or "").split("|") if e}
+            by_stem[r["base_name"]] = (ppl, evt)
+    return by_stem
+
+
 # ---- main -----------------------------------------------------------------------
-def run(dry_run: bool = False) -> None:
+def run(dry_run: bool = False, people_csv: Path | None = None) -> None:
     root = settings.library_root_path
     photos_dir = root / PHOTOS_SUBDIR
     if not photos_dir.exists():
         print(f"no photos dir at {photos_dir} — nothing to import")
         return
+    sidecar = load_people_csv(people_csv) if people_csv else {}
 
     db = SessionLocal()
     try:
@@ -189,6 +206,10 @@ def run(dry_run: bool = False) -> None:
                 if back:
                     n_backs += 1
                 data = metadata.extract(front)
+                if sidecar:  # catalog people/events win over unreliable file XMP
+                    sp, se = sidecar.get(front.stem, (set(), set()))
+                    data["people"] = set(data["people"]) | sp
+                    data["keywords"] = list(set(data["keywords"]) | se)
                 ds, de, prec, raw = parse_scan_date(batch or _stem(front))
 
                 photo = db.query(m.Photo).filter(m.Photo.source_file == source_file).first()
@@ -342,5 +363,8 @@ def _write_reports(people, keywords, places, dups, backs) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Import scanned/digital photos (SPEC §12.6)")
     ap.add_argument("--dry-run", action="store_true", help="report only, no DB writes")
+    ap.add_argument("--people-csv", type=Path, default=None,
+                    help="read_lrcat sidecar (base_name,people,events) — catalog is "
+                         "authoritative for people/events; unioned onto file XMP")
     args = ap.parse_args()
-    run(dry_run=args.dry_run)
+    run(dry_run=args.dry_run, people_csv=args.people_csv)

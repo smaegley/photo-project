@@ -46,12 +46,12 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > whole thing together.** Deploying is safe whenever (additive migration, non-destructive
 > importer) — the hold is purely to avoid a puzzling half-state for the family.
 >
-> **Deploy-day runbook (when the scans are ready):** on LXC 209
-> `git pull && DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build`
-> (migration `a7b8c9d0e1f2` auto-runs) → rsync batches to
-> `/mnt/photos/library/photos/<batch>/` → `docker compose exec api python -m
-> app.import_photos --dry-run` → review `./data/review/*.csv` → real run →
-> `docker compose exec api python -m app.prewarm`. Full detail: SPEC §12.10 / §12.12.
+> **THE SCANS ARE READY (2026-07-24).** 770 real FastFoto photos + 36 backs, built &
+> verified on dev with a **catalog-read people pipeline** (see §12.6 note + memory
+> `scan-rollout`). People/event tags are read straight from the Lightroom catalog
+> (file XMP was unreliable — 18-yr-old keywords had `includeOnExport=0`), so the
+> rollout carries **two CSVs**, not the catalog. **Ops-agent runbook is in the
+> "Scanned-photos rollout" section below.**
 > **Never** `import_data.py` on prod. Three of the held commits are also general UX
 > fixes (click-outside-to-close, close ✕ top-right, Places rail live counts) — they
 > ship with this deploy.
@@ -68,6 +68,56 @@ is only as good as its last update:
 ```bash
 ssh -i ~/.ssh/proxmox_lxc root@10.0.1.178 'cd /opt/photo-project && git rev-parse --short HEAD'
 ```
+
+### Scanned-photos rollout — Ops-agent runbook (2026-07-24)
+
+Everything on the **dev** side (VM 201) is staged and verified: the 806 files are
+sorted into decade folders under `/mnt/photos/library/photos/`, the two CSVs are in
+`/home/aiuser/projects/photo-project/data/review/`, and the code is on `origin/main`.
+**These steps run on prod (LXC 209) and need prod access — they are the Ops agent's.**
+Every step is additive/non-destructive; **never** run `import_data.py`.
+
+1. **Deploy the code** (also finally ships all held §12 + the 4 lightbox + Places-rail
+   fixes; runs migration `a7b8c9d0e1f2` — adds columns + backfills slides
+   `sort_date`/`is_family=1`; additive):
+   ```bash
+   cd /opt/photo-project && git pull
+   DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build   # OOM-watch on the 2GB box
+   ```
+2. **Copy the image files** dev → prod (decade folders; `data/` is gitignored so files
+   travel out-of-band, NOT via git):
+   ```bash
+   rsync -a --info=progress2 aiuser@10.0.1.121:/mnt/photos/library/photos/ \
+         /mnt/photos/library/photos/            # expect 770 fronts + 36 backs
+   ```
+3. **Copy the two CSVs** dev → prod (also gitignored):
+   ```bash
+   rsync -a aiuser@10.0.1.121:/home/aiuser/projects/photo-project/data/review/{lr_people.csv,people_seed.csv} \
+         /opt/photo-project/data/review/
+   ```
+4. **Seed the ~58 new people** (idempotent; creates person+alias rows, syncs
+   is_family/notes; the reviewed CSV marks 40 family / 34 friends / 4 pets):
+   ```bash
+   docker compose exec api python -m app.seed_people --dry-run   # expect created ~58, refused 0
+   docker compose exec api python -m app.seed_people
+   ```
+5. **Import the scans** using the **Lightroom-catalog sidecar** (people/events come
+   from `lr_people.csv`, NOT the files — file XMP silently drops
+   `includeOnExport=0` tags):
+   ```bash
+   docker compose exec api python -m app.import_photos --dry-run --people-csv lr_people.csv
+   # expect: 770 new, ~1222 people tags, 0 unresolved, 36 backs, 2 unmatched kw (Steve's/Karen's Wedding — ignore)
+   docker compose exec api python -m app.import_photos --people-csv lr_people.csv
+   ```
+6. **Prewarm** thumbnails + display derivatives:
+   ```bash
+   docker compose exec api python -m app.prewarm
+   ```
+
+**Verify:** All Photos shows the mixed 1940s–2000s timeline; Scanned Photos tab has
+770; People filter → "Friends & others" shows the pets incl. **Abby (32) / Toby (46)**.
+Dev counts to match: 770 scan photos, `abby`/`toby`/`floyd`/`muffy` persons with
+`notes='pet'`.
 
 **§10.16 is deployed but not yet behaviourally confirmed.** The fix only shows itself
 on a *cold* visit after >15 minutes away — a warm gallery never reproduced the bug in
