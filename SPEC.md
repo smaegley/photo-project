@@ -784,3 +784,259 @@ Slices 1–6 built and verified on VM 201 against the probe sample batches; slic
 `docker compose exec api python -m app.import_photos --dry-run` → review
 `./data/review/*.csv` → real run → `python -m app.prewarm`. Non-destructive; **never**
 `import_data.py`.
+
+### 12.13 Catalog-read people path (added 2026-07-24, refines §12.6)
+Real-data rollout surfaced that **file XMP is an unreliable source for people/events**:
+Lightroom's per-keyword `includeOnExport` flag suppresses a keyword from *all*
+file-metadata writes (not just export), and 18-year-old person keywords in Steve's
+catalog (e.g. `Abby`/`Toby`, created 2008) had it off — 113 photos exported with no
+people at all, unfixable from the file side. The catalog is authoritative, so people/
+events are now read directly from it:
+- **`app/read_lrcat.py`** — opens the `.lrcat` (SQLite, read-only/immutable), scopes to
+  the `FastFoto/%` folder, and emits a **sidecar** `data/review/lr_people.csv`
+  (`base_name,people,events`; people = keywords with `keywordType='person'`, events =
+  ordinary keywords minus hierarchy-parent noise) plus a complete refreshed
+  `people_seed.csv`. This is the §11.6 "sidecar CSV from Lightroom" input, realized.
+- **`app/import_photos.py --people-csv <sidecar>`** — unions catalog people/events onto
+  file XMP, keyed by front stem (catalog wins where XMP is empty).
+- **`app/seed_people.py`** — idempotent seeder for the new cast; CSV contract
+  `is_family=Y|N|Pet` (Pet → `is_family=0` + `person.notes='pet'`, a durable marker for
+  a future Pets grouping), `resolved_person_id` on a row = alias to that existing person
+  (not a new row). Re-runs sync `is_family`/`notes`.
+- **Rollout carries the two CSVs, not the catalog** (the `.lrcat` stays on the Mac).
+  Verified on dev: 770 photos, 1222 tags, 0 unresolved, pets recovered. Ops runbook in
+  `STATUS.md`.
+
+---
+
+## 13. Phase 2b design — B2-backed digital photos (`origin=digital`) (decided 2026-07-21)
+
+> **Status:** design agreed with Steve **2026-07-21**; **not yet built.** This realizes
+> the `origin=digital` half of §11 for Steve's born-digital library. It **refines
+> §11.3 and §12** where they assume every master lives on the LXC: for digital photos
+> the **masters stay in Backblaze B2**, and the app serves from them by pointer + a
+> local derivative cache. Nothing here changes slides or scans. Where §13 refines §11,
+> §13 is current (same rule as §12 vs §11).
+>
+> **What makes this cheaper than it looks:** §11.5 already replaced the slide filename
+> regex with a **DB `storage_path` lookup** ([routers/images.py:27-38](backend/app/routers/images.py#L27-L38)),
+> so the "where is this file" indirection layer already exists. §13 is mostly (a) a
+> storage backend behind that lookup, (b) a manifest-driven importer, and (c) making a
+> handful of `.stat()`-on-the-master calls stop assuming a local disk. It is **not** a
+> schema redesign or a serving rewrite.
+
+### 13.1 Context — Steve's setup (established 2026-07-21)
+- **The whole digital library (~65k photos) lives in a B2 bucket.** Only a **curated
+  subset — several thousand** — goes into the app (non-family, duplicate, and
+  near-identical shots are culled out). Goal is explicitly to **eliminate the second
+  export + the file movements**, not to save LXC disk (the volume has ~32 GB free).
+- **B2 holds RAW+JPG pairs** (camera writes both); a few are RAW-only.
+- **The JPGs are untouched camera originals** — Steve typically does *not* adjust in
+  Lightroom and re-export, so LR develop settings are generally NOT baked into the
+  JPGs. Consequence: the camera JPG **is** the intended rendering (serving it direct
+  loses no fidelity) — with the accepted exception in §13.10.
+- **On-disk layout mirrors B2 exactly.** LR import copies files into a Photo Album tree
+  organized `YYYY/mmm-dd/` (sometimes `YYYY/`) on a USB NAS (DS223j); GoodSync mirrors
+  that **near-realtime** to the primary NAS (DS418); Backblaze sync copies DS418 → B2
+  **nightly**. So a B2 object key = `<prefix>/YYYY/mmm-dd/<file>` with the same relative
+  path the LR catalog sees — **no per-photo mapping table needed** (§13.9).
+
+### 13.2 Decisions locked (Steve, 2026-07-21)
+1. **B2 is the master tier for `origin=digital`.** The app points at it; it does not
+   hold a second copy of the exported JPG.
+2. **Pixels from B2, metadata from a manifest, no image export.** The importer reads a
+   small **LR-generated manifest** (selection + catalog-only fields); image bytes are
+   fetched exactly **once per photo** (prewarm), never on the browse path.
+3. **Selection = a Lightroom keyword** (e.g. `Archive > Album`) driving a **Smart
+   Collection** — extends the §11.2 controlled-hierarchy contract. Not filenames
+   (§11.3 made identity independent of filenames on purpose).
+4. **Serve the JPG of a RAW+JPG pair; RAW-only → review CSV** (don't build a RAW
+   pipeline for the tail — §13.6).
+5. **EXIF leads the date for digital** (`DateTimeOriginal` is reliable and precise);
+   the `YYYY/mmm-dd` path is the sanity-check + fallback. **This inverts §12.4's
+   filename-first rule for scans** — deliberately, because scan EXIF is scanner-derived
+   and digital EXIF is camera-truth.
+6. **No full-res download path for `origin=digital`** (display derivative only, §13.7).
+   Steve already holds these masters in B2; the app need not be a second door to them,
+   and this avoids presigned-URL bearer-token exposure outside Cloudflare Access.
+7. **Importer is manifest-diff aware → gives deletion.** Untagging in LR removes the
+   photo from the app (§13.8). This makes the keyword a true bidirectional control
+   surface — unlike the scan folder-walk, which can only ever add.
+8. **Local derivative cache stays on the LXC** (thumbnails + display), same dirs as
+   slides/scans. Browsing never touches B2 in steady state.
+
+### 13.3 Storage abstraction (the one real serving change)
+Today `photo_file()` and `_version()` do `library_root / storage_path` and
+`.stat()` the result — pure local disk. Generalize to a **backend behind the existing
+DB lookup**:
+
+- **New `Photo.storage_backend`** — TEXT NOT NULL DEFAULT `'local'`, values
+  `local | b2`. `storage_path` keeps meaning "the key within that backend"
+  (`2015/Jul-04/IMG_1234.JPG` — a relative path for both; B2 prefixes with the
+  configured bucket root). Existing slide/scan rows are all `local` (backfill default).
+- **`app/storage.py`** — thin resolver:
+  - `open_master(photo) -> file-like` — `local`: open the file; `b2`: fetch the object
+    (B2 S3-compatible API via `boto3`, or the native b2 SDK) into a `BytesIO`/temp.
+  - `master_exists(photo) -> bool` — `local`: `path.exists()`; `b2`: `HEAD` the key.
+  - `master_version(photo) -> str` — a cheap change-token: `local`: mtime (today's
+    behavior); `b2`: the value the **manifest** carried at import (ETag/size/mtime),
+    stored on the row (§13.5) — **never a live HEAD per photo** (that would be a B2
+    round-trip per gallery tile; the §10.16 pool-exhaustion lesson).
+- **`routers/images.py`** switches to `storage.*`; the containment guard stays for
+  `local`. **Derivatives already stream from the local cache**, so `/api/thumbnails`
+  and `/api/display` are unchanged once the cache is warm — only a *cold miss* pulls
+  from B2 (§13.7).
+- **B2 config** in `config.py` / `.env`: `B2_BUCKET`, `B2_KEY_PREFIX` (the album-root
+  prefix), `B2_KEY_ID`, `B2_APP_KEY`, `B2_ENDPOINT`. Absent ⇒ no `b2`-backed serving
+  (dev without credentials still runs; digital rows just 404 their masters, caught).
+
+### 13.4 Kill the per-photo master `.stat()` (do this regardless)
+`queries.py:_version()` ([queries.py:19-27](backend/app/queries.py#L19-L27)) stats the
+master **once per photo during serialization** — 60 syscalls per gallery page locally,
+which would become **60 B2 HEADs per page** for digital rows. This is a latent wart
+even today. Fix as part of §13:
+- **New `Photo.file_version`** — TEXT NULL, the change-token from
+  `storage.master_version` **recorded at import/prewarm time**. `_version()` reads the
+  column, never the filesystem. Backfill slides/scans from current mtime in the
+  migration; the importer/prewarm refresh it.
+- **Derivative staleness for remote masters:** `derivatives.needs_regen` compares cache
+  mtime vs *source* mtime — impossible cheaply for B2. Instead **fold `file_version`
+  into the cache key** (`safe_key(source_file) + "." + file_version`): when the master
+  changes, the key changes, the old derivative orphans (GC'd later). Local slides/scans
+  keep the mtime predicate unchanged.
+
+### 13.5 The manifest (LR → importer), the only thing that moves at import
+A small CSV/JSON exported from Lightroom for the Smart Collection — **kilobytes, no
+pixels**. It carries only what lives *solely* in the LR catalog; date/GPS/caption come
+from the JPG's own EXIF/XMP, which `metadata.extract()` already reads and prewarm has
+to open the file for anyway (§13.7). Columns:
+
+| Field | Purpose |
+|---|---|
+| `relative_path` | `YYYY/mmm-dd/<file>` — becomes `storage_path`; B2 key = prefix + this |
+| `filename` | bare name → `original_filename`; RAW/JPG pairing key is its stem |
+| `version_token` | ETag/size/mtime → `file_version` (§13.4); lets a re-export re-derive |
+| `people` | face-tag / `PersonInImage` names (catalog-only) → `photo_person` |
+| `keywords` | `Events`/`Places` vocab terms (catalog-only) → events/places |
+| *(date/GPS/caption)* | **NOT required** — read from EXIF at prewarm; manifest may override |
+
+- **Resolution reuses the existing machinery** exactly as §12.6: people via
+  `person_alias` (unresolved → review CSV, **never auto-create persons**); keywords via
+  the §3.6 event vocabulary + §3.4 gazetteer (unmatched → review CSV, never auto-create
+  vocab); provenance `source=human-confirmed`.
+- **Companion doc:** the §11.2/§12.9 "LR conventions" doc gains the selection-keyword +
+  Smart-Collection + manifest-export recipe.
+
+### 13.6 RAW+JPG pairing
+- A manifest row names one file. If it's a JPG, use it. If it's a RAW (`.CR2/.NEF/
+  .ARW/.DNG/…`), **look for a sibling `.jpg`/`.jpeg` with the same stem** in the same
+  `relative_path` folder and serve that instead (record it as `storage_path`; keep the
+  RAW name in a note if useful).
+- **RAW-only (no JPG sibling) → `review/raw_only.csv`.** Small minority; Steve exports
+  those few by hand or lets them sit. Pillow can't decode RAW and rendering it outside
+  LR would ignore develop settings — out of scope by decision #4.
+
+### 13.7 Serving & prewarm — one B2 read per photo, ever
+- **Prewarm is the fetch point.** Extend `app/prewarm.py` (which already loops
+  non-slide rows — [prewarm.py:47-72](backend/app/prewarm.py#L47-L72)): for a `b2` row,
+  `storage.open_master` → generate thumb (400) + display (2560) into the local cache →
+  **extract EXIF/XMP from the same in-memory bytes** (`metadata.extract` accepts a
+  file-like; small change from its current path arg) to fill date/GPS/caption →
+  discard the master. Record `file_version`.
+- **Steady state:** every browse hits the **local** cache — identical latency to slides
+  today. B2 is touched only at prewarm and (if ever re-enabled) full-res download.
+- **Cold-miss safety net:** if a display/thumb is requested and absent (cache cleared,
+  new import not yet prewarmed), the image route may lazily pull-and-generate — but the
+  **intended path is prewarm-at-import**, because a lazy 8 MB B2 pull in the request is
+  exactly the slow-client latency §10.16 warned about. Prewarm first; treat lazy as
+  fallback only.
+- **One-time egress:** ~40 GB for 5k photos. B2 free egress is 3× stored bytes, and
+  Cloudflare Bandwidth Alliance zero-rates B2→Cloudflare regardless. Effectively free.
+- **Local cache footprint:** ~7–10 GB for several thousand photos, inside the 32 GB
+  free; pure cache, rebuildable by prewarm.
+
+### 13.8 Sync lag & deletion — the importer's freshness contract
+The DS418→B2 copy is **nightly**, so a just-imported LR photo can be **up to ~24 h
+ahead of B2**. The importer must be *eventually consistent with what's tagged*, not
+assume the object is present:
+- **HEAD before create.** A manifest row whose B2 key `master_exists()==False` → 
+  `review/not_in_b2_yet.csv` instead of a broken `Photo` row. **Re-running after the
+  nightly sync sweeps up the stragglers** — this is the normal workflow, not error
+  recovery (the upsert is already idempotent, §12.6).
+- **Deletion via manifest diff (decision #7).** Any `origin=digital` row whose
+  `storage_path` is **absent from the current manifest** = untagged in LR → soft-remove
+  (delete the Photo row + its derivatives; slides/scans untouched). Gate behind
+  `--prune` (dry-run lists first) so a truncated/partial manifest can't nuke the set.
+- **Topology note (not introduced here, but now load-bearing):** GoodSync *mirrors*, so
+  the DS418 is the only always-on copy of a same-day import until the nightly runs, and
+  a USB-drive deletion propagates. The app's "in the app" state trails "tagged in LR"
+  by up to a day — fine for a family archive nobody browses by the minute.
+
+### 13.9 Schema delta (one migration, down_revision = `a7b8c9d0e1f2`)
+- `photo.storage_backend` TEXT NOT NULL DEFAULT `'local'` (`local|b2`).
+- `photo.file_version` TEXT NULL — change-token for `?v=` + derivative keys (§13.4).
+- **Backfill:** all existing rows `storage_backend='local'`,
+  `file_version = str(int(master mtime))` (or leave null → `_version` falls back to a
+  one-time stat, self-heals on next prewarm).
+- No change to `origin` (the `digital` value already exists, §11.4). Reverse-geocode of
+  new GPS follows §12.12's deviation (proximity-match existing gazetteer; genuine new
+  places → `review/unresolved_places.csv`, added via pin editor, re-run).
+
+### 13.10 UI/UX
+- **Fourth view toggle: `All Photos | Slide Photos | Scanned Photos | Digital Photos`**
+  — the §12.8 `origin` hard-scope generalizes with no new mechanic (`view` state adds
+  `'digital'`; `PhotoFilter.origin='digital'`). *Optional* — could fold digital into
+  *All Photos* only; add the fourth tab if/when the digital set is large enough to
+  warrant its own scope. Recommend adding it for symmetry with the scan view.
+- **Lightbox origin badge** "Digital photo" + the `YYYY/mmm-dd` (or a friendlier date).
+  No back-of-photo, no Rolls membership. **Download button hidden** for digital
+  (decision #6) — or present but pointing at the display derivative, TBD with Steve.
+- Facets / map / timeline already work for the new rows (`queries.py` is origin-agnostic
+  apart from the scope filter).
+
+### 13.11 Accepted trade-offs — record in STATUS.md the day this ships
+1. **Unadjusted-JPG divergence.** If Steve *does* adjust a photo in LR and doesn't
+   re-export, the app shows the **unedited camera JPG** — silently, permanently. Fine
+   given the workflow, but exactly the kind of quiet mismatch that becomes a baffling
+   bug report in two years. Document it, don't fix it.
+2. **The DB becomes system-of-record for identity.** For B2-backed rows the SQLite DB
+   is the *only* thing mapping a bucket key to a photo's meaning — losing it unbacked
+   leaves opaque objects in B2. This **raises the stakes on the two accepted backup
+   gaps** (STATUS.md known issues #2 snapshot-verify no-op, #4 off-box coverage). Revisit
+   those before, not after, digital goes live.
+3. **~24 h tag→app lag** (§13.8) — accepted, inherent to the nightly B2 sync.
+4. **First-cull is manual in LR** — the app trusts the Smart Collection; it does not
+   help you pick the subset.
+
+### 13.12 Open items / probes before build
+- **P-B2a — manifest export mechanics:** which LR facility emits the manifest (plugin,
+  metadata export preset, `Export as Catalog`, or reading the `.lrcat` SQLite directly)
+  and can it include a stable `version_token`? *(Reading `.lrcat` directly is possible —
+  it's SQLite — but the schema is reverse-engineered and shifts across LR versions;
+  treat as fallback, not default.)*
+- **P-B2b — B2 access shape:** S3-compatible endpoint + `boto3` vs native b2 SDK;
+  application-key scoping to a single bucket/prefix, read-only.
+- **P-B2c — key derivation:** confirm the exact `B2_KEY_PREFIX` such that
+  `prefix + relative_path` is the literal object key (account for any bucket-side
+  top-level folder the Backblaze sync adds).
+- **P-B2d — `mmm-dd` grammar:** exact month token form (`Jul` vs `July` vs `07`) and the
+  `YYYY`-only fallback, for the path date sanity-check (`dates.py` already handles year
+  precision).
+
+### 13.13 Build order (slices)
+1. **Probes** P-B2a–d — close the manifest + key-derivation contracts.
+2. **Migration + models** (§13.9) + `storage.py` skeleton (`local` passthrough — no
+   behavior change; verify slides/scans unaffected).
+3. **Kill per-photo master stat** (§13.4): `file_version` column, `_version` reads it,
+   derivative cache key includes it. Shippable alone, benefits slides/scans too.
+4. **B2 backend** in `storage.py` (open/exists/version) + config/`.env`.
+5. **Manifest importer** — extend `app/import_photos.py` (or a sibling `import_digital`)
+   for manifest input, RAW/JPG pairing, HEAD-before-create, `--prune` deletion diff;
+   dry-run reports.
+6. **Prewarm from B2** (§13.7) — fetch-once, derive, EXIF-from-bytes, record version.
+7. **Frontend** — fourth view + digital lightbox badge/download (§13.10).
+8. **Rollout** — dev against a small tagged sample + a scratch bucket/prefix first;
+   then prod. Non-destructive; **never** `import_data.py`.
+
+**Out of scope for 2b:** RAW rendering (decision #4); ML enrichment (§5); serving the
+65k full library (only the tagged subset); presigned-URL public sharing.
