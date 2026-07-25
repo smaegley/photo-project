@@ -32,9 +32,10 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `d62b1f6` — People-rail + Manage-People UI fixes (2026-07-24) |
-| Pushed to origin | yes (`origin/main` @ `d62b1f6`) |
-| Deployed to prod | `d62b1f6` — **2026-07-24, §12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2` applied. Two follow-up frontend fixes shipped same day: FilterRail renders "Friends & others" for linked viewers; Manage-People modal widened so the edit-links Save button can't clip |
+| Repo HEAD (dev) | `82166b3` — Slide Photos header count fix (2026-07-25) |
+| Pushed to origin | yes (`origin/main` @ `82166b3`) |
+| Deployed to prod | `82166b3` — 2026-07-25, Slide Photos header shows slide count (grid=all slides, roll detail=that roll) not the mixed grand total |
+| — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
 > **✅ SCANNED PHOTOS DEPLOYED & VERIFIED ON PROD (2026-07-24).** The whole §12 build
