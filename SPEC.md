@@ -1040,3 +1040,77 @@ assume the object is present:
 
 **Out of scope for 2b:** RAW rendering (decision #4); ML enrichment (§5); serving the
 65k full library (only the tagged subset); presigned-URL public sharing.
+
+### 13.14 Build plan — catalog-read revision (decided 2026-07-25)
+The scan rollout (§12.13) proved that **reading the Lightroom catalog directly beats
+file/manifest export** (no manual step, no `includeOnExport` surprises). Steve chose
+to apply the same to digital: **selection + metadata from the `.lrcat`; pixels from
+B2; derivatives cached locally.** This supersedes §13.5's manifest and §13.12/§13.13's
+manifest-export slices; the rest of §13 (storage backend §13.3, kill-per-photo-stat
+§13.4, prewarm-once §13.7, trade-offs §13.11) stands.
+
+**Selection rule (locked 2026-07-25):** a **people gallery** — include a digital photo
+**iff it is tagged with ≥1 person from an include-set** (immediate family to start:
+Steve, Cori [catalog name **"Cori Johnson"**, not yet in DB], Kate, Ryan, Marilyn,
+Wendel; extensible). People not in the set neither include nor exclude. Untagged
+photos (landscape/nature) are excluded by construction.
+
+**Scope + baseline (probed on the 2026-07-24 catalog copy):** digital library = the
+**`PhotoAlbum` root folder** (`YYYY/…` tree), 65,096 photos — cleanly separate from
+scans (`FastFoto`) and slides. Only **1,618 (2.5%) carry any person tag today**; the
+immediate-family rule yields **~1,137** (Kate 657, Ryan 547, Steve 287, Marilyn 64,
+Wendel 1; + Cori Johnson). **Yield is capped by tagging coverage, not the rule** —
+Steve is actively tagging, so the set grows; re-running the sync absorbs new tags with
+zero code change.
+
+**Prerequisites (before go-live):**
+1. **Backup hardening — HARD prerequisite.** B2-as-master makes the DB the sole map
+   from bucket-key→meaning; losing it unbacked = opaque objects. Fix STATUS known
+   issues **#2** (snapshot-verify no-op) and **#4** (untested off-box coverage) first.
+2. **B2 read-only application key** scoped to the bucket + endpoint → `.env` (Steve
+   provisions).
+3. **Add Cori Johnson + any new trigger people** to the DB (`seed_people` flow).
+
+**Probes to close first (next session):**
+- **P-D1 B2 key derivation:** confirm `<B2_KEY_PREFIX> + <PhotoAlbum-relative path>/<file>`
+  = the actual object key (Steve confirms bucket layout / shares one sample key). The
+  catalog gives the relative path; this fixes the prefix. Must stay stable.
+- **P-D2 B2 auth/fetch:** S3-compatible (`boto3`) vs native b2 SDK — test one HEAD+GET.
+- **P-D3 RAW/JPG + EXIF:** per selected photo, confirm a JPG sibling exists (serve it;
+  RAW-only → review); confirm capture date + GPS readable from catalog
+  (`Adobe_images.captureTime`, `AgHarvestedExifMetadata`).
+
+**Build slices:**
+1. **Schema + storage abstraction** (§13.3/§13.4): migration adds `photo.storage_backend`
+   (`local|b2`, default local) + `photo.file_version`; `app/storage.py`
+   (open/exists/version) as a local passthrough (no behavior change); move `?v=` +
+   derivative staleness onto `file_version` (kills the per-photo master `.stat()`).
+   Ships alone, benefits slides/scans too.
+2. **B2 backend** in `storage.py` (HEAD/GET/version via the P-D2 choice) + `.env` config.
+3. **Catalog digital reader** — extend `read_lrcat`: given the include-people set and
+   the `PhotoAlbum` scope, emit a **digital sidecar** (per photo: B2 key, JPG-of-pair,
+   people, events, capture date, GPS).
+4. **Digital importer** — consume the sidecar → `origin='digital'`,
+   `storage_backend='b2'`, `storage_path=<B2 key>`; resolve people/events (reuse §12
+   machinery); **HEAD-check B2 and defer misses** to review (nightly-sync lag, §13.8);
+   `--prune` removes rows whose photo is no longer selected (untagged in LR).
+5. **Prewarm from B2** (§13.7): fetch each master once → thumb+display derivatives +
+   EXIF from the same bytes → cache locally, record `file_version`, discard master.
+6. **Frontend** (§13.10): a **"Digital Photos"** view (origin scope, mirrors Scanned
+   Photos), origin badge, **no full-res download for digital**.
+
+**Prove-out milestone (do early, de-risks everything):** end-to-end on **one** tagged
+photo — catalog → its B2 key → pull → derivative → served in the app. That's slices
+1–3 + a single-photo test; validates key derivation + B2 auth + serving before scaling.
+
+**The weekly sync (Steve's idea):** the whole chain is **idempotent + additive +
+`--prune`**, so re-running reconciles the DB to the current tag state — safe to run on
+a cadence. One friction: the `.lrcat` copy needs Lightroom **closed** (file lock), so a
+fully-unattended cron is awkward. Simplest = a **Steve-triggered `sync` script** (copy
+catalog → `read_lrcat` → import → prewarm) run when he's done a tagging pass; a real
+weekly cron is possible only if LR is reliably closed on schedule. Decide the trigger
+model when we build slice 4.
+
+**Status:** planned 2026-07-25; **build starts next session.** Steve tagging in the
+meantime. Nothing here is blocked by tagging coverage — build against the current
+~1,137 and it scales as tags grow.
