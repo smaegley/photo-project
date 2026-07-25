@@ -41,6 +41,9 @@ export default function App() {
   const [places, setPlaces] = useState([]);         // mappable-only, for the map
   const [allPlaces, setAllPlaces] = useState([]);   // all places, for admin/assign
   const [magazines, setMagazines] = useState([]);
+  // Roll-detail selection lifted out of RollsView so the header count can reflect it
+  // (Slide Photos has no filters, so the count is grid=all-slides / detail=this roll).
+  const [rollDetail, setRollDetail] = useState(null);
 
   // gallery result
   const [result, setResult] = useState({ total: 0, photos: [], people_counts: [], event_counts: [], place_counts: [] });
@@ -93,6 +96,13 @@ export default function App() {
     years[0] !== bounds.min || years[1] !== bounds.max;
 
   const activeRoll = sel.magazineId ? magazines.find((m) => m.id === sel.magazineId) : null;
+
+  // Header count (SPEC §12.8): All Photos / Scanned Photos = query total; Slide Photos
+  // is slide-only and unfiltered, so show all slides in the grid, this roll in a detail.
+  const totalSlides = magazines.reduce((sum, m) => sum + (m.slide_count || 0), 0);
+  const headerCount = view === "rolls"
+    ? (rollDetail ? rollDetail.slide_count : totalSlides)
+    : result.total;
   const personName = useMemo(
     () => me?.person_id ? (people.find((p) => p.id === me.person_id)?.name ?? null) : null,
     [me, people]
@@ -270,6 +280,7 @@ export default function App() {
   // have no magazine context), so the view starts clean.
   const changeView = useCallback((v) => {
     setView(v);
+    setRollDetail(null);  // any tab switch returns Slide Photos to its magazine grid
     if (v !== "gallery") setSel((s) => (s.magazineId ? { ...s, magazineId: null } : s));
   }, []);
 
@@ -277,7 +288,7 @@ export default function App() {
     <div className="app">
       <Header
         view={view}
-        total={result.total}
+        total={headerCount}
         hasFilters={hasFilters}
         onView={changeView}
         onReset={reset}
@@ -372,6 +383,8 @@ export default function App() {
           ) : (
             <RollsView
               magazines={magazines}
+              roll={rollDetail}
+              onSelectRoll={setRollDetail}
               onViewInGallery={(id) => { setSel({ ...EMPTY, magazineId: id }); setView("gallery"); }}
               admin={admin}
               isAdmin={isAdmin}
