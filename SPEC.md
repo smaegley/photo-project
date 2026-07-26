@@ -1055,13 +1055,19 @@ Steve, Cori [catalog name **"Cori Johnson"**, not yet in DB], Kate, Ryan, Marily
 Wendel; extensible). People not in the set neither include nor exclude. Untagged
 photos (landscape/nature) are excluded by construction.
 
-**Scope + baseline (probed on the 2026-07-24 catalog copy):** digital library = the
-**`PhotoAlbum` root folder** (`YYYY/…` tree), 65,096 photos — cleanly separate from
-scans (`FastFoto`) and slides. Only **1,618 (2.5%) carry any person tag today**; the
-immediate-family rule yields **~1,137** (Kate 657, Ryan 547, Steve 287, Marilyn 64,
-Wendel 1; + Cori Johnson). **Yield is capped by tagging coverage, not the rule** —
-Steve is actively tagging, so the set grows; re-running the sync absorbs new tags with
-zero code change.
+**Scope + baseline (re-probed on the 2026-07-26 catalog):** digital library = the
+**`PhotoAlbum` folder tree**, now rooted under the DS223j USB-NAS mount
+(root `Mac_DS223j`, path `PhotoAlbum/…` = `/Volumes/Mac_DS223j/PhotoAlbum/…`), ~67,954
+photos — separate from scans (`FastFoto`) and slides. **Scope must NOT hardcode the
+root name** — it moved between 7/24 (root `PhotoAlbum`) and 7/26 (root `Mac_DS223j` +
+`PhotoAlbum/%` path) when Steve remounted the drive; define it as "the PhotoAlbum tree
+wherever rooted" and confirm each sync. **Person-tagged: 5,728** (was 1,618 on 7/24);
+**immediate-family rule yield: 4,723** (was 1,137) — Kate 2,350, Ryan 2,192, Steve 726,
+Cori 659, Marilyn 135, Wendel 1. **Yield is capped by tagging coverage, not the rule**;
+it grows as Steve tags (a single 7/25–26 tagging pass ~4×'d it), re-running the sync
+absorbs new tags with zero code change. Note: some photos have `.jpg`+`.psd`/RAW
+siblings and some sit loose in `PhotoAlbum/` (not a `YYYY/` subfolder) — "serve the JPG"
+must handle both.
 
 **Prerequisites (before go-live):**
 1. **Backup hardening — HARD prerequisite.** B2-as-master makes the DB the sole map
