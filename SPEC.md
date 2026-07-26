@@ -1078,9 +1078,16 @@ must handle both.
 3. **Add Cori Johnson + any new trigger people** to the DB (`seed_people` flow).
 
 **Probes to close first (next session):**
-- **P-D1 B2 key derivation:** confirm `<B2_KEY_PREFIX> + <PhotoAlbum-relative path>/<file>`
-  = the actual object key (Steve confirms bucket layout / shares one sample key). The
-  catalog gives the relative path; this fixes the prefix. Must stay stable.
+- **P-D1 B2 key derivation — ✅ CLOSED (2026-07-26).** Bucket `PhotoAlbum1`, S3 endpoint
+  `s3.us-west-001.backblazeb2.com`. Catalog on-disk
+  `/Volumes/Mac_DS223j/PhotoAlbum/2001/2001_04_08_004.jpg` maps to B2 key
+  `Photo Album/2001/2001_04_08_004.jpg` — everything after the top folder is identical;
+  only the top folder is renamed **`PhotoAlbum` (catalog) → `Photo Album` (B2, with a
+  space)** somewhere in the DS223j→DS418→B2 sync. **Rule: `B2 key = "Photo Album/" +
+  (catalog pathFromRoot with leading "PhotoAlbum/" stripped) + baseName.ext`** (handles
+  loose-in-PhotoAlbum files too). ⚠ The hand-named `PhotoAlbum`/`Photo Album` mismatch is
+  a latent fragility — if the sync ever normalizes it, keys break; worth Steve tidying the
+  DS223j naming (also the cause of his LR re-link/path churn).
 - **P-D2 B2 auth/fetch:** S3-compatible (`boto3`) vs native b2 SDK — test one HEAD+GET.
 - **P-D3 RAW/JPG + EXIF:** per selected photo, confirm a JPG sibling exists (serve it;
   RAW-only → review); confirm capture date + GPS readable from catalog
