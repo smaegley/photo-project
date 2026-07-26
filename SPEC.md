@@ -1088,10 +1088,14 @@ must handle both.
   loose-in-PhotoAlbum files too). ⚠ The hand-named `PhotoAlbum`/`Photo Album` mismatch is
   a latent fragility — if the sync ever normalizes it, keys break; worth Steve tidying the
   DS223j naming (also the cause of his LR re-link/path churn).
-- **P-D2 B2 auth/fetch:** S3-compatible (`boto3`) vs native b2 SDK — test one HEAD+GET.
-- **P-D3 RAW/JPG + EXIF:** per selected photo, confirm a JPG sibling exists (serve it;
-  RAW-only → review); confirm capture date + GPS readable from catalog
-  (`Adobe_images.captureTime`, `AgHarvestedExifMetadata`).
+- **P-D2 B2 auth/fetch — ✅ CLOSED (2026-07-26).** `boto3` S3 client against
+  `https://<b2_endpoint>` with `region_name=us-west-001`, `signature_version=s3v4`,
+  the read-only app key. HEAD + GET both work; keys with spaces (`Photo Album/…`) pass
+  through fine. boto3 not yet in requirements — add at build (slice 2).
+- **P-D3 EXIF — ✅ CONFIRMED:** `DateTimeOriginal` read straight from the fetched JPEG
+  bytes and matched the folder date (2015-01-10) — EXIF-leads-date is reliable for
+  digital. *Still TODO in the importer:* RAW/JPG sibling selection (serve JPG, RAW-only
+  → review) and GPS.
 
 **Build slices:**
 1. **Schema + storage abstraction** (§13.3/§13.4): migration adds `photo.storage_backend`
@@ -1112,9 +1116,12 @@ must handle both.
 6. **Frontend** (§13.10): a **"Digital Photos"** view (origin scope, mirrors Scanned
    Photos), origin badge, **no full-res download for digital**.
 
-**Prove-out milestone (do early, de-risks everything):** end-to-end on **one** tagged
-photo — catalog → its B2 key → pull → derivative → served in the app. That's slices
-1–3 + a single-photo test; validates key derivation + B2 auth + serving before scaling.
+**Prove-out milestone — ✅ DONE (2026-07-26).** Validated on 3 tagged Kate photos: catalog
+→ derived `Photo Album/…` key → boto3 HEAD (all exist) → GET (1.38 MB) → PIL decode
+(3264×1836) → 400px thumbnail → EXIF `DateTimeOriginal` matching the folder date. The
+whole model is de-risked on live data; config/creds wired (`b2_enabled`). Remaining is
+turning this into the real code (slices 1–6): `storage.py`, migration, importer, prewarm,
+frontend — plus the backup-hardening prerequisite before go-live.
 
 **The weekly sync (Steve's idea):** the whole chain is **idempotent + additive +
 `--prune`**, so re-running reconciles the DB to the current tag state — safe to run on
