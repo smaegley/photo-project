@@ -110,7 +110,13 @@ class Photo(Base):
     # SPEC §11: non-slide ingest. origin drives serving path + UI; storage_path
     # locates the file under library_root (DB lookup, not a filename regex).
     origin: Mapped[str] = mapped_column(String, nullable=False, default="slide")   # slide|scan|digital
-    storage_path: Mapped[str | None] = mapped_column(String, nullable=True)        # relative to library_root
+    # SPEC §13.3/§13.4: where the master lives + a cheap change-token. storage_backend
+    # selects the backend (local file vs B2 object); storage_path is the key within it
+    # (library-relative path for local; B2 object key for b2). file_version stamps the
+    # ?v= cache-buster + derivative cache key so serving never stat()s the master.
+    storage_backend: Mapped[str] = mapped_column(String, nullable=False, default="local", server_default="local")  # local|b2
+    storage_path: Mapped[str | None] = mapped_column(String, nullable=True)        # relative to library_root (local) or B2 object key
+    file_version: Mapped[str | None] = mapped_column(String, nullable=True)        # mtime (local) / ETag-ish token (b2)
     original_filename: Mapped[str | None] = mapped_column(String, nullable=True)
     # SPEC §12.3: scan provenance. batch = FastFoto subject folder (null for slides);
     # back_path = library-relative path of the paired back-of-photo (_b) scan.
