@@ -1104,15 +1104,23 @@ must handle both.
    derivative staleness onto `file_version` (kills the per-photo master `.stat()`).
    Ships alone, benefits slides/scans too.
 2. **B2 backend** in `storage.py` (HEAD/GET/version via the P-D2 choice) + `.env` config.
-3. **Catalog digital reader** — extend `read_lrcat`: given the include-people set and
-   the `PhotoAlbum` scope, emit a **digital sidecar** (per photo: B2 key, JPG-of-pair,
-   people, events, capture date, GPS).
+3. **Catalog digital reader — ✅ DONE (slice 3, `cdd46db`).** `read_lrcat --digital`:
+   PhotoAlbum photos tagged with ≥1 `DIGITAL_INCLUDE_PEOPLE`; mount-independent B2-key
+   derivation (anchor on last `PhotoAlbum/`); RAW+JPG pairs collapsed by key; capture
+   date + GPS from the catalog. Emits `digital_sidecar.csv` + `people_seed_digital.csv`.
+   Live catalog: **4,704 selected, 65 people**.
 4. **Digital importer** — consume the sidecar → `origin='digital'`,
-   `storage_backend='b2'`, `storage_path=<B2 key>`; resolve people/events (reuse §12
-   machinery); **HEAD-check B2 and defer misses** to review (nightly-sync lag, §13.8);
-   `--prune` removes rows whose photo is no longer selected (untagged in LR).
+   `storage_backend='b2'`, `storage_path=<resolved B2 key>`; resolve people/events
+   (reuse §12 machinery); **HEAD-check B2 and defer misses** (nightly-sync lag, §13.8);
+   `--prune` removes rows no longer selected. **B2-verified key resolution (from slice-3
+   probes):** try `.jpg / .JPG / .jpeg / .JPEG` for the JPG-of-pair (3,673 jpg-origin +
+   **875 `.cr2/.orf/.cr3` resolve via UPPERCASE `.JPG`**); HEIC-origin (131) has no JPG
+   twin → use the `.HEIC` key (decode in slice 5); ~25 `.nef/.dng/.tif/.psd` are RAW-only
+   → review. Store the resolved `file_version` (ETag) at import so serving never HEADs.
 5. **Prewarm from B2** (§13.7): fetch each master once → thumb+display derivatives +
    EXIF from the same bytes → cache locally, record `file_version`, discard master.
+   **Add `pillow-heif`** so the 131 iPhone HEICs decode (recent family photos worth
+   keeping); JPGs/CR2-JPGs decode with plain Pillow.
 6. **Frontend** (§13.10): a **"Digital Photos"** view (origin scope, mirrors Scanned
    Photos), origin badge, **no full-res download for digital**.
 
