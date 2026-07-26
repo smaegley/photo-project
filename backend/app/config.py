@@ -23,9 +23,22 @@ class Settings(BaseSettings):
     dev_user_role: str = "admin"
     dev_user_person_id: str = "steve"  # links the dev user to their tree person ("Self")
 
+    # Backblaze B2 — masters for origin=digital (SPEC §13). Read-only, S3-compatible.
+    # All blank by default (local-only serving unchanged); set in backend/.env (dev)
+    # or the prod .env when the digital tier is built.
+    b2_key_id: str = ""
+    b2_app_key: str = ""       # secret — .env only, never committed
+    b2_bucket: str = ""
+    b2_endpoint: str = ""      # e.g. s3.us-west-001.backblazeb2.com
+
     @property
     def cf_access_enabled(self) -> bool:
         return bool(self.cf_access_team_domain and self.cf_access_aud)
+
+    @property
+    def b2_enabled(self) -> bool:
+        """True once B2 is configured — gates any origin=digital serving (SPEC §13)."""
+        return bool(self.b2_key_id and self.b2_app_key and self.b2_bucket and self.b2_endpoint)
 
     @property
     def database_url(self) -> str:
@@ -62,7 +75,10 @@ class Settings(BaseSettings):
         # Sized index-card derivatives for grid/panel views (full-res via /api/cards).
         return Path(self.library_root) / "card_thumbs"
 
-    model_config = {"extra": "ignore"}
+    # Load backend/.env when present (dev). Prod injects the same keys as env vars via
+    # docker-compose, which take precedence; a missing env_file is silently ignored, so
+    # this changes nothing until a real backend/.env exists.
+    model_config = {"env_file": str(REPO_ROOT / "backend" / ".env"), "extra": "ignore"}
 
 
 settings = Settings()
