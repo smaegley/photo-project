@@ -1586,8 +1586,21 @@ arrival. Same rule as `faces_digital.csv` (§14.3), which already keys on `b2_ke
    across; and **`embedding` is nullable on purpose** — enrichment runs on dev and
    exports to prod (§14.8a), where the box is needed to crop a face for review but the
    512-float vector never is. That keeps ~2 KB/face off the wire and off the 2 GB box.
-3. **Detection + embedding batch** over display derivatives → `face` rows. Resumable and
-   idempotent, like every other importer here.
+3. **Detection + embedding batch — ✅ BUILT (2026-07-27, `app/detect_faces.py`).**
+   Reads the **local display derivatives** for every origin through one rule (slides,
+   scans and B2 digital all resolve via `derivatives.cache_key`), writes one `face` row
+   per detection with box, `det_score` and a 512-float embedding. No B2 fetch, no master
+   read — justified by P-F4's 100% recall on exactly these files.
+
+   **Resumability needed a second migration (`e1f2a3b4c5d6`, `photo.faces_scanned_version`)**
+   and the reason is worth remembering: ~40% of photos contain **no face at all**, so
+   keying resume state off "has `face` rows" silently re-scans every faceless photo on
+   every pass. Measured: 49 of the first 80 photos were faceless. Resume now keys on
+   *scanned*, not *has faces*.
+
+   `detector_version` is stamped on every row so a future model upgrade can re-detect
+   without mixing incompatible embeddings — cosine distance between different ArcFace
+   variants is meaningless.
 4. **Enrollment + matching** — build per-person centroids from confirmed regions, score
    every unassigned face, write `face_suggestion` rows above threshold.
 5. **Bulk-confirm UI** (§14.7) + undo integration.

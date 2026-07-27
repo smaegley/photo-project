@@ -128,6 +128,10 @@ class Photo(Base):
     # that is what lets the admin map show "locations I haven't named yet" (SPEC §13.9).
     lat: Mapped[float | None] = mapped_column(Float, nullable=True)
     lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # Which detector has scanned this photo (SPEC §14). Needed because ~40% of photos
+    # contain no face, so "has face rows" is not the same as "has been scanned" — without
+    # this, every faceless photo is re-scanned on every run.
+    faces_scanned_version: Mapped[str | None] = mapped_column(String, nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject
