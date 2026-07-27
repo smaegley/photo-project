@@ -286,6 +286,14 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   them — prod deploys via `git pull` and would flip every file to `100755` for no
   benefit. Fix is `git config core.filemode false` (that `.git/config` is the VM's,
   shared over SMB — harmless there, since the VM's native filesystem already sees 644).
+- **`data/review/*.csv` splits into REPORTS (overwritten) and INPUTS (durable).** The
+  importers regenerate `unresolved_*.csv` / `unmatched_*.csv` on **every run**, so
+  decisions typed into one of those are destroyed by the next import and nothing reads
+  them back. The reviewed copy always lives under a separate `*_seed_*.csv` name, which
+  a seeder consumes: `people_seed*.csv` → `seed_people`, `events_seed*.csv` →
+  `seed_events`, `places_seed*.csv` → the admin pin editor. Nearly cost Steve 51
+  keyword decisions on 2026-07-27. If you hand someone a review file, say which kind it
+  is.
 - **The api image ignores your command and migrates the DB.** `ENTRYPOINT` is
   `backend/entrypoint.sh`, which runs `alembic upgrade head` then `exec uvicorn` — and it
   never references `"$@"`. So `docker run <image> python -c '...'` does **not** run that
