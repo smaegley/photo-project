@@ -314,6 +314,17 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   `docker run --entrypoint python3`. Cost the Ops agent a drill run on 2026-07-27 — the
   inspection container silently upgraded the artifact it was measuring. (`docker compose
   exec api ...` is fine — exec bypasses ENTRYPOINT entirely.)
+- **Working backups belong in `data/backups/`, NOT the session scratchpad.** Take one
+  before any destructive step with the hardened, self-verifying script:
+  ```bash
+  DB=$PWD/data/photos.db OUTDIR=$PWD/data/backups KEEP=10 bash infra/db-snapshot.sh
+  ```
+  Why there: `data/` is on the **root disk**, which IS in VM 201's 00:15 vzdump, and it's
+  gitignored so family data never reaches git. **`/mnt/photos` is NOT backed up** —
+  `backup=0` was set on that disk 2026-07-27, so anything staged there is unprotected.
+  Learned the hard way: a session's backups written to `/tmp` were **wiped by the VM
+  reboot** that same day. The method (SQLite online backup API) was right; the location
+  was not.
 - **`cp data/photos.db` is NOT a backup — it silently gives you a stale one.** The DB
   is in WAL mode, so recent commits live in `photos.db-wal` until a checkpoint. A plain
   `cp` of just the main file produced a copy with **1,148 photo rows against a live
