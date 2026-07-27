@@ -1111,6 +1111,21 @@ must handle both.
 2. **B2 read-only application key** scoped to the bucket + endpoint → `.env` (Steve
    provisions).
 3. **Add Cori Johnson + any new trigger people** to the DB (`seed_people` flow).
+   **✅ RUN 2026-07-27** — 28 created from `people_seed_digital.csv` (1 family, 27
+   friends), 37 already existed, 0 refused. Import then resolved **0 unresolved people**.
+   **⚠ Two probable duplicate identities need Steve's call before the real import:**
+   - **`cori_johnson` vs `cori_maegley`** — the reviewed CSV left `resolved_person_id`
+     blank, so seeding created a second family person. `cori_maegley` already exists with
+     **spouse = steve**; "Cori Johnson" is her catalog name (this section says so).
+     If they are one person, **646 digital photos** would attach to an identity outside
+     the family tree while her slides/scans stay on the other. Fix = set
+     `resolved_person_id=cori_maegley` in the CSV (making it an alias) and delete the
+     stray person row.
+   - **`nath` vs `nathan_dee`** — 1 catalog photo vs an existing family person with 7.
+     Same shape, same fix.
+
+   Both stray rows currently carry **zero photo tags**, so they are free to remove now
+   and expensive to unpick after a 4,679-row import.
 
 **Probes to close first (next session):**
 - **P-D1 B2 key derivation — ✅ CLOSED (2026-07-26).** Bucket `PhotoAlbum1`, S3 endpoint
@@ -1165,7 +1180,31 @@ must handle both.
    derivation (anchor on last `PhotoAlbum/`); RAW+JPG pairs collapsed by key; capture
    date + GPS from the catalog. Emits `digital_sidecar.csv` + `people_seed_digital.csv`.
    Live catalog: **4,704 selected, 65 people**.
-4. **Digital importer** — consume the sidecar → `origin='digital'`,
+4. **Digital importer — ✅ BUILT (2026-07-27, `app/import_digital.py`).** Dry-run
+   against live B2: **4,679/4,704 keys resolved**, 7,167 people tags, 397 event tags,
+   379 places, **0 unresolved people**, 0 awaiting sync, **25 raw-only** — matching the
+   ~25 predicted below exactly. Key resolution is a *probe*: the sidecar proposes
+   lowercase `.jpg`, the bucket holds the camera's casing, so each row HEADs an ordered
+   candidate list (12-way parallel, ~4 min for the full set) and stores the found key +
+   its ETag as `file_version`. Misses split by cause — `raw_only.csv` (permanent) vs
+   `not_in_b2_yet.csv` (nightly lag, swept up on re-run).
+
+   *Two things the live data forced, worth keeping in mind for future catalogs:*
+   the sidecar's `people` column carries full names while `events` carries short forms,
+   so every tagged person's first name read as a stray event keyword (638 "Kate", 558
+   "Ryan") — now suppressed against per-photo **and** global person-name tokens, for
+   reporting only (the event vocabulary is still consulted first). And "Google Upload"
+   (449) / "Photo Stream" (92) are Lightroom sync plumbing, not events → `DIGITAL_NOISE`.
+
+   *Pre-import review, still open:* the 50 remaining unmatched keywords include a
+   cluster of **professional-photographer SEO terms** ("denver family photographer",
+   "holiday card photos", …) that are noise, and several that are really **places**
+   (Vail, Oregon, San Diego Zoo, Red Rocks) rather than events — the gazetteer/pin-editor
+   path suits those better. 671 GPS points found no gazetteer place within 25 km
+   (largely Colorado, which the slide-era gazetteer doesn't cover); per §13.9 those are
+   added via the pin editor and picked up on a re-run.
+
+   ~~Digital importer~~ — consume the sidecar → `origin='digital'`,
    `storage_backend='b2'`, `storage_path=<resolved B2 key>`; resolve people/events
    (reuse §12 machinery); **HEAD-check B2 and defer misses** (nightly-sync lag, §13.8);
    `--prune` removes rows no longer selected. **B2-verified key resolution (from slice-3
