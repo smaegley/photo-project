@@ -1497,6 +1497,27 @@ Practically: `face`/`face_suggestion`/`face_cluster` carry `photo.id` internally
 performance, but the **export/import format is keyed on `source_file`**, resolved on
 arrival. Same rule as `faces_digital.csv` (§14.3), which already keys on `b2_key`.
 
+**✅ Dev-side half BUILT (2026-07-27, `app/faces_io.py`).** `--export` / `--import` of the
+face index as a compressed `.npz` — 14,245 faces + 6,598 scan markers in **26 MB**. This
+exists because `scripts/load-prod-snapshot.sh` replaces `data/photos.db` wholesale, so a
+dev refresh would otherwise discard ~82 minutes of detection every time.
+
+*Verified by actually doing the destructive thing:* deleted all 14,245 faces and cleared
+every scan marker, then restored — **300 randomly sampled embeddings came back
+byte-identical**, all markers restored, and a second import is a clean no-op.
+
+**Two performance bugs the test exposed**, both of which made the restore unusable
+(>5 min, timed out) before the fix:
+- `NpzFile` members are **lazy**. Indexing `z["embedding"][i]` inside a loop re-reads and
+  re-decompresses the whole 28 MB array on *every iteration*. Materialise each array once.
+- Restoring scan markers as one `UPDATE` per photo is 6,598 statements. Bulk-update by
+  detector version in chunks instead.
+
+After both: **2.5 seconds.**
+
+*Still to come (slice 5):* the prod-facing export is a different, smaller artifact —
+confirmed `photo_person` tags only, no embeddings, since prod never matches.
+
 ### 14.9 Probes to close first
 - **P-F1 — catalog face regions — ✅ CLOSED, YES (2026-07-27).** The catalog holds
   **49,459 named, non-rejected face regions in the PhotoAlbum tree**, every one with a
