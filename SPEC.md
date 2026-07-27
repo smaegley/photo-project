@@ -1504,9 +1504,42 @@ the queue surfaces will be faces with no name at all.
   §14.5 — it would have fitted in the *old* 3.8 GB box, let alone the current 9.5 GB.
   **D1 resolved: run it here, as an offline batch.** No GPU, no second machine.
   Note the 00:15 vzdump on VM 201 is `snapshot` mode, so a long batch may span it safely.
-- **P-F3 — accuracy against held-out truth.** Hold out ~20% of confirmed faces, match the
-  rest, and measure precision/recall per era (slide / scan / digital) — this turns §14.8's
-  aging caveat from a claim into a number, and sets D4's threshold.
+- **P-F3 — accuracy — ✅ CLOSED (2026-07-27). 93.5% top-1; D4 threshold = 0.45.**
+  1,707 faces embedded from 1,144 photos, 53 people, 80/20 split.
+
+  **Closed-set (the face is someone enrolled): 93.5% top-1** (300/321). Mean cosine 0.714
+  when right, 0.408 when wrong.
+
+  **By decade — this inverted the §14.8 aging prediction:**
+  1960s **100%** (n=24) · 1970s **100%** (n=19) · 1990s 95.7% · 2000s 94.0% ·
+  2010s 94.4% · **2020s 70.8% (n=24)**. Old photos are *not* the weak spot — those people
+  have dense same-era enrollment, so matching stays within-era. The soft spot is the
+  **2020s**, where enrollment is thinnest (948 regions) and newest people have fewest
+  examples. n=24 makes that ±9%, so treat it as "watch this", not a conclusion.
+
+  **The closed-set threshold sweep was misleading and nearly cost us the right answer:**
+  precision sat flat at 96–97% from 0.20 to 0.60, implying the threshold did nothing.
+  That is an artefact of testing only faces of *enrolled* people.
+
+  **The open-set test is what actually sets D4.** Holding out 15 whole *people* as
+  strangers (631 faces the matcher has never enrolled — the §14.7a background-people
+  case) gives clean separation: **mean cosine 0.746 for enrolled faces vs 0.263 for
+  strangers.**
+
+  | threshold | genuine matches kept | strangers wrongly claimed |
+  |---|---|---|
+  | 0.20 | 99.0% | **68.1%** |
+  | 0.35 | 96.0% | 16.3% |
+  | **0.45** | **93.6%** | **4.6%** |
+  | 0.55 | 90.6% | 3.8% |
+  | 0.70 | 76.7% | 0.8% |
+
+  **Recommend 0.45**: keeps ~94% of real matches while rejecting ~95% of strangers.
+  Above it, suggestions go to the by-person confirm queue where a wrong face is visually
+  obvious; below it, faces fall through to unknown-clustering (§14.7a) where they are
+  bulk-ignored. Note stranger p99 = 0.689 — a few strangers score high (look-alike
+  relatives, mis-detections), so **no threshold removes the need for confirmation**,
+  which is §14.8 #2 now backed by measurement rather than caution.
 - **P-F4 — display-derivative resolution — ✅ CLOSED (2026-07-27). 100% recall.**
   Detection on the local 2560px derivative re-found **502 of 502** known catalog regions
   at IoU>0.3, sampled deliberately from the **60 most crowded photos** (the hardest case
