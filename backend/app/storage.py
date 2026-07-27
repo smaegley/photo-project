@@ -84,6 +84,24 @@ def b2_token(head: dict) -> str:
     return (head.get("ETag") or "").strip('"') if head else ""
 
 
+def b2_head_key(key: str):
+    """HEAD an arbitrary B2 object key -> the response dict, or None if absent.
+
+    Key-level rather than photo-level, for the importer: it probes extension/case
+    variants (`.jpg/.JPG/.HEIC/…`) to find the servable JPG of a RAW+JPG pair before
+    any Photo row exists (SPEC §13.14 slice 4). Safe to call from a thread pool —
+    botocore clients are thread-safe for API calls.
+    """
+    from botocore.exceptions import ClientError
+    try:
+        return _b2_client().head_object(Bucket=settings.b2_bucket, Key=key)
+    except ClientError as e:
+        code = e.response.get("Error", {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise StorageError(f"B2 HEAD failed for {key!r}: {code or e}")
+
+
 # ---- dispatch -------------------------------------------------------------------
 def master_exists(photo) -> bool:
     b = backend_of(photo)
