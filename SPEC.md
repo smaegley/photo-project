@@ -859,6 +859,11 @@ events are now read directly from it:
 6. **No full-res download path for `origin=digital`** (display derivative only, §13.7).
    Steve already holds these masters in B2; the app need not be a second door to them,
    and this avoids presigned-URL bearer-token exposure outside Cloudflare Access.
+   **Amended 2026-07-27 (Steve): digital *does* get a download button, serving the
+   2560px display derivative from the local cache.** The original rationale reasoned
+   from Steve's own B2 access; family viewers have none, so hiding it entirely left
+   them able to download a 1978 scan but not a 2015 photo of themselves. Full-res
+   proxying from B2 stays out for now (§13.10) — and presigned URLs stay rejected.
 7. **Importer is manifest-diff aware → gives deletion.** Untagging in LR removes the
    photo from the app (§13.8). This makes the keyword a true bidirectional control
    surface — unlike the scan folder-walk, which can only ever add.
@@ -989,8 +994,24 @@ assume the object is present:
   *All Photos* only; add the fourth tab if/when the digital set is large enough to
   warrant its own scope. Recommend adding it for symmetry with the scan view.
 - **Lightbox origin badge** "Digital photo" + the `YYYY/mmm-dd` (or a friendlier date).
-  No back-of-photo, no Rolls membership. **Download button hidden** for digital
-  (decision #6) — or present but pointing at the display derivative, TBD with Steve.
+  No back-of-photo, no Rolls membership.
+- **Download for digital = the display derivative — DECIDED 2026-07-27 (Steve).** The
+  button is present, but its href is the **2560px `/api/display/` derivative** off the
+  local cache, not `/api/images/` (which serves a local master and would 404 for a
+  `b2` row). Those are the same bytes the lightbox already loaded, so the download is
+  free — no B2 fetch, no new failure mode.
+  - **Label it honestly.** For slides/scans "Download" means the true original; for
+    digital it does not. Use distinct wording (e.g. "⬇ Download (large JPEG)") so the
+    difference is visible rather than silent — this is a §13.11-class quiet mismatch
+    otherwise.
+  - **Do NOT wire download to `storage.open_master`.** That puts an unbounded
+    multi-MB B2 GET inside a user request, and `open_master` currently buffers the
+    whole object via `BytesIO(...read())`. Full-res proxying would need a streaming
+    variant + connection-pool care (the §10.16 lesson) — deferred until the family
+    actually asks for originals. It layers on top of this cleanly; nothing here
+    forecloses it.
+  - `logUsage("download", ...)` still fires, so digital downloads stay visible in the
+    §10.9 usage panel alongside slide/scan ones.
 - Facets / map / timeline already work for the new rows (`queries.py` is origin-agnostic
   apart from the scope filter).
 
@@ -1122,7 +1143,9 @@ must handle both.
    **Add `pillow-heif`** so the 131 iPhone HEICs decode (recent family photos worth
    keeping); JPGs/CR2-JPGs decode with plain Pillow.
 6. **Frontend** (§13.10): a **"Digital Photos"** view (origin scope, mirrors Scanned
-   Photos), origin badge, **no full-res download for digital**.
+   Photos), origin badge, and a **download button pointing at the 2560px display
+   derivative** (decided 2026-07-27 — not the full-res master, not a presigned URL;
+   see §13.10 for the labeling + the `open_master` trap).
 
 **Prove-out milestone — ✅ DONE (2026-07-26).** Validated on 3 tagged Kate photos: catalog
 → derived `Photo Album/…` key → boto3 HEAD (all exist) → GET (1.38 MB) → PIL decode
