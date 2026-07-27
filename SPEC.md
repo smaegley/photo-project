@@ -1574,7 +1574,18 @@ arrival. Same rule as `faces_digital.csv` (§14.3), which already keys on `b2_ke
 
 ### 14.10 Build order (slices)
 1. **P-F1–F4 probes** — close the enrollment source, the box it runs on, and the threshold.
-2. **Migration + `face`/`face_suggestion` models** (§14.6); no behaviour change.
+2. **Migration + models — ✅ BUILT (2026-07-27, `d0e1f2a3b4c5`).** `face`,
+   `face_suggestion`, `face_cluster` per §14.6/§14.7a. Additive; verified as a true no-op
+   (health, gallery, digital scope, people, unresolved-locations all 200) and cleanly
+   reversible — a downgrade/upgrade round-trip drops and recreates all three with the
+   6,598 photos untouched, which is the "abandoning the ML layer is a DROP TABLE" claim
+   made real rather than asserted.
+
+   Two decisions baked in: face geometry uses the **same normalized centre+size
+   convention as `photo_person.region_*`**, so confirming a suggestion copies straight
+   across; and **`embedding` is nullable on purpose** — enrichment runs on dev and
+   exports to prod (§14.8a), where the box is needed to crop a face for review but the
+   512-float vector never is. That keeps ~2 KB/face off the wire and off the 2 GB box.
 3. **Detection + embedding batch** over display derivatives → `face` rows. Resumable and
    idempotent, like every other importer here.
 4. **Enrollment + matching** — build per-person centroids from confirmed regions, score

@@ -7,7 +7,7 @@ provenance overlay. Two-tier provenance on every tag (SPEC §3.5).
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, String, Text,
+    Boolean, Date, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -228,4 +228,87 @@ class Contribution(Base):
     # JSON payload that reverses this edit (SPEC §3.5 undo); null = not undoable.
     inverse: Mapped[str | None] = mapped_column(Text, nullable=True)
     undone: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ---- face matching (SPEC §14) ----------------------------------------------------
+# Suggestions live in their own tables rather than as speculative `photo_person` rows,
+# so an unreviewed guess can never reach the gallery and abandoning the ML layer stays
+# a DROP TABLE. Confirming a suggestion writes an ordinary `photo_person` row, which is
+# then indistinguishable from a hand-made tag — that is the point.
+
+FACE_PENDING, FACE_ACCEPTED, FACE_REJECTED = "pending", "accepted", "rejected"
+CLUSTER_PENDING, CLUSTER_NAMED, CLUSTER_IGNORED = "pending", "named", "ignored"
+
+
+class FaceCluster(Base):
+    """A group of unnamed faces believed to be the same (unknown) person (SPEC §14.7a).
+
+    Exists so Steve can dismiss background strangers in one action instead of hundreds.
+    `centroid` is what makes an `ignored` decision **stick**: on a later run a new unnamed
+    face near an ignored centroid joins this cluster silently rather than being re-asked.
+    `prominence` (median face area x detection score) sorts nameable people to the top and
+    buries the crowd tail.
+    """
+    __tablename__ = "face_cluster"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String, nullable=False, default=CLUSTER_PENDING, index=True)
+    person_id: Mapped[str | None] = mapped_column(ForeignKey("person.id", ondelete="SET NULL"), nullable=True)
+    centroid: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # float32[512]
+    n_faces: Mapped[int] = mapped_column(Integer, default=0)
+    prominence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Face(Base):
+    """One detected face in one photo (SPEC §14.6).
+
+    Geometry uses the same normalized **centre + size** convention as
+    `photo_person.region_*`, so a confirmed suggestion copies straight across.
+
+    `embedding` is nullable on purpose: enrichment runs on dev and exports to prod
+    (§14.8a), and prod needs the box (to crop a face for review) but never the vector.
+    Leaving it out of the export keeps ~2 KB/face off the wire and off the serving box.
+    """
+    __tablename__ = "face"
+    __table_args__ = (Index("ix_face_photo", "photo_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    photo_id: Mapped[int] = mapped_column(ForeignKey("photo.id", ondelete="CASCADE"), nullable=False)
+    # normalized centre + size, 0..1
+    x: Mapped[float] = mapped_column(Float, nullable=False)
+    y: Mapped[float] = mapped_column(Float, nullable=False)
+    w: Mapped[float] = mapped_column(Float, nullable=False)
+    h: Mapped[float] = mapped_column(Float, nullable=False)
+    det_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)  # float32[512]
+    detector_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    cluster_id: Mapped[int | None] = mapped_column(
+        ForeignKey("face_cluster.id", ondelete="SET NULL"), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class FaceSuggestion(Base):
+    """"This face is probably <person>, at <score>" — awaiting a human click (SPEC §14.7).
+
+    Never auto-applied: at the measured 0.45 threshold ~4.6% of strangers still score
+    above it (P-F3), so confirmation is the defence, not the threshold. A rejection is
+    kept rather than deleted so the same wrong guess is not offered again next run.
+    """
+    __tablename__ = "face_suggestion"
+    __table_args__ = (
+        UniqueConstraint("face_id", "person_id", name="uq_face_suggestion"),
+        Index("ix_face_suggestion_status", "status", "score"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    face_id: Mapped[int] = mapped_column(ForeignKey("face.id", ondelete="CASCADE"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("person.id", ondelete="CASCADE"), nullable=False)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default=FACE_PENDING)
+    decided_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
