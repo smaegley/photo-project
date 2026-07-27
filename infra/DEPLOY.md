@@ -208,8 +208,11 @@ systemctl enable --now photo-backup.timer
 systemctl list-timers photo-backup.timer
 /opt/photo-project/infra/db-snapshot.sh    # one manual run to confirm
 ```
-Daily snapshot → `/opt/photo-project/snapshots/` (14-day retention). Restore: see
-`RESTORE.md`. Off-site is covered by the LXC-level Proxmox backup.
+Daily snapshot at 03:30 → `/opt/photo-project/snapshots/` (14-day retention). That
+directory is on the **same disk as the live DB**, so it is a fast restore point, not
+disaster coverage. Off-box is the Proxmox job: **daily 02:00, mode Stop, → SynDS418,
+5 daily / 1 weekly / 6 monthly**, LXC 209 included — details, why `Stop` matters for
+SQLite, and the residual gaps are in `RESTORE.md`. Restore: see `RESTORE.md`.
 
 ## Updating later
 

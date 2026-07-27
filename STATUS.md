@@ -236,9 +236,14 @@ problem being triaged, or if Steve asks.
    are executing a real restore, crib the WAL handling from `load-prod-snapshot.sh`.
 
 4. **Snapshots share a disk with the live DB.** `/opt/photo-project/snapshots/` sits
-   on the LXC root disk alongside `data/photos.db`; disk loss takes both. Off-box
-   coverage is the Proxmox LXC backup — its location, retention, and restore have
-   never been documented or tested in this repo.
+   on the LXC root disk alongside `data/photos.db`; disk loss takes both.
+   **Off-box coverage is now documented (2026-07-27, Steve supplied the job config) —
+   see `infra/RESTORE.md`:** Proxmox job, daily 02:00, **mode Stop** (quiesces SQLite —
+   keep it), → **SynDS418**, retention 5 daily / 1 weekly / 6 monthly, LXC 209 included.
+   **Still open:** it has never been restore-tested; the DS418 is on-prem and shares
+   fate with the photo library, and whether that backup folder is inside the Backblaze
+   sync set is unconfirmed. With only 5 dailies, *detection latency* — not retention —
+   is the binding risk, which is why #2 matters.
 
 5. **Lower severity, all accepted:** frontend builds on the 2 GB prod box during
    `docker compose up --build` (OOM risk mid-deploy); `/api/admin/geocode` can starve
