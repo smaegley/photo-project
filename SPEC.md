@@ -955,8 +955,15 @@ to open the file for anyway (§13.7). Columns:
   **intended path is prewarm-at-import**, because a lazy 8 MB B2 pull in the request is
   exactly the slow-client latency §10.16 warned about. Prewarm first; treat lazy as
   fallback only.
-- **One-time egress:** ~40 GB for 5k photos. B2 free egress is 3× stored bytes, and
-  Cloudflare Bandwidth Alliance zero-rates B2→Cloudflare regardless. Effectively free.
+- **One-time egress: ~5.4 GB for the 4,680-photo set** (measured 2026-07-27: mean master
+  **1.17 MB**, min 0.15 / max 3.04 — the original ~40 GB estimate assumed 8 MB/photo and
+  was ~7× too high). At B2's $0.01/GB that is pennies, and free egress is 3× stored bytes.
+  **⚠ Cost is not the constraint — the account CAP is.** The first full prewarm died at
+  1,900 photos against B2's **default 1 GB/day free-tier download cap**
+  (`AccessDenied: download bandwidth or transaction (Class B) cap exceeded`), not a code
+  fault. Steve raised the cap to **$25** (~2,500 GB) on 2026-07-27, ~450× headroom.
+  Also budget **transactions**: `import_digital` HEADs every sidecar row per run
+  (~4,700), so repeated runs are the real Class-B consumer, not the pixels.
 - **Local cache footprint:** ~7–10 GB for several thousand photos, inside the 32 GB
   free; pure cache, rebuildable by prewarm.
 
@@ -1261,3 +1268,170 @@ model when we build slice 4.
 **Status:** planned 2026-07-25; **build starts next session.** Steve tagging in the
 meantime. Nothing here is blocked by tagging coverage — build against the current
 ~1,137 and it scales as tags grow.
+
+---
+
+## 14. Phase 3 design — Face matching & bulk confirm (2026-07-27)
+
+> **Status:** designed **2026-07-27**, **not built**. This realizes the face-recognition
+> half of **§5**'s enrichment pipeline, which reserved the slot but never specified it.
+> It **refines §5** where §5 is vague, and depends on §13 having landed: matching needs
+> pixel access, which the B2 storage layer now provides.
+>
+> **Origin (2026-07-26):** Steve, mid-tagging — *"LR is pretty bad at this. Do you think
+> that if I reach a critical mass with IDs that an AI could do a better job?"* The
+> answer was yes, decisively, and this section is that answer made concrete.
+
+### 14.1 Why — the point is the workflow flip, not the accuracy
+Lightroom's face tool is slow, its suggestions are poor, and the confirm loop is
+tedious. Today Steve grinds that UI to **author** tags one at a time.
+
+With a matcher the direction reverses: the system proposes *"this is Kate (94%)"* across
+a whole batch and Steve **confirms in bulk**. Tagging stops being authoring and becomes
+reviewing. This maps onto machinery that already exists — §3.5's provenance model
+(`auto-suggested` vs `human-confirmed`, both constants already in `models.py` and in
+use) and the §10.3 bulk-tag admin UI. **That is the deliverable. Accuracy is just the
+enabler.**
+
+### 14.2 Why this is the easy case
+1. **Closed set** — a known cast (116 persons in the DB, ~111 in the catalog), not
+   open-world identification.
+2. **Rich labels** — years of Steve's manual work is a serious reference set. LR ignores
+   most of that signal; a proper matcher uses all of it.
+3. **Mature, local, free** — ArcFace/InsightFace-class embeddings run offline on
+   ordinary CPUs. **Never a cloud face API**: family faces don't leave the house. That
+   is a privacy decision, and it is also simply unnecessary here.
+
+### 14.3 Enrollment audit — what we actually have (measured 2026-07-27)
+The reference set is **not** the same as the tag count, and the gap matters:
+
+| | |
+|---|---|
+| `photo_person` rows | 9,405 |
+| …**with a face-region box** | **1,784** (the actual enrollment set) |
+| distinct people with ≥1 box | 82 |
+| by origin | **scan 1,151 · slide 633 · digital 0** |
+| best-enrolled | steve 339, karen 336, marilyn 268, kate 204, ryan 107, wendel 99 |
+
+**Two consequences, and the second is the important one.**
+
+*First*, 1,784 boxes across 82 people is already ample — a matcher needs ~5–20 examples
+per person, so the core family is enrolled 10–30× beyond requirement.
+
+*Second, and easy to miss:* **every one of those boxes is from a slide or a scan.**
+`import_digital` takes people from the catalog sidecar, which carries names but no
+region geometry, so the 4,680 digital photos contributed **zero** reference faces. Our
+entire enrollment is therefore **pre-digital-era** — the era where the aging problem
+(§14.8) bites hardest. The catalog itself holds far more (~10,639 person links as of
+2026-07-26, including recent-era digital faces with regions). **Extracting digital-era
+regions from the `.lrcat` is the single highest-value input to this build**, because
+recent adults are exactly where face matching is strongest. See probe **P-F1**.
+
+### 14.4 Decisions to confirm with Steve (nothing locked yet)
+
+**D1 — Where does it run?** §5 said "a future ML-capable machine"; that machine still
+doesn't exist. Dev VM 201 is **4 cores (i5-8259U, avx2), 3 GB RAM, no GPU, ~1 GB free
+while the dev servers run**. Prod LXC 209 (2 GB) is out of the question.
+- *Recommended:* **run it on dev VM 201 as an offline batch, with the dev servers
+  stopped.** CPU inference is ~0.3–1 s/photo, so a full 6,598-photo pass is roughly
+  1–2 hours, once. RAM is the real constraint, not speed — mitigated by batching and by
+  writing work files to `/mnt/photos` (162 GB free) rather than `/home` (7 GB).
+- *Alternative:* Steve's Mac is far faster, but then the pipeline lives outside this
+  repo's deploy story. *Do not* run it on prod — §5 and §8 both say enrichment never
+  touches the serving box, and 2 GB makes it moot anyway.
+
+**D2 — Enrollment source.** (a) DB regions only (1,784, pre-digital), (b) **+ extract
+digital-era regions from the `.lrcat`** (recommended — see §14.3), (c) bootstrap by
+matching against whatever is confirmed and iterating.
+
+**D3 — Detection scope.** All 6,598 photos, or digital-only first? *Recommended:*
+**digital first** — it is the largest set, the most recent, the best-matching era, and
+the one Steve is actively tagging. Slides/scans are already well tagged from the
+manifest and can follow.
+
+**D4 — Threshold policy.** A single global cosine threshold, or per-person? *Recommended:*
+one conservative global threshold to start, tuned against held-out confirmed faces, with
+the review queue sorted by confidence so the easy bulk clears first.
+
+**D5 — Pets.** Abby, Toby, Floyd and Muffy are `notes='pet'` persons whose LR regions
+were hand-drawn (LR doesn't detect animal faces). Human face detectors will not find
+them. *Recommended:* explicitly **out of scope** — they stay manual.
+
+### 14.5 Model & runtime
+- **InsightFace `buffalo_l`** (SCRFD detector + ArcFace R100 recogniser) on **ONNX
+  Runtime CPU**. ~350 MB of models, avx2 is present, no GPU needed.
+- Embeddings are 512-float vectors — ~2 KB per face, so even 20k faces is ~40 MB.
+  Matching is cosine similarity against per-person **centroids** (plus nearest-neighbour
+  against raw references for the hard cases); at this scale a brute-force NumPy dot
+  product is instant and **no vector database is warranted**.
+- **Offline and batch, never in a request path.** Nothing here is imported by
+  `app.main`; the serving stack carries no ML weight (§5, §8).
+
+### 14.6 Schema delta (one migration, additive)
+Deliberately **does not** write speculative rows into `photo_person` — suggestions live
+apart until confirmed, so an un-reviewed guess can never leak into the gallery, and
+discarding the whole ML layer stays a `DROP TABLE`.
+
+- **`face`** — one row per *detected* face: `photo_id`, bbox (normalized, matching
+  `photo_person`'s convention), `det_score`, `embedding` BLOB, `detector_version`.
+- **`face_suggestion`** — `face_id`, `person_id`, `score`, `status`
+  (`pending|accepted|rejected`), `decided_by`, `decided_at`.
+- **Confirming a suggestion writes a normal `photo_person` row** with
+  `source='human-confirmed'` and the face box copied in — indistinguishable from a
+  hand-made tag, which is the point. Rejections are retained so the same wrong guess is
+  never re-offered.
+- `photo_person.source='auto-suggested'` (constant already exists, currently unused)
+  is reserved for a future *auto-apply-above-threshold* mode. **Not enabled in v1** —
+  D4 says suggest, never auto-apply.
+
+### 14.7 UI — the bulk confirm queue
+A new admin view, reusing the §10.3 bulk-tag patterns:
+- Grid of **face crops** (not whole photos) for one proposed person, sorted by
+  confidence descending — the visual judgement is fast and near-binary.
+- **Accept all / accept above threshold / reject selected**, one click for a screenful.
+- Every action is a `contribution` row, so it is **undoable** like every other edit.
+- Entry point: a "Suggested people" count badge in the admin bar.
+
+### 14.8 Honest limits — record these before anyone is surprised
+1. **Aging is the hard part.** A face embeds very differently at 5 and at 50, so
+   cross-*decade* matching (a slide-era child → their digital-era adult self) is
+   genuinely unreliable. Within an era it is strong. Expect **excellent on recent
+   adults, shaky on big age gaps and young children** — which is precisely why §14.3's
+   digital-era enrollment matters.
+2. **Suggest, never auto-apply** (D4). A threshold plus human confirmation keeps
+   mistakes out of a family archive that is meant to be trustworthy.
+3. **Pets are out** (D5).
+4. **A 29-person long tail** had only 1–2 catalog examples as of 2026-07-26 and will
+   match poorly. That is fine — they are exactly the faces worth tagging by hand, and
+   the matcher handles the volume instead.
+5. **This is the largest single feature discussed for this project.** It is well-trodden
+   and low-risk technically, but it is not an afternoon.
+
+### 14.9 Probes to close first
+- **P-F1 — catalog face regions.** Can `read_lrcat` extract per-face bounding boxes for
+  *digital* photos (LR's `AgLibraryFace` tables) the way `import_photos` reads them from
+  scan XMP? This is the highest-value input (§14.3) and decides D2.
+- **P-F2 — throughput and RAM on VM 201.** Time detection+embedding over ~200 photos and
+  watch peak RSS, with the dev servers stopped. Decides D1 and whether batching needs
+  tuning.
+- **P-F3 — accuracy against held-out truth.** Hold out ~20% of confirmed faces, match the
+  rest, and measure precision/recall per era (slide / scan / digital) — this turns §14.8's
+  aging caveat from a claim into a number, and sets D4's threshold.
+- **P-F4 — HEIC/RAW coverage.** Detection runs on the *display derivative*, not the
+  master (already local, already sized, no second B2 fetch) — confirm 2560px is enough
+  resolution for reliable small-face detection in group shots.
+
+### 14.10 Build order (slices)
+1. **P-F1–F4 probes** — close the enrollment source, the box it runs on, and the threshold.
+2. **Migration + `face`/`face_suggestion` models** (§14.6); no behaviour change.
+3. **Detection + embedding batch** over display derivatives → `face` rows. Resumable and
+   idempotent, like every other importer here.
+4. **Enrollment + matching** — build per-person centroids from confirmed regions, score
+   every unassigned face, write `face_suggestion` rows above threshold.
+5. **Bulk-confirm UI** (§14.7) + undo integration.
+6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
+   photos get suggestions automatically.
+
+**Out of scope for Phase 3:** open-world identification (strangers stay unnamed), scene
+and activity hints (§5's other half), auto-apply without confirmation, pets, and any
+cloud inference whatsoever.
