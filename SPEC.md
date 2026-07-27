@@ -1413,6 +1413,11 @@ discarding the whole ML layer stays a `DROP TABLE`.
   `photo_person`'s convention), `det_score`, `embedding` BLOB, `detector_version`.
 - **`face_suggestion`** — `face_id`, `person_id`, `score`, `status`
   (`pending|accepted|rejected`), `decided_by`, `decided_at`.
+- **`face_cluster`** (§14.7a) — `id`, `status` (`pending|named|ignored`), `person_id`
+  (set when named), `centroid` BLOB, `n_faces`, `prominence`, `decided_by`, `decided_at`;
+  `face.cluster_id` FK points into it. The stored centroid is what makes an `ignored`
+  decision **stick across runs** — a new unnamed face near an ignored centroid joins it
+  silently instead of re-asking.
 - **Confirming a suggestion writes a normal `photo_person` row** with
   `source='human-confirmed'` and the face box copied in — indistinguishable from a
   hand-made tag, which is the point. Rejections are retained so the same wrong guess is
@@ -1421,13 +1426,40 @@ discarding the whole ML layer stays a `DROP TABLE`.
   is reserved for a future *auto-apply-above-threshold* mode. **Not enabled in v1** —
   D4 says suggest, never auto-apply.
 
-### 14.7 UI — the bulk confirm queue
+### 14.7 UI — the bulk confirm queue (**organised BY PERSON** — Steve, 2026-07-27)
 A new admin view, reusing the §10.3 bulk-tag patterns:
 - Grid of **face crops** (not whole photos) for one proposed person, sorted by
   confidence descending — the visual judgement is fast and near-binary.
 - **Accept all / accept above threshold / reject selected**, one click for a screenful.
 - Every action is a `contribution` row, so it is **undoable** like every other edit.
 - Entry point: a "Suggested people" count badge in the admin bar.
+
+#### 14.7a Unknown-face clusters — the other half of the queue
+**Steve's requirement (2026-07-27):** *"there are a lot of people in the background that I
+never want to identify. If the tagger can identify those, group if there are multiples,
+and allow me to easily ignore people, that would be good."*
+
+This is the more valuable half, because it is the part Lightroom does worst, and P-F4
+showed the detector finds **~23% more faces than the catalog names** — so most of what
+the queue surfaces will be faces with no name at all.
+
+- **Cluster the unnamed.** Every face that matches no enrolled person above threshold is
+  grouped with the faces it *does* resemble. A cluster is then one decision — "that is
+  cousin Dave, 47 photos" or "strangers at the zoo, ignore" — instead of 47.
+- **Ignore is a cluster-level, persistent decision.** The whole point is that it does not
+  come back. An ignored cluster keeps its centroid, so on later runs a new face that
+  matches it is auto-assigned and stays silent. Without that, every sync re-asks about
+  the same strangers and the feature is worthless.
+- **Rank by prominence, not just count.** Background faces have a measurable signature:
+  small relative to the frame, lower detector confidence, often profile or motion-blurred.
+  Sorting clusters by prominence (median face area × detection score) puts the people
+  Steve *might* name at the top and buries the crowd tail — so the common case is
+  "confirm the top few, bulk-ignore everything below the fold" without inspecting it.
+- **A size floor is the cheapest win.** A face occupying <1–2% of the frame is almost
+  never someone worth naming; those can default to ignored and be surfaced only on
+  request. Threshold to be set from the measured distribution once faces are indexed.
+- **Never auto-name a cluster.** Clustering proposes grouping, not identity; a named
+  cluster still becomes ordinary `human-confirmed` tags via Steve's click.
 
 ### 14.8 Honest limits — record these before anyone is surprised
 1. **Aging is the hard part.** A face embeds very differently at 5 and at 50, so
