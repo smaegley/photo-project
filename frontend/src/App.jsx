@@ -22,8 +22,11 @@ export const YEAR_MAX = 1976;
 
 const EMPTY = { people: [], events: [], places: [], bbox: null, magazineId: null };
 
-// Views (SPEC §12.8): All Photos (mixed gallery), Slide Photos (Rolls), Scanned Photos.
-const GALLERY_VIEWS = new Set(["gallery", "scans"]);  // full chrome; "rolls" is the exception
+// Views (SPEC §12.8, §13.10): All Photos (mixed gallery), Slide Photos (Rolls),
+// Scanned Photos, Digital Photos. Each non-mixed view is a hard `origin` scope; the
+// mechanic generalizes with no new state beyond this map.
+const GALLERY_VIEWS = new Set(["gallery", "scans", "digital"]);  // full chrome; "rolls" is the exception
+const VIEW_ORIGIN = { scans: "scan", digital: "digital" };
 
 export default function App() {
   const [years, setYears] = useState([YEAR_MIN, YEAR_MAX]);
@@ -85,7 +88,7 @@ export default function App() {
     const full = years[0] === bounds.min && years[1] === bounds.max;
     return {
       ...sel,
-      origin: view === "scans" ? "scan" : null,  // Scanned Photos = hard origin scope
+      origin: VIEW_ORIGIN[view] ?? null,  // Scanned/Digital Photos = hard origin scope
       dateStart: full ? null : `${years[0]}-01-01`,
       dateEnd: full ? null : `${years[1]}-12-31`,
     };

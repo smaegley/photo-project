@@ -79,9 +79,18 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
 
   const eventIdByName = Object.fromEntries(events.map((e) => [e.name, e.id]));
   // Lightbox shows the sized display derivative (originals can be 24MP); download
-  // still serves the full-resolution original.
+  // serves the full-resolution original — except for digital (SPEC §13.10).
   const src = detail?.display_url || photo.display_url;
-  const downloadSrc = detail?.image_url || photo.image_url;
+  // Digital masters live in B2 and are deliberately not downloadable at full res
+  // (§13.2 #6, amended 2026-07-27): /api/images/ would 404 for a b2 row, and proxying
+  // an unbounded B2 fetch through a user request is the §10.16 hazard. So digital
+  // downloads the 2560px display derivative — the bytes already on screen — and says
+  // so, because "Download" means the true original everywhere else in this app.
+  const isDigital = (detail?.origin || photo.origin) === "digital";
+  const downloadSrc = isDigital
+    ? (detail?.display_url || photo.display_url)
+    : (detail?.image_url || photo.image_url);
+  const downloadLabel = isDigital ? "⬇ Download (large JPEG)" : "⬇ Download";
 
   function buildDownloadName(d) {
     // Scans/digital keep their original exported filename (SPEC §12.8).
@@ -161,7 +170,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               {detail.origin && detail.origin !== "slide" && (
                 <div><label>Source</label>
                   <span>
-                    <span className="lb-origin-badge">{detail.origin === "scan" ? "Scanned print" : "Digital"}</span>
+                    <span className="lb-origin-badge">{detail.origin === "scan" ? "Scanned print" : "Digital photo"}</span>
                     {detail.batch && <span className="lb-batch"> · {detail.batch}</span>}
                   </span>
                 </div>
@@ -279,7 +288,8 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               detail.notes && <p className="lb-dadnotes">{detail.notes}</p>
             )}
             <a className="lb-download" href={downloadSrc} download={downloadName || true}
-               onClick={() => api.logUsage("download", photo.source_file)}>⬇ Download</a>
+               title={isDigital ? "2560px JPEG — the full-resolution original stays in the B2 archive" : undefined}
+               onClick={() => api.logUsage("download", photo.source_file)}>{downloadLabel}</a>
           </div>
         )}
       </aside>

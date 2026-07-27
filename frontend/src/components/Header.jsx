@@ -39,6 +39,7 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
           <button className={view === "gallery" ? "on" : ""} onClick={() => onView("gallery")}>All Photos</button>
           <button className={view === "rolls" ? "on" : ""} onClick={() => onView("rolls")}>Slide Photos</button>
           <button className={view === "scans" ? "on" : ""} onClick={() => onView("scans")}>Scanned Photos</button>
+          <button className={view === "digital" ? "on" : ""} onClick={() => onView("digital")}>Digital Photos</button>
         </div>
         <span className="count">{total.toLocaleString()} photos</span>
       </div>

@@ -1234,10 +1234,14 @@ must handle both.
    EXIF from the same bytes → cache locally, record `file_version`, discard master.
    **Add `pillow-heif`** so the 131 iPhone HEICs decode (recent family photos worth
    keeping); JPGs/CR2-JPGs decode with plain Pillow.
-6. **Frontend** (§13.10): a **"Digital Photos"** view (origin scope, mirrors Scanned
-   Photos), origin badge, and a **download button pointing at the 2560px display
-   derivative** (decided 2026-07-27 — not the full-res master, not a presigned URL;
-   see §13.10 for the labeling + the `open_master` trap).
+6. **Frontend — ✅ BUILT (2026-07-27).** Fourth view **"Digital Photos"** added as a
+   hard origin scope; the §12.8 mechanic generalized to a `VIEW_ORIGIN` map rather than
+   another `view === "scans"` branch, so a fifth origin would be one line. Lightbox badge
+   reads **"Digital photo"**. Download points at the **2560px display derivative** and is
+   labeled **"⬇ Download (large JPEG)"** with a tooltip saying the full-res original
+   stays in B2 — because "Download" means the true original everywhere else in the app
+   and a silent downgrade is exactly the §13.11-class quiet mismatch. Back-of-photo and
+   Rolls panels need no guard: `back_url`/`magazine_id` are null for digital.
 
 **Prove-out milestone — ✅ DONE (2026-07-26).** Validated on 3 tagged Kate photos: catalog
 → derived `Photo Album/…` key → boto3 HEAD (all exist) → GET (1.38 MB) → PIL decode
