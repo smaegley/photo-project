@@ -15,14 +15,36 @@ ls -lt snapshots/
 # 2. Stop the API so nothing writes during the swap
 docker compose stop api
 
-# 3. Back up the current DB first (in case you picked the wrong snapshot)
-cp data/photos.db data/photos.db.before-restore
+# 3. Back up the current DB first (in case you picked the wrong snapshot).
+#    NOT `cp` — the DB is in WAL mode and recent commits live in photos.db-wal, so
+#    copying the main file alone silently yields a STALE database (measured: 1,148
+#    rows against a live 1,918, no error). Use the online backup API.
+python3 -c "
+import sqlite3
+s = sqlite3.connect('data/photos.db'); d = sqlite3.connect('data/photos.db.before-restore')
+with d: s.backup(d)
+print('pre-restore backup:', d.execute('SELECT count(*) FROM photo').fetchone()[0], 'photos')
+s.close(); d.close()"
 
-# 4. Restore
+# 4. Remove the WAL sidecars BEFORE writing the new DB.
+#    They belong to the OLD database; leaving them means SQLite replays a foreign WAL
+#    over the new pages -> "malformed disk image". This is the single most likely way
+#    to corrupt the DB while restoring it.
+rm -f data/photos.db-wal data/photos.db-shm
+
+# 5. Restore
 gunzip -c snapshots/photos-YYYYMMDD-HHMMSS.db.gz > data/photos.db
 
-# 5. Sanity check, then bring the API back
-python3 -c "import sqlite3; print(sqlite3.connect('data/photos.db').execute('SELECT count(*) FROM photo').fetchone()[0])"  # expect ~1140
+# 6. Sanity check the restored file, then bring the API back.
+python3 -c "
+import sqlite3
+c = sqlite3.connect('data/photos.db')
+print('integrity:', c.execute('PRAGMA integrity_check').fetchone()[0])   # expect: ok
+print('photos   :', c.execute('SELECT count(*) FROM photo').fetchone()[0])
+print('people   :', c.execute('SELECT count(*) FROM photo_person').fetchone()[0])"
+# Compare the counts against the pre-restore backup above and against how old the
+# snapshot is — don't check them against a number written in this file, which goes
+# stale (it was 1,140 slides-only; 1,918 after scans; more once digital lands).
 docker compose start api
 curl -s http://127.0.0.1:8077/health   # via caddy: https://photos.maegley.org/health
 ```
@@ -53,35 +75,28 @@ No collision with the in-container snapshot timer, which runs at **03:30**
 
 ### Residual risks (known, not yet addressed)
 
-- **Detection latency, not retention depth, is the binding constraint.** With 5 dailies,
-  a corruption that goes unnoticed for more than ~5 days falls back to a single weekly
-  (up to 7 days old) and then to monthlies. This archive is browsed occasionally, so
-  two weeks of silence is entirely plausible. That is the real argument for making the
-  nightly snapshot *verify itself* (STATUS known issue #2) — backups you can't trust to
-  be good are only as useful as your speed at noticing.
-- **⚠ The LXC backups are NOT off-site — confirmed by Steve 2026-07-27.** They land on
-  the DS418 and stop there. The DS418 is also the NAS in the B2 photo sync chain (SPEC
-  §13.1), so it shares fate with the photo library: a fire or theft takes `NUC2c` and
-  the DS418 together, and with them **every copy of the database**. Steve is setting up
-  off-site LXC backups with the Ops agent; until that lands, the archive's *pixels* are
-  off-site but its *meaning* is not.
-
-  **This asymmetry gets much worse the day `origin=digital` ships** (SPEC §13.11 #2).
-  For slides and scans the files are self-describing — `Mag12_Slide07.JPG` in a
-  magazine folder, captions recoverable from the manifest CSV — so "photos are safe in
-  B2" really does mean the archive is recoverable. For digital, the B2 objects are
-  *opaque*: only the DB maps `Photo Album/2015/…/IMG_1234.JPG` to "Kate, at the lake."
-  Photos off-site + DB on-prem-only = the pixels survive and the archive doesn't.
-
-  **Cheap interim, well short of the full off-site project:** the gzipped snapshot is
-  **~0.2 MB** (vs a 23 GB image library). Dropping the nightly `.gz` into a DS418 folder
-  that is already inside the Backblaze sync set would give the DB off-site coverage for
-  a rounding error of storage and no new moving parts — and would decouple digital
-  go-live from the larger LXC off-site work. Worth raising with the Ops agent.
-- **⚠ Never drilled.** No restore from a `SynDS418` vzdump has been performed or timed,
-  and the exact steps are not written down here on purpose — an untested runbook written
-  from memory is the failure mode this section exists to prevent. Do one real restore to
-  a scratch VMID, record what you actually did, then replace this bullet.
+- **✅ DB snapshots are now replicated to B2 (Steve + Ops agent, 2026-07-27).** This is
+  the layer that matters most for §13: it puts the *database* off-site, not just the
+  pixels. **Details still to be recorded here** — bucket/prefix, retention, what pushes
+  it and when, and whether the uploaded object is verified. Fill those in; a backup
+  nobody can describe is hard to restore from under pressure.
+- **⚠ Whole-LXC backups are still NOT off-site.** They land on the DS418 and stop there;
+  Steve is setting that up with the Ops agent. Lower stakes now that the DB itself is
+  replicated — what's missing is fast container rebuild, not the archive's meaning.
+- **Detection latency, not retention depth, is the binding constraint.** With 5 Proxmox
+  dailies, a corruption unnoticed for more than ~5 days falls back to a single weekly
+  and then to monthlies. This archive is browsed occasionally, so two weeks of silence
+  is entirely plausible. **Replication makes this sharper, not softer:** an off-site
+  copy faithfully reproduces a corrupt snapshot. That is why `db-snapshot.sh` now
+  verifies the finished artifact and refuses to publish a bad one (STATUS #2, fixed
+  2026-07-27) — the off-site sync can only ever pick up a snapshot that was opened,
+  integrity-checked and found non-empty.
+- **⚠ Never drilled.** No restore has been performed or timed — neither from a
+  `SynDS418` vzdump nor from the new B2 copy of a snapshot. The vzdump steps are
+  deliberately not written down here: an untested runbook written from memory is the
+  failure mode this section exists to prevent. Do one real restore, record what you
+  actually did, then replace this bullet. **Restoring the B2 snapshot is the cheaper
+  drill and covers the digital prerequisite — do that one first.**
 
 ## Notes
 - `data/photos.db` is the live DB (bind-mounted to `/data/photos.db` in the

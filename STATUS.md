@@ -223,17 +223,21 @@ problem being triaged, or if Steve asks.
    *Note the docstring at `auth.py:8-9` claims the opposite ("production is never
    accidentally open") — the reasoning there is inverted. Don't trust that comment.*
 
-2. **Nightly snapshot verification is a no-op.** `infra/db-snapshot.sh:38` reads the
-   photo count from `s` (the **source** DB), not `d` (the backup). The reassuring
-   `1140 photos` in the log says nothing about the snapshot's integrity. The snapshot
-   *mechanism* is correct (online backup API, not `cp`). Consequence: a corrupt
-   snapshot would report success indefinitely. If you are ever restoring, verify the
-   snapshot by hand first.
+2. ~~**Nightly snapshot verification is a no-op.**~~ **FIXED 2026-07-27.**
+   `infra/db-snapshot.sh` used to read the photo count from the **source** DB, so the
+   reassuring `1140 photos` in the log said nothing about the snapshot. It now gunzips
+   the finished artifact, runs `PRAGMA integrity_check` + a non-empty photo count on
+   *that*, and exits non-zero (failing the systemd unit) rather than keeping a bad file.
+   Snapshots are also staged as `.partial` and `mv`'d into place only after passing —
+   so the B2 off-site sync can never copy a half-written or unverified `.gz`.
+   **Not yet deployed to prod** (ships with the next `git pull`).
 
-3. **`infra/RESTORE.md:22` doesn't remove `-wal`/`-shm`** before gunzipping over
-   `photos.db` — the exact corruption `scripts/load-prod-snapshot.sh:57-58` warns
-   about. **The dev refresh path is more careful than the prod restore path.** If you
-   are executing a real restore, crib the WAL handling from `load-prod-snapshot.sh`.
+3. ~~**`infra/RESTORE.md` doesn't remove `-wal`/`-shm`** before gunzipping over
+   `photos.db`.~~ **FIXED 2026-07-27.** The runbook now removes the sidecars before
+   writing (they belong to the *old* DB — replaying them is the "malformed disk image"
+   corruption), makes the pre-restore backup via the online backup API instead of `cp`
+   (which silently yields a stale copy — see the WAL gotcha below), and sanity-checks
+   the restored file with `integrity_check` instead of comparing to a hardcoded ~1140.
 
 4. **Snapshots share a disk with the live DB.** `/opt/photo-project/snapshots/` sits
    on the LXC root disk alongside `data/photos.db`; disk loss takes both.

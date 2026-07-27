@@ -26,21 +26,63 @@ if [ ! -f "$DB" ]; then
 fi
 
 TMP=$(mktemp /tmp/photos-snap.XXXXXX.db)
-trap 'rm -f "$TMP"' EXIT
+VTMP=$(mktemp /tmp/photos-verify.XXXXXX.db)
+# Staged filename: the snapshot is built and verified as .partial and only moved to
+# its real name once it passes. Two reasons. (1) A reader — notably the off-site sync
+# — can never pick up a half-written or unverified .gz, since the mv is atomic within
+# the directory and .partial doesn't match the rotation glob. (2) A failing run can
+# never delete a pre-existing good snapshot that happens to share its timestamp.
+PART="$OUT.partial"
+trap 'rm -f "$TMP" "$VTMP" "$PART"' EXIT
 
 # Consistent online snapshot (won't tear concurrent writes), via stdlib sqlite3.
-PHOTOS=$(python3 - "$DB" "$TMP" <<'PY'
+python3 - "$DB" "$TMP" <<'PY'
 import sqlite3, sys
 src, dst = sys.argv[1], sys.argv[2]
 s = sqlite3.connect(src); d = sqlite3.connect(dst)
 with d:
     s.backup(d)
-print(s.execute("SELECT count(*) FROM photo").fetchone()[0])
 s.close(); d.close()
 PY
-)
-gzip -c "$TMP" > "$OUT"
-echo "snapshot: $OUT ($(du -h "$OUT" | cut -f1), ${PHOTOS} photos)"
+gzip -c "$TMP" > "$PART"
+
+# Verify the FINISHED ARTIFACT, not the source.
+#
+# This block used to read the photo count from the *source* connection, so the
+# reassuring "1140 photos" in the log said nothing whatsoever about the file just
+# written — a truncated or corrupt snapshot logged success indefinitely. It matters
+# more now that these snapshots are replicated off-site: replication faithfully
+# copies a bad snapshot, and without this check nothing would ever notice.
+#
+# So: gunzip the real artifact back, open it, integrity-check it, and refuse to keep
+# it if it's bad. A non-zero exit here makes photo-backup.service fail visibly rather
+# than leaving a broken .gz to be discovered during a restore.
+gunzip -c "$PART" > "$VTMP"
+if ! PHOTOS=$(python3 - "$VTMP" <<'PY'
+import sqlite3, sys
+try:
+    c = sqlite3.connect(sys.argv[1])
+    ok = c.execute("PRAGMA integrity_check").fetchone()[0]
+    if ok != "ok":
+        sys.exit(f"integrity_check: {ok}")
+    n = c.execute("SELECT count(*) FROM photo").fetchone()[0]
+    c.close()
+except sqlite3.DatabaseError as e:
+    # A badly truncated file raises here rather than failing integrity_check,
+    # so catch it for a readable message instead of a traceback.
+    sys.exit(f"unreadable: {e}")
+if n == 0:
+    sys.exit("snapshot contains 0 photos")
+print(n)
+PY
+); then
+  echo "ERROR: snapshot verification FAILED — discarding $PART" >&2
+  rm -f "$PART"
+  exit 1
+fi
+
+mv "$PART" "$OUT"   # atomic: only a verified snapshot ever appears under the real name
+echo "snapshot: $OUT ($(du -h "$OUT" | cut -f1), ${PHOTOS} photos, integrity ok)"
 
 # Rotate — keep the newest $KEEP (timestamped names sort chronologically).
 mapfile -t FILES < <(ls -1 "$OUTDIR"/photos-*.db.gz 2>/dev/null | sort)
