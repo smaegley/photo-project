@@ -59,11 +59,25 @@ No collision with the in-container snapshot timer, which runs at **03:30**
   two weeks of silence is entirely plausible. That is the real argument for making the
   nightly snapshot *verify itself* (STATUS known issue #2) — backups you can't trust to
   be good are only as useful as your speed at noticing.
-- **Everything is on-premises.** The DS418 is also the NAS in the B2 photo sync chain
-  (SPEC §13.1), so it shares fate with the photo library, and a fire or theft takes
-  `NUC2c` and the DS418 together. **Open question worth confirming:** whether the
-  Proxmox backup folder on the DS418 is itself inside the Backblaze sync set. If it is,
-  that is genuine off-site coverage; if not, there is none.
+- **⚠ The LXC backups are NOT off-site — confirmed by Steve 2026-07-27.** They land on
+  the DS418 and stop there. The DS418 is also the NAS in the B2 photo sync chain (SPEC
+  §13.1), so it shares fate with the photo library: a fire or theft takes `NUC2c` and
+  the DS418 together, and with them **every copy of the database**. Steve is setting up
+  off-site LXC backups with the Ops agent; until that lands, the archive's *pixels* are
+  off-site but its *meaning* is not.
+
+  **This asymmetry gets much worse the day `origin=digital` ships** (SPEC §13.11 #2).
+  For slides and scans the files are self-describing — `Mag12_Slide07.JPG` in a
+  magazine folder, captions recoverable from the manifest CSV — so "photos are safe in
+  B2" really does mean the archive is recoverable. For digital, the B2 objects are
+  *opaque*: only the DB maps `Photo Album/2015/…/IMG_1234.JPG` to "Kate, at the lake."
+  Photos off-site + DB on-prem-only = the pixels survive and the archive doesn't.
+
+  **Cheap interim, well short of the full off-site project:** the gzipped snapshot is
+  **~0.2 MB** (vs a 23 GB image library). Dropping the nightly `.gz` into a DS418 folder
+  that is already inside the Backblaze sync set would give the DB off-site coverage for
+  a rounding error of storage and no new moving parts — and would decouple digital
+  go-live from the larger LXC off-site work. Worth raising with the Ops agent.
 - **⚠ Never drilled.** No restore from a `SynDS418` vzdump has been performed or timed,
   and the exact steps are not written down here on purpose — an untested runbook written
   from memory is the failure mode this section exists to prevent. Do one real restore to

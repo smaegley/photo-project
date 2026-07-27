@@ -240,10 +240,14 @@ problem being triaged, or if Steve asks.
    **Off-box coverage is now documented (2026-07-27, Steve supplied the job config) —
    see `infra/RESTORE.md`:** Proxmox job, daily 02:00, **mode Stop** (quiesces SQLite —
    keep it), → **SynDS418**, retention 5 daily / 1 weekly / 6 monthly, LXC 209 included.
-   **Still open:** it has never been restore-tested; the DS418 is on-prem and shares
-   fate with the photo library, and whether that backup folder is inside the Backblaze
-   sync set is unconfirmed. With only 5 dailies, *detection latency* — not retention —
-   is the binding risk, which is why #2 matters.
+   **Still open:** never restore-tested, and **the LXC backups are NOT off-site**
+   (confirmed by Steve 2026-07-27; he's setting that up with the Ops agent). They stop
+   at the DS418, which shares fate with the photo library — so the archive's pixels are
+   off-site but the **DB is not**. Harmless for slides/scans (self-describing files);
+   **materially different once `origin=digital` ships**, since B2 objects are opaque
+   without the DB (§13.11 #2). Cheap interim: the gzipped snapshot is **~0.2 MB** — put
+   it in a DS418 folder already inside the Backblaze sync. With only 5 dailies,
+   *detection latency* — not retention — is the binding risk, which is why #2 matters.
 
 5. **Lower severity, all accepted:** frontend builds on the 2 GB prod box during
    `docker compose up --build` (OOM risk mid-deploy); `/api/admin/geocode` can starve
