@@ -337,6 +337,13 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   nothing stays pinned. It only appeared with *slow-reading clients* standing in for
   tunnel latency (9.56s vs 0.03s). If prod misbehaves under load and dev looks fine,
   simulate the slow client before concluding it's environmental.
+- **Vite dying at startup with `ENOSPC: System limit for number of file watchers
+  reached` is a HOST limit, not a code fault.** The VM shares its inotify budget with
+  VS Code Server, which watches the whole workspace; when that's exhausted Vite can't
+  start, and it looks like a broken frontend. Raising `fs.inotify.max_user_watches`
+  needs root (ask ops). Already mitigated in `frontend/vite.config.js` —
+  `server.watch.usePolling`, which needs no watchers at all and costs a few % CPU, so
+  dev startup no longer depends on what else is running.
 - **Dev backend must bind `0.0.0.0`**, not `127.0.0.1`, or Steve's Mac can't reach it
   over the LAN. A dev box unreachable from the LAN is *always* a binding problem —
   dev has no Cloudflare in front of it.

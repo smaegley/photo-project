@@ -75,6 +75,17 @@ export const api = {
   // widen it only if you want the importer's 25km proximity behaviour.
   claimNearby: (id, radiusKm = 15) =>
     send("POST", `/api/admin/places/${id}/claim-nearby?radius_km=${radiusKm}`, {}),
+
+  // ---- face matching queue (SPEC §14.7) ----
+  faceQueue: () => get("/api/admin/face-queue"),
+  faceQueuePerson: (personId, limit = 300) =>
+    get(`/api/admin/face-queue/${encodeURIComponent(personId)}?limit=${limit}`),
+  decideFaces: (suggestionIds, action) =>
+    send("POST", "/api/admin/face-suggestions/decide", { suggestion_ids: suggestionIds, action }),
+  faceClusters: (minFaces = 2, limit = 200) =>
+    get(`/api/admin/face-clusters?min_faces=${minFaces}&limit=${limit}`),
+  faceClusterSummary: () => get("/api/admin/face-clusters/summary"),
+  decideClusters: (body) => send("POST", "/api/admin/face-clusters/decide", body),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),

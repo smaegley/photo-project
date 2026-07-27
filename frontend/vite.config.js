@@ -9,6 +9,17 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: 5173,
+    // The VM shares its inotify budget with VS Code Server, which watches the whole
+    // workspace. When that is exhausted Vite dies at startup with
+    // `ENOSPC: System limit for number of file watchers reached` — a host limit, not a
+    // code fault, and not fixable from here without root. Polling costs a little CPU
+    // and needs no watchers at all, which makes dev startup independent of whatever
+    // else happens to be running.
+    watch: {
+      usePolling: true,
+      interval: 400,
+      ignored: ["**/node_modules/**", "**/.git/**", "**/dist/**"],
+    },
     proxy: {
       "/api": "http://127.0.0.1:8077",
       "/health": "http://127.0.0.1:8077",
