@@ -1113,19 +1113,24 @@ must handle both.
 3. **Add Cori Johnson + any new trigger people** to the DB (`seed_people` flow).
    **✅ RUN 2026-07-27** — 28 created from `people_seed_digital.csv` (1 family, 27
    friends), 37 already existed, 0 refused. Import then resolved **0 unresolved people**.
-   **⚠ Two probable duplicate identities need Steve's call before the real import:**
-   - **`cori_johnson` vs `cori_maegley`** — the reviewed CSV left `resolved_person_id`
-     blank, so seeding created a second family person. `cori_maegley` already exists with
-     **spouse = steve**; "Cori Johnson" is her catalog name (this section says so).
-     If they are one person, **646 digital photos** would attach to an identity outside
-     the family tree while her slides/scans stay on the other. Fix = set
-     `resolved_person_id=cori_maegley` in the CSV (making it an alias) and delete the
-     stray person row.
-   - **`nath` vs `nathan_dee`** — 1 catalog photo vs an existing family person with 7.
-     Same shape, same fix.
+   **Two duplicate identities found and RESOLVED as aliases (Steve confirmed 2026-07-27):**
+   - **"Cori Johnson" → `cori_maegley`.** Her maiden name — Steve began tagging her in
+     Lightroom pre-marriage and **has not updated the catalog**, so the sidecar will keep
+     emitting "Cori Johnson" indefinitely. That makes the alias the correct *permanent*
+     resolution, not a stopgap. Left unfixed this would have put **646 digital photos**
+     on an identity outside the family tree (`cori_maegley` is family, spouse=`steve`)
+     while her slides/scans stayed on the other.
+   - **"nath" → `nathan_dee`.** Enter pressed before autocomplete finished.
 
-   Both stray rows currently carry **zero photo tags**, so they are free to remove now
-   and expensive to unpick after a 4,679-row import.
+   Seeding had already created both as new persons (the reviewed CSV left
+   `resolved_person_id` blank), so those rows were **deleted before aliasing** — leaving
+   them would double-tag every photo, since the name would resolve to both the alias
+   target and the stray canonical. Verified unreferenced first (0 photo tags, 0 family
+   links, 0 user links). 116 → 114 persons.
+
+   **⚠ The corrected `people_seed_digital.csv` is gitignored** (`data/` — family data
+   travels out-of-band, as in the §12.13 scan rollout). **rsync it to prod** with the
+   sidecar, or prod's seed run will recreate both strays.
 
 **Probes to close first (next session):**
 - **P-D1 B2 key derivation — ✅ CLOSED (2026-07-26).** Bucket `PhotoAlbum1`, S3 endpoint
@@ -1180,8 +1185,12 @@ must handle both.
    derivation (anchor on last `PhotoAlbum/`); RAW+JPG pairs collapsed by key; capture
    date + GPS from the catalog. Emits `digital_sidecar.csv` + `people_seed_digital.csv`.
    Live catalog: **4,704 selected, 65 people**.
-4. **Digital importer — ✅ BUILT (2026-07-27, `app/import_digital.py`).** Dry-run
-   against live B2: **4,679/4,704 keys resolved**, 7,167 people tags, 397 event tags,
+4. **Digital importer — ✅ BUILT & RUN ON DEV (2026-07-27, `app/import_digital.py`).**
+   Live import: **4,680/4,704 keys resolved → 4,680 `origin='digital'` rows**, 7,168
+   people tags, 397 events, 379 places, 0 unresolved people, 0 awaiting sync, 24
+   raw-only. Dev now holds **6,598 photos** (1,140 slides + 778 scans + 4,680 digital),
+   spanning 1999–2026. Every digital row carries its B2 ETag as `file_version`, so the
+   gallery serves `?v=` with no B2 call. Earlier dry-run: 7,167 people tags, 397 event tags,
    379 places, **0 unresolved people**, 0 awaiting sync, **25 raw-only** — matching the
    ~25 predicted below exactly. Key resolution is a *probe*: the sidecar proposes
    lowercase `.jpg`, the bucket holds the camera's casing, so each row HEADs an ordered
