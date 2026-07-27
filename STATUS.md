@@ -230,7 +230,9 @@ problem being triaged, or if Steve asks.
    *that*, and exits non-zero (failing the systemd unit) rather than keeping a bad file.
    Snapshots are also staged as `.partial` and `mv`'d into place only after passing —
    so the B2 off-site sync can never copy a half-written or unverified `.gz`.
-   **Not yet deployed to prod** (ships with the next `git pull`).
+   **⚠ FIXED IN GIT, NOT ON PROD.** Prod still runs the old script until it pulls, so
+   until then the nightly B2 round-trip check in `photo-db-offsite.sh` is the *only*
+   verification running in production.
 
 3. ~~**`infra/RESTORE.md` doesn't remove `-wal`/`-shm`** before gunzipping over
    `photos.db`.~~ **FIXED 2026-07-27.** The runbook now removes the sidecars before
@@ -244,22 +246,24 @@ problem being triaged, or if Steve asks.
    **Off-box coverage is now documented (2026-07-27, Steve supplied the job config) —
    see `infra/RESTORE.md`:** Proxmox job, daily 02:00, **mode Stop** (quiesces SQLite —
    keep it), → **SynDS418**, retention 5 daily / 1 weekly / 6 monthly, LXC 209 included.
-   **Still open:** never restore-tested, and **the LXC backups are NOT off-site**
-   (confirmed by Steve 2026-07-27; he's setting that up with the Ops agent). They stop
-   at the DS418, which shares fate with the photo library — so the archive's pixels are
-   off-site but the **DB is not**. Harmless for slides/scans (self-describing files);
-   **materially different once `origin=digital` ships**, since B2 objects are opaque
-   without the DB (§13.11 #2). Cheap interim: the gzipped snapshot is **~0.2 MB** — put
-   it in a DS418 folder already inside the Backblaze sync. With only 5 dailies,
-   *detection latency* — not retention — is the binding risk, which is why #2 matters.
+   **✅ The DB is now off-site (Ops agent, 2026-07-27):** `photo-db-offsite.sh` replicates
+   each snapshot direct from LXC 209 to B2 `maegley-apps-offsite/photo-album/db/`,
+   **90-day retention**, verified by pulling the object back down and integrity-checking
+   it, with Telegram alerting on failure. Direct rather than via the DS418 by Steve's
+   call — the NAS shouldn't be another failure point. Full details: `infra/RESTORE.md`.
+   **Still open:** whole-LXC backups aren't off-site yet (container-rebuild speed, not
+   archive meaning); alerting catches "ran and failed" but not "never ran" (needs a
+   dead-man's switch); and **nothing has ever been restore-drilled** — that's the
+   remaining §13 prerequisite, and restoring from B2 is the cheap way to close it.
 
 5. **Lower severity, all accepted:** frontend builds on the 2 GB prod box during
    `docker compose up --build` (OOM risk mid-deploy); `/api/admin/geocode` can starve
    the ~40-thread pool (sync routes + 1.1s sleep + 30s timeout); `iss` not verified in
    the Access JWT (signature/`aud`/`exp` *are*, and RS256 is pinned); concurrent undos
    can double-apply an inverse (lossy re-encode for `photo_rotate`); doc drift —
-   `RESTORE.md:36` and `backend/.env.example:5` say the library is mounted read-only,
-   but compose mounts it **read-write** (correct: rotation writes in place).
+   ~~`RESTORE.md` and `backend/.env.example` say the library is mounted read-only~~
+   **(fixed 2026-07-27** — both now say read-write, which compose does and rotation
+   requires; confirmed on prod by `findmnt`: `rw,relatime,stripe=16`).
 
 **Verified sound in the same review** — don't re-audit without reason: no SQL
 injection (ORM throughout; only literal PRAGMAs use `execute()`); path traversal

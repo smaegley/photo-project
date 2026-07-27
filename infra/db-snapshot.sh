@@ -6,10 +6,15 @@
 #   OUTDIR — where snapshots are kept   (default: /opt/photo-project/snapshots)
 #   KEEP   — how many to retain         (default: 14)
 #
-# The LXC/Proxmox backups are the off-site layer; this is the fast local restore
-# point. NOTE: never cp/mv the live DB while the app is running — the online
-# backup API is the correct snapshot mechanism. Uses python3 (stdlib sqlite3),
-# so no sqlite3 CLI package is required on the host.
+# This is the fast local restore point. The off-site layer is B2: photo-db-offsite.sh
+# runs as a second ExecStart in photo-backup.service and replicates these .gz files to
+# maegley-apps-offsite/photo-album/db/ (90-day retention), verifying the object by
+# pulling it back down. The Proxmox LXC backup (-> DS418) is whole-container and is
+# NOT off-site. See infra/RESTORE.md.
+#
+# NOTE: never cp/mv the live DB while the app is running — the online backup API is the
+# correct snapshot mechanism. Uses python3 (stdlib sqlite3), so no sqlite3 CLI package
+# is required on the host.
 set -euo pipefail
 
 DB="${DB:-/opt/photo-project/data/photos.db}"
