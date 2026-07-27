@@ -1601,6 +1601,24 @@ arrival. Same rule as `faces_digital.csv` (§14.3), which already keys on `b2_ke
    `detector_version` is stamped on every row so a future model upgrade can re-detect
    without mixing incompatible embeddings — cosine distance between different ArcFace
    variants is meaningless.
+
+   **✅ FULL PASS RUN (2026-07-27): 6,598 photos, 14,245 faces, 0 errors, 81.7 min**
+   (1.33 photos/s — slower than P-F2's 1.98 because digital photos are larger and far more
+   crowded). By origin: digital 10,622 · slide 1,821 · scan 1,802.
+
+   **The detector found 55% more faces than the catalog labels** (14,245 vs 9,177) —
+   P-F4's 23% estimate was measured on group shots and understated the library-wide gap.
+
+   **480 of those faces are on the 626 photos where nobody is currently identified**
+   (366 across 550 slides, 114 across 76 scans). That is the population where matching
+   changes what the archive can *do*, rather than re-confirming what Steve already knew.
+
+   **Measured face-size distribution — corrects §14.7a's size-floor claim.** Width as a
+   fraction of frame: p10 **2.6%** · p25 4.1% · p50 6.6% · p75 11.8% · p90 18.4%. Only
+   **720 faces (5%)** fall under 2%. So a size floor is a *minor* filter, not the cheap
+   win §14.7a implied — background faces are smaller than foreground ones but rarely
+   tiny. **Prominence ranking and clustering do the real work**; keep the floor as a
+   default-collapse hint, not a primary mechanism.
 4. **Enrollment + matching** — build per-person centroids from confirmed regions, score
    every unassigned face, write `face_suggestion` rows above threshold.
 5. **Bulk-confirm UI** (§14.7) + undo integration.
