@@ -1640,8 +1640,28 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
    win §14.7a implied — background faces are smaller than foreground ones but rarely
    tiny. **Prominence ranking and clustering do the real work**; keep the floor as a
    default-collapse hint, not a primary mechanism.
-4. **Enrollment + matching** — build per-person centroids from confirmed regions, score
-   every unassigned face, write `face_suggestion` rows above threshold.
+4. **Enrollment + matching — ✅ BUILT & RUN (2026-07-27, `app/match_faces.py`).**
+   Links confirmed `photo_person` regions to detected faces by IoU>0.3 (the rule P-F4
+   validated at 100% recall), builds a normalized centroid per person from ≥3 references,
+   and scores every unidentified face. Pure numpy over embeddings already in the DB — no
+   model load, no image decode, runs in seconds.
+
+   **Results at threshold 0.45:** 14,245 faces → **8,689 already identified** (the
+   reference set), 81 of 106 people enrolled with enough references, 5,556 unidentified →
+   **1,400 suggestions** and 4,156 below threshold falling through to clustering.
+
+   Suggestion scores sit well clear of the boundary — p50 **0.616**, p90 0.769, max 0.905
+   — against P-F3's measured 0.714 mean for correct matches and 0.408 for wrong ones. So
+   these are not marginal calls clustered at the cutoff.
+
+   **Suggestions are split into two kinds, because they carry different risk:**
+   - **genuinely new (1,007)** — the person is *not* yet tagged on that photo. This grows
+     what the archive knows, and is the pile to read carefully.
+   - **region backfill (393)** — the person is already tagged there but without geometry.
+     Confirming adds a box, not a name, so it is near-zero risk.
+
+   Idempotent in the way that matters: a re-run refreshes `pending` rows but **never
+   reopens a suggestion already accepted or rejected**, so a human decision is permanent.
 5. **Bulk-confirm UI** (§14.7) + undo integration.
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
