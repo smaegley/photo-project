@@ -1662,7 +1662,33 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
 
    Idempotent in the way that matters: a re-run refreshes `pending` rows but **never
    reopens a suggestion already accepted or rejected**, so a human decision is permanent.
-5. **Bulk-confirm UI** (§14.7) + undo integration.
+
+   **Corrected 2026-07-27 after testing the accept path:** 323 of the original 1,400
+   (23%) were **no-ops** — the person already had a box on that photo, and `photo_person`
+   holds one region per (photo, person), so accepting changed nothing. A quarter of the
+   queue was clicks that yielded nothing, and only running an accept revealed it; the
+   counts alone looked fine. Those are now filtered at match time. The data model cannot
+   represent a second face of the same person in one frame, so nothing is lost by not
+   asking. **Queue: 1,400 → 1,077** (1,007 genuinely new, 70 true region backfill).
+5. **Bulk-confirm UI** (§14.7) + undo integration. **Backend ✅ BUILT (2026-07-27).**
+   `cluster_faces.py` + six admin endpoints + `/api/face-crop/{id}` (crops the display
+   derivative — the same file detection ran on, so boxes line up exactly).
+
+   **Clustering reality check:** 4,003 unidentified faces → 2,976 clusters, but **2,520
+   are singletons**. A threshold sweep (0.40–0.60) showed singletons dominate at *every*
+   setting — lowering it merely merges strangers into implausible blobs (largest cluster
+   183 at 0.40 vs 86 at 0.55). So this is inherent, not mistuned: background people
+   genuinely appear once. Singletons are 1.6× less prominent than multi-face clusters,
+   confirming they are the background tail.
+
+   **The fix is UI, not tuning:** the queue shows the **456 multi-face clusters** (1,483
+   faces) for naming and treats the 2,520 singletons as **one bulk action**. Review
+   burden is ~456 decisions + one click, not 2,976. `/face-clusters` defaults to
+   `min_faces=2` for exactly this reason.
+
+   Every action is undoable — `face_decide` and `face_cluster_decide` inverses restore
+   suggestions to `pending` and remove only the tags that decision created. Verified end
+   to end: accept 3 → tag added → undo → tag gone, all 1,400 back to pending.
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
 

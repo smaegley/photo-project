@@ -9,6 +9,7 @@ human-confirmed.
 """
 import json
 import re
+from collections import defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -325,6 +326,178 @@ def _next_place_id(db: Session) -> str:
 def _place_record(pl: m.Place) -> dict:
     return {"id": pl.id, "name": pl.canonical_name, "region": pl.region,
             "precision": pl.precision, "lat": pl.lat, "lon": pl.lon}
+
+
+# ---------- face matching queue (SPEC §14.7) ----------
+@router.get("/face-queue")
+def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """People with pending face suggestions, most to review first.
+
+    `backfill` counts suggestions where the person is *already* tagged on that photo, so
+    confirming only adds geometry — near-zero risk, safe to accept in bulk. The remainder
+    are genuinely new tags and deserve a closer look (§14 slice 4)."""
+    rows = (db.query(m.FaceSuggestion.person_id, m.Person.canonical_name,
+                     func.count(m.FaceSuggestion.id), func.avg(m.FaceSuggestion.score))
+            .join(m.Person, m.Person.id == m.FaceSuggestion.person_id)
+            .filter(m.FaceSuggestion.status == m.FACE_PENDING)
+            .group_by(m.FaceSuggestion.person_id, m.Person.canonical_name).all())
+    tagged = {(pid, per) for pid, per in
+              db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id).all()}
+    face_photo = dict(db.query(m.Face.id, m.Face.photo_id).all())
+    backfill = defaultdict(int)
+    for fid, per in db.query(m.FaceSuggestion.face_id, m.FaceSuggestion.person_id).filter(
+            m.FaceSuggestion.status == m.FACE_PENDING).all():
+        if (face_photo.get(fid), per) in tagged:
+            backfill[per] += 1
+    return sorted(
+        [{"person_id": p, "name": n, "pending": c, "avg_score": round(a or 0, 3),
+          "backfill": backfill.get(p, 0), "new": c - backfill.get(p, 0)}
+         for p, n, c, a in rows],
+        key=lambda r: -r["pending"])
+
+
+@router.get("/face-queue/{person_id}")
+def face_queue_person(person_id: str, limit: int = 300, db: Session = Depends(get_db),
+                      user: m.User = Depends(require_admin)):
+    """The pending suggestions for one person, highest confidence first."""
+    rows = (db.query(m.FaceSuggestion.id, m.FaceSuggestion.face_id, m.FaceSuggestion.score,
+                     m.Face.photo_id, m.Photo.source_file, m.Photo.date_start)
+            .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
+            .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(m.FaceSuggestion.person_id == person_id,
+                    m.FaceSuggestion.status == m.FACE_PENDING)
+            .order_by(m.FaceSuggestion.score.desc()).limit(limit).all())
+    tagged = {pid for (pid,) in db.query(m.PhotoPerson.photo_id)
+              .filter(m.PhotoPerson.person_id == person_id).all()}
+    return [{"suggestion_id": sid, "face_id": fid, "score": round(sc, 3),
+             "photo_id": pid, "source_file": sf,
+             "year": dt.year if dt else None,
+             "backfill": pid in tagged}
+            for sid, fid, sc, pid, sf, dt in rows]
+
+
+@router.post("/face-suggestions/decide")
+def decide_suggestions(body: dict, db: Session = Depends(get_db),
+                       user: m.User = Depends(require_admin)):
+    """Accept or reject suggestions in bulk.
+
+    Accepting writes an ordinary `photo_person` row with the face box — after which it is
+    indistinguishable from a hand-made tag, which is the whole point (§14.1). Rejections
+    are *kept*, not deleted, so `match_faces` never re-offers the same wrong guess.
+    One undoable contribution per call rather than per face, so a 200-face accept is one
+    click to undo."""
+    ids = [int(i) for i in body.get("suggestion_ids", [])]
+    action = (body.get("action") or "").lower()
+    if action not in ("accept", "reject"):
+        raise HTTPException(400, "action must be accept or reject")
+    if not ids:
+        raise HTTPException(400, "no suggestion_ids")
+
+    sugs = db.query(m.FaceSuggestion).filter(
+        m.FaceSuggestion.id.in_(ids), m.FaceSuggestion.status == m.FACE_PENDING).all()
+    now = datetime.now(timezone.utc)
+    added = []
+    for sg in sugs:
+        sg.status = m.FACE_ACCEPTED if action == "accept" else m.FACE_REJECTED
+        sg.decided_by, sg.decided_at = user.email, now
+        if action != "accept":
+            continue
+        f = db.get(m.Face, sg.face_id)
+        if not f:
+            continue
+        pp = db.get(m.PhotoPerson, (f.photo_id, sg.person_id))
+        if pp is None:
+            db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=sg.person_id,
+                                 source=SOURCE_HUMAN, uncertain=False,
+                                 region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
+            added.append([f.photo_id, sg.person_id, True])
+        elif pp.region_w is None:
+            pp.region_x, pp.region_y, pp.region_w, pp.region_h = f.x, f.y, f.w, f.h
+            added.append([f.photo_id, sg.person_id, False])
+    _log(db, user, f"face:{action}", None, f"{len(sugs)} faces",
+         inverse={"op": "face_decide", "suggestion_ids": [s.id for s in sugs],
+                  "added": added})
+    db.commit()
+    return {"decided": len(sugs), "tags_added": sum(1 for a in added if a[2]),
+            "regions_filled": sum(1 for a in added if not a[2])}
+
+
+@router.get("/face-clusters")
+def face_clusters(status: str = "pending", min_faces: int = 2, limit: int = 200,
+                  db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """Unknown-face clusters, most prominent first (SPEC §14.7a).
+
+    `min_faces=2` by default because singletons dominate — 2,520 of 2,976 clusters on the
+    first run — and they are overwhelmingly one-off background faces. They are meant to be
+    dismissed with the bulk action, not paged through."""
+    q = (db.query(m.FaceCluster).filter(m.FaceCluster.status == status,
+                                        m.FaceCluster.n_faces >= min_faces)
+         .order_by(m.FaceCluster.prominence.desc().nullslast()).limit(limit).all())
+    out = []
+    for c in q:
+        fids = [r[0] for r in db.query(m.Face.id).filter(m.Face.cluster_id == c.id).limit(8).all()]
+        out.append({"id": c.id, "n_faces": c.n_faces,
+                    "prominence": round(c.prominence or 0, 5),
+                    "sample_face_ids": fids})
+    return out
+
+
+@router.get("/face-clusters/summary")
+def face_cluster_summary(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    rows = db.query(m.FaceCluster.status, func.count(m.FaceCluster.id),
+                    func.sum(m.FaceCluster.n_faces)).group_by(m.FaceCluster.status).all()
+    singles = (db.query(func.count(m.FaceCluster.id))
+               .filter(m.FaceCluster.status == m.CLUSTER_PENDING,
+                       m.FaceCluster.n_faces == 1).scalar() or 0)
+    return {"by_status": [{"status": s, "clusters": c, "faces": f or 0} for s, c, f in rows],
+            "pending_singletons": singles}
+
+
+@router.post("/face-clusters/decide")
+def decide_clusters(body: dict, db: Session = Depends(get_db),
+                    user: m.User = Depends(require_admin)):
+    """Name a cluster (tags every face in it) or ignore it — one decision, N faces.
+
+    Ignoring keeps the cluster and its centroid so `cluster_faces` absorbs future
+    lookalikes silently instead of re-asking (§14.7a). `singletons: true` applies the
+    action to every pending one-face cluster at once, which is the intended way to clear
+    the background tail."""
+    action = (body.get("action") or "").lower()
+    if action not in ("name", "ignore"):
+        raise HTTPException(400, "action must be name or ignore")
+    person_id = body.get("person_id")
+    if action == "name" and not db.get(m.Person, person_id or ""):
+        raise HTTPException(400, "name requires a valid person_id")
+
+    if body.get("singletons"):
+        cl = db.query(m.FaceCluster).filter(m.FaceCluster.status == m.CLUSTER_PENDING,
+                                            m.FaceCluster.n_faces == 1).all()
+    else:
+        cl = db.query(m.FaceCluster).filter(
+            m.FaceCluster.id.in_([int(i) for i in body.get("cluster_ids", [])])).all()
+    if not cl:
+        raise HTTPException(400, "no clusters selected")
+
+    now = datetime.now(timezone.utc)
+    added = []
+    for c in cl:
+        c.status = m.CLUSTER_NAMED if action == "name" else m.CLUSTER_IGNORED
+        c.person_id = person_id if action == "name" else None
+        c.decided_by, c.decided_at = user.email, now
+        if action != "name":
+            continue
+        for f in db.query(m.Face).filter(m.Face.cluster_id == c.id).all():
+            if db.get(m.PhotoPerson, (f.photo_id, person_id)) is None:
+                db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=person_id,
+                                     source=SOURCE_HUMAN, uncertain=False,
+                                     region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
+                added.append([f.photo_id, person_id])
+    _log(db, user, f"faces:cluster-{action}", None,
+         f"{len(cl)} clusters" + (f" -> {person_id}" if person_id else ""),
+         inverse={"op": "face_cluster_decide", "cluster_ids": [c.id for c in cl],
+                  "added": added})
+    db.commit()
+    return {"clusters": len(cl), "tags_added": len(added)}
 
 
 @router.get("/unresolved-locations")
@@ -792,6 +965,29 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         pp = db.get(m.PhotoPerson, (inv["photo_id"], inv["person_id"]))
         if pp:
             pp.region_x, pp.region_y, pp.region_w, pp.region_h = inv["prior"]["region"]
+    elif op == "face_decide":
+        # Put the suggestions back to pending and remove only what this decision added.
+        db.query(m.FaceSuggestion).filter(
+            m.FaceSuggestion.id.in_(inv["suggestion_ids"])).update(
+            {"status": m.FACE_PENDING, "decided_by": None, "decided_at": None},
+            synchronize_session=False)
+        for photo_id, person_id, was_new in inv.get("added", []):
+            pp = db.get(m.PhotoPerson, (photo_id, person_id))
+            if pp is None:
+                continue
+            if was_new:
+                db.delete(pp)          # the tag itself came from this decision
+            else:
+                pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "face_cluster_decide":
+        db.query(m.FaceCluster).filter(
+            m.FaceCluster.id.in_(inv["cluster_ids"])).update(
+            {"status": m.CLUSTER_PENDING, "person_id": None,
+             "decided_by": None, "decided_at": None}, synchronize_session=False)
+        for photo_id, person_id in inv.get("added", []):
+            pp = db.get(m.PhotoPerson, (photo_id, person_id))
+            if pp is not None:
+                db.delete(pp)
     elif op == "place_unclaim":
         for pid in inv["photo_ids"]:
             p = db.get(m.Photo, pid)

@@ -159,6 +159,31 @@ def face(person_id: str, _user=Depends(image_user)):
     return FileResponse(cache, media_type="image/jpeg", headers=DAY)
 
 
+@router.get("/face-crop/{face_id}")
+def face_crop(face_id: int, _user=Depends(image_user)):
+    """Cropped face for the §14 confirm queue.
+
+    Crops the **display derivative**, which is already local and already sized — the same
+    file detection ran on, so the box lines up exactly. Cached per face id; face boxes are
+    immutable once detected (a re-detect writes new rows with a new detector_version), so
+    the cache never goes stale."""
+    with SessionLocal() as db:
+        f = db.get(m.Face, face_id)
+        if not f:
+            raise HTTPException(404, "face not found")
+        p = db.get(m.Photo, f.photo_id)
+        region = (f.x, f.y, f.w, f.h)
+        src_file, fv, backend = p.source_file, p.file_version, storage.backend_of(p)
+    src = settings.display_dir / derivatives.cache_key(
+        src_file, fv, versioned=(backend == "b2"))
+    if not src.exists():
+        raise HTTPException(404, "no display derivative — run prewarm")
+    cache = settings.faces_dir / f"face{face_id}.jpg"
+    if not cache.exists():
+        derivatives.face_thumb(src, cache, region)
+    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+
+
 @router.get("/cards/{filename}")
 def index_card(filename: str, _user=Depends(image_user)):
     if not CARD_RE.match(filename):

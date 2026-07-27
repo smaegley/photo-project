@@ -64,9 +64,14 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
                             m.PhotoPerson.region_x, m.PhotoPerson.region_y,
                             m.PhotoPerson.region_w, m.PhotoPerson.region_h)
                    .filter(m.PhotoPerson.region_w.isnot(None)).all())
-        tagged = defaultdict(set)      # photo_id -> {person_id} (any tag, box or not)
-        for pid, person in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id).all():
-            tagged[pid].add(person)
+        tagged = defaultdict(set)      # photo_id -> {person_id} tagged but with NO box
+        boxed = set()                  # (photo_id, person_id) already carrying a box
+        for pid, person, rw in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
+                                        m.PhotoPerson.region_w).all():
+            if rw is None:
+                tagged[pid].add(person)
+            else:
+                boxed.add((pid, person))
         decided = {(fid, pers) for fid, pers, st in
                    db.query(m.FaceSuggestion.face_id, m.FaceSuggestion.person_id,
                             m.FaceSuggestion.status).all()
@@ -113,7 +118,7 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
     best = sims.argmax(1)
     score = sims.max(1)
 
-    n_new = n_backfill = n_below = 0
+    n_new = n_backfill = n_below = n_noop = 0
     rows = []
     for k, ci in enumerate(cand):
         if score[k] < threshold:
@@ -124,6 +129,14 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
         if (fid, person) in decided:
             continue                          # human already ruled on this pair
         photo_id = faces[ci][1]
+        # Skip no-ops: `photo_person` holds ONE region per (photo, person), so if that
+        # person already has a box here, accepting would change nothing. Measured at 323
+        # of 1,400 (23%) before this filter — a quarter of the queue costing clicks and
+        # yielding nothing. The data model can't represent a second face of the same
+        # person in one frame, so there is nothing lost by not asking.
+        if (photo_id, person) in boxed:
+            n_noop += 1
+            continue
         backfill = person in tagged.get(photo_id, ())
         n_backfill += backfill
         n_new += not backfill
@@ -151,6 +164,7 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
     print(f"    genuinely new:  {n_new}  (person not yet tagged on that photo)")
     print(f"    region backfill:{n_backfill}  (person already tagged; adds geometry only)")
     print(f"  below threshold:  {n_below}  -> unknown-face clustering (§14.7a)")
+    print(f"  skipped as no-op: {n_noop}  (person already has a box on that photo)")
     if not dry_run and rows:
         print("\nNext: slice 5 — the by-person confirm queue")
 
