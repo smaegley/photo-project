@@ -12,19 +12,23 @@ from urllib.parse import quote
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from app import models as m
-from app.config import settings
+from app import models as m, storage
 from app.schemas import FacetCount, PhotoOut, PersonTag
 
-def _version(storage_path: str | None) -> str:
-    """Cache-busting suffix tied to the file's mtime, so a rotated/re-exported photo
-    gets a fresh URL and the browser stops serving the stale copy (SPEC §11.5)."""
-    if not storage_path:
+def _version(p: m.Photo) -> str:
+    """Cache-busting suffix tied to the master's change-token, so a rotated/re-exported
+    photo gets a fresh URL and the browser stops serving the stale copy (SPEC §11.5).
+
+    Reads the stored `file_version` column (SPEC §13.4). It used to stat() the master
+    here — once per photo, during serialization, so 60 syscalls per gallery page — and
+    for a B2-backed row that would have become 60 remote HEADs per page, which is the
+    §10.16 pool-exhaustion shape all over again. Unstamped rows fall back to a one-time
+    probe inside `storage.master_version` and self-heal on the next prewarm.
+    """
+    if not p.storage_path:
         return ""
-    try:
-        return f"?v={int((settings.library_root_path / storage_path).stat().st_mtime)}"
-    except OSError:
-        return ""
+    token = storage.master_version(p)
+    return f"?v={token}" if token else ""
 
 
 @dataclass
@@ -83,7 +87,7 @@ def image_url(source_file: str) -> str:
 
 
 def to_photo_out(p: m.Photo) -> PhotoOut:
-    v = _version(p.storage_path)
+    v = _version(p)
     return PhotoOut(
         id=p.id, source_file=p.source_file, caption=p.caption,
         date_raw=p.date_raw, date_start=p.date_start,

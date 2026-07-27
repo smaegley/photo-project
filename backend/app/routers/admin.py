@@ -16,7 +16,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 from PIL import Image
 
-from app import derivatives, models as m
+from app import derivatives, models as m, storage
 from app.auth import require_admin, require_contributor
 from app.config import settings
 from app.database import get_db
@@ -83,6 +83,11 @@ def _rotate_file(p: m.Photo, deg: int) -> None:
         im.load()
         rot = im.transpose(rot_map[deg])
     rot.save(path, "JPEG", quality=95)
+    # The master's bytes just changed, so restamp the change-token: image URLs are
+    # served `immutable`, and ?v= now comes from this column rather than a live stat
+    # (SPEC §13.4) — leaving it stale would pin the old orientation in every browser
+    # that had already loaded the photo. The caller's commit persists it.
+    p.file_version = storage.probe_version(p)
     # Eagerly refresh both derivatives so the new orientation shows immediately
     # (the server's mtime self-heal would also catch them on next request).
     key = _safe_key(p.source_file)

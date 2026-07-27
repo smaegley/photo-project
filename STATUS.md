@@ -32,8 +32,8 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `82166b3` — Slide Photos header count fix (2026-07-25) |
-| Pushed to origin | yes (`origin/main` @ `82166b3`) |
+| Repo HEAD (dev) | **§13 digital build in flight** — slices 1–3 done (2026-07-27) |
+| Pushed to origin | see `git log`; §13 work is **committed but NOT deployed** (by design) |
 | Deployed to prod | `82166b3` — 2026-07-25, Slide Photos header shows slide count (grid=all slides, roll detail=that roll) not the mixed grand total |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
@@ -58,6 +58,25 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > files under `/mnt/photos/library/photos/`, the seeded scan people, ~8 older probe
 > rows + `deirdre_carlile`, the 933 MB `Lightroom Database-v13-3.lrcat` in
 > `/mnt/photos/lrcat-drop/`, and a dev backend on :8077.
+
+> **🔨 §13 B2-BACKED DIGITAL PHOTOS — BUILD IN FLIGHT (not deployed).** Prod still runs
+> `82166b3`; everything below is dev-only. Plan + slice status: **SPEC §13.14**.
+> - **Slices 1–3 done:** migration `b8c9d0e1f2a3` (`photo.storage_backend`,
+>   `photo.file_version`), `app/storage.py` (local + B2 read-only via boto3), the
+>   catalog digital reader (`read_lrcat --digital` → `data/review/digital_sidecar.csv`,
+>   4,704 selected / 65 people). Slice 1's caller integration landed 2026-07-27: the
+>   per-photo master `.stat()` during serialization is gone, `?v=` comes from
+>   `file_version`, and `prewarm` stamps it.
+> - **Next:** slice 4 (digital importer), slice 5 (prewarm from B2, needs `pillow-heif`),
+>   slice 6 (frontend Digital Photos view + download → display derivative).
+> - **HARD prerequisite before go-live (§13.14):** backup hardening — known issues
+>   **#2** (snapshot-verify no-op) and **#4** (untested off-box coverage) below. B2-as-master
+>   makes the DB the only bucket-key→meaning map; losing it unbacked leaves opaque objects.
+> - **`file_version` is stamped by `python -m app.prewarm`.** After deploying §13 to prod,
+>   run prewarm or rows keep falling back to a one-time stat until it runs (self-healing,
+>   not breaking).
+> - **Dev DB carries 1,910 stamped rows**; the 8 unstamped are the pre-existing dead probe
+>   rows whose files are gone.
 
 Re-confirm prod's actual HEAD any time it matters — it's one command, and this table
 is only as good as its last update:
@@ -245,6 +264,13 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   them — prod deploys via `git pull` and would flip every file to `100755` for no
   benefit. Fix is `git config core.filemode false` (that `.git/config` is the VM's,
   shared over SMB — harmless there, since the VM's native filesystem already sees 644).
+- **`cp data/photos.db` is NOT a backup — it silently gives you a stale one.** The DB
+  is in WAL mode, so recent commits live in `photos.db-wal` until a checkpoint. A plain
+  `cp` of just the main file produced a copy with **1,148 photo rows against a live
+  1,918** (2026-07-27) — it predated the whole scan import, with no error anywhere.
+  Diffing against it looks like catastrophic data loss that never happened. Use the
+  online backup API (`sqlite3.Connection.backup`, as `infra/db-snapshot.sh` does) or copy
+  `photos.db` + `-wal` + `-shm` together. Same family as known issue #3.
 - **Connection/streaming bugs are invisible on loopback.** §10.16's pool exhaustion
   could not be reproduced by a 60-tile burst on dev — localhost streams instantly, so
   nothing stays pinned. It only appeared with *slow-reading clients* standing in for

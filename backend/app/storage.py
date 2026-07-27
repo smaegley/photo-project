@@ -35,9 +35,10 @@ def backend_of(photo) -> str:
 
 
 # ---- local ----------------------------------------------------------------------
-def _local_path(photo) -> Path:
-    """Resolve a local master under library_root, containment-guarded (matches the
-    path-traversal guard in routers/images.py: resolve then require it stays under root)."""
+def local_path(photo) -> Path:
+    """Resolve a local master under library_root, containment-guarded (resolve first,
+    then require it stays under the root — catches symlink escapes too). This is the
+    single copy of that guard; routers/images.py calls it rather than repeating it."""
     if not photo.storage_path:
         raise StorageError("photo has no storage_path")
     root = Path(settings.library_root).resolve()
@@ -88,7 +89,7 @@ def master_exists(photo) -> bool:
     b = backend_of(photo)
     if b == "local":
         try:
-            return _local_path(photo).exists()
+            return local_path(photo).exists()
         except StorageError:
             return False
     if b == "b2":
@@ -101,24 +102,37 @@ def open_master(photo):
     in-memory buffer of the fetched bytes."""
     b = backend_of(photo)
     if b == "local":
-        return _local_path(photo).open("rb")
+        return local_path(photo).open("rb")
     if b == "b2":
         obj = _b2_client().get_object(Bucket=settings.b2_bucket, Key=photo.storage_path)
         return io.BytesIO(obj["Body"].read())
     raise StorageError(f"unknown storage_backend {b!r}")
 
 
-def master_version(photo) -> str:
-    """Change-token for ?v= + derivative cache keys. Stored value wins; else probe
-    (only hit at import/prewarm — serving reads the stored `file_version`)."""
-    if getattr(photo, "file_version", None):
-        return photo.file_version
+def probe_version(photo) -> str:
+    """Derive the change-token from the master *now*, ignoring any stored value.
+
+    For callers that just changed the master (admin rotate) or are stamping the
+    column (prewarm, import). Costs a stat (local) or a HEAD (b2), so it must not
+    be called on the browse path — use `master_version` there.
+    """
     b = backend_of(photo)
     if b == "local":
         try:
-            return str(int(_local_path(photo).stat().st_mtime))
+            return str(int(local_path(photo).stat().st_mtime))
         except (StorageError, OSError):
             return ""
     if b == "b2":
         return b2_token(_b2_head(photo))
     raise StorageError(f"unknown storage_backend {b!r}")
+
+
+def master_version(photo) -> str:
+    """Change-token for ?v= + derivative cache keys — the serving path's entry point.
+
+    The stored `file_version` wins and costs nothing. Falling through to a live probe
+    happens only for rows stamped before this column existed; the next prewarm fills
+    them in and the probe stops (SPEC §13.4)."""
+    if getattr(photo, "file_version", None):
+        return photo.file_version
+    return probe_version(photo)

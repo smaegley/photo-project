@@ -1119,11 +1119,32 @@ must handle both.
   → review) and GPS.
 
 **Build slices:**
-1. **Schema + storage abstraction** (§13.3/§13.4): migration adds `photo.storage_backend`
-   (`local|b2`, default local) + `photo.file_version`; `app/storage.py`
-   (open/exists/version) as a local passthrough (no behavior change); move `?v=` +
-   derivative staleness onto `file_version` (kills the per-photo master `.stat()`).
-   Ships alone, benefits slides/scans too.
+1. **Schema + storage abstraction — ✅ DONE (2026-07-27).** Migration `b8c9d0e1f2a3`
+   (`photo.storage_backend` `local|b2` default local, `photo.file_version`) landed
+   2026-07-26; the **caller integration** landed 2026-07-27:
+   - `queries._version()` reads `file_version` via `storage.master_version()` instead
+     of stat'ing the master during serialization — **the per-photo `.stat()` is gone**
+     (was 60 syscalls/gallery page; would have been 60 B2 HEADs/page for digital).
+     Verified by forcing a sentinel token into the column and seeing it served.
+   - `routers/images.py` resolves through `storage.local_path()` (one containment
+     guard, not two copies); `_derivative()` handles both backends — local unchanged
+     (mtime predicate), remote serves the versioned cache and 404s on a miss rather
+     than pulling from B2 inline (§13.7).
+   - `derivatives.cache_key()` folds `file_version` in **for remote only**, so every
+     local derivative already on disk stays valid — no mass regeneration on deploy.
+     `needs_regen(None, cache)` is the remote predicate (existence + non-empty).
+   - `prewarm.stamp_versions()` records the token for local rows; idempotent, runs
+     from `python -m app.prewarm` and `importer.make_thumbnails`.
+   - **`admin._rotate_file()` restamps `file_version`** after writing the rotated
+     master. Easy to miss and load-bearing: image URLs are served `immutable`, so
+     once `?v=` came from a column a stale token would have pinned the old
+     orientation in every browser that had already loaded the photo.
+
+   *Verified on dev 2026-07-27:* 1,910/1,918 rows stamped (the 8 unstamped are the
+   dev probe rows whose files are gone — they degrade to no `?v=`, as before); a
+   simulated `b2` row 404s cold, serves its versioned cache in 4–6 ms warm, 404s on
+   `/api/images/`, and re-404s when its token changes (old derivative orphans);
+   rotate-via-API restamps to the new mtime; slides/scans/faces/cards all unchanged.
 2. **B2 backend** in `storage.py` (HEAD/GET/version via the P-D2 choice) + `.env` config.
 3. **Catalog digital reader — ✅ DONE (slice 3, `cdd46db`).** `read_lrcat --digital`:
    PhotoAlbum photos tagged with ≥1 `DIGITAL_INCLUDE_PEOPLE`; mount-independent B2-key

@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from app.prewarm import prewarm_all  # noqa: E402
+from app.prewarm import prewarm_all, stamp_versions  # noqa: E402
 
 if __name__ == "__main__":
     prewarm_all(force="--force" in sys.argv)
+    stamp_versions()

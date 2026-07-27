@@ -6,11 +6,12 @@ generated on demand and cached; they self-heal when the source is newer (e.g. a
 re-exported slide)."""
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from app import derivatives, models as m
+from app import derivatives, models as m, storage
 from app.auth import image_user
 from app.config import settings
 from app.database import SessionLocal
@@ -25,29 +26,70 @@ DAY = {"Cache-Control": "public, max-age=86400"}
 
 
 def photo_file(photo: "m.Photo | None") -> Path:
-    """Locate a photo's original file under the library root (path-guarded).
-    Works from the Photo row's storage_path — any origin, no filename regex."""
+    """Locate a photo's original file **on the local library volume** (path-guarded).
+    Works from the Photo row's storage_path — any origin, no filename regex.
+
+    Raises 404 for a B2-backed master (SPEC §13.3): there is no local file to hand to
+    FileResponse. Those rows serve from their locally-cached derivatives instead, and
+    the master is fetched only by prewarm.
+    """
     if not photo or not photo.storage_path:
         raise HTTPException(404, "image not found")
-    root = Path(settings.library_root).resolve()
-    path = (root / photo.storage_path).resolve()
-    if root != path and root not in path.parents:
+    if storage.backend_of(photo) != "local":
+        raise HTTPException(404, "no local master for this photo")
+    try:
+        path = storage.local_path(photo)
+    except storage.StorageError:
         raise HTTPException(400, "bad storage path")
     if not path.exists():
         raise HTTPException(404, "image not found")
     return path
 
 
-def _resolve(source_file: str) -> Path:
-    """Locate a photo's file, holding a pooled connection only for the lookup.
+def _lookup(source_file: str) -> SimpleNamespace:
+    """The Photo fields the image routes need, holding a pooled connection only for
+    the lookup.
 
     Image routes scope their own sessions rather than taking `Depends(get_db)`:
     a yield-dependency's session is only released after the response body has
     streamed, which would keep a connection checked out for the whole transfer.
-    See `auth.image_user` for the full explanation.
+    See `auth.image_user` for the full explanation. Returning a detached snapshot
+    (not the ORM row) keeps that guarantee — nothing can lazy-load post-response.
     """
     with SessionLocal() as db:
-        return photo_file(db.query(m.Photo).filter(m.Photo.source_file == source_file).first())
+        p = db.query(m.Photo).filter(m.Photo.source_file == source_file).first()
+        if not p:
+            raise HTTPException(404, "image not found")
+        return SimpleNamespace(storage_path=p.storage_path,
+                               storage_backend=storage.backend_of(p),
+                               file_version=p.file_version)
+
+
+def _derivative(source_file: str, out_dir: Path, max_edge: int, *, stale_ok: bool = False):
+    """Serve a sized derivative, generating it on demand.
+
+    **Local masters: unchanged** — resolve the master, regenerate if the cache is
+    older, serve. **Remote (B2) masters:** the local cache is authoritative and its
+    key carries `file_version` (§13.4), so a changed master lands on a new key. A miss
+    means the row hasn't been prewarmed; that 404s rather than pulling from B2 inline,
+    because a multi-MB fetch inside a request is the §10.16 slow-client shape (SPEC
+    §13.7 — prewarm is the fetch point).
+    """
+    p = _lookup(source_file)
+    remote = p.storage_backend != "local"
+    cache = out_dir / derivatives.cache_key(source_file, p.file_version, versioned=remote)
+    if remote:
+        if not derivatives.needs_regen(None, cache):
+            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+        raise HTTPException(404, "derivative not generated yet — run prewarm")
+    try:
+        src = photo_file(p)
+    except HTTPException:
+        if stale_ok and cache.exists():  # serve a stale copy rather than 404
+            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+        raise
+    derivatives.ensure(src, cache, max_edge)
+    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
 _safe_key = derivatives.safe_key  # shared with prewarm (SPEC §12.6)
@@ -58,17 +100,20 @@ _safe_key = derivatives.safe_key  # shared with prewarm (SPEC §12.6)
 # (Mag1_Slide01.JPG) have no slash and match too (SPEC §12.6).
 @router.get("/images/{source_file:path}")
 def full_image(source_file: str, _user=Depends(image_user)):
-    """The original (full-res) file — used for download."""
-    return FileResponse(_resolve(source_file), media_type="image/jpeg", headers=IMMUTABLE)
+    """The original (full-res) file — used for download.
+
+    Local masters only. `origin=digital` masters live in B2 and are deliberately not
+    downloadable at full res (SPEC §13.2 #6): the lightbox's digital download points
+    at `/api/display/` instead, so this 404s for them rather than proxying B2.
+    """
+    return FileResponse(photo_file(_lookup(source_file)),
+                        media_type="image/jpeg", headers=IMMUTABLE)
 
 
 @router.get("/display/{source_file:path}")
 def display_image(source_file: str, _user=Depends(image_user)):
     """Sized derivative for the lightbox (originals can be 24MP)."""
-    src = _resolve(source_file)
-    cache = settings.display_dir / _safe_key(source_file)
-    derivatives.ensure(src, cache, derivatives.DISPLAY_MAX)
-    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+    return _derivative(source_file, settings.display_dir, derivatives.DISPLAY_MAX)
 
 
 @router.get("/photo-back/{photo_id}")
@@ -93,15 +138,8 @@ def photo_back(photo_id: int, _user=Depends(image_user)):
 
 @router.get("/thumbnails/{source_file:path}")
 def thumbnail(source_file: str, _user=Depends(image_user)):
-    cache = settings.thumbnails_dir / _safe_key(source_file)
-    try:
-        src = _resolve(source_file)
-    except HTTPException:
-        if cache.exists():  # serve a stale thumb rather than 404 if the source is gone
-            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
-        raise
-    derivatives.ensure(src, cache, derivatives.THUMB_MAX)
-    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+    return _derivative(source_file, settings.thumbnails_dir, derivatives.THUMB_MAX,
+                       stale_ok=True)
 
 
 @router.get("/faces/{person_id}")

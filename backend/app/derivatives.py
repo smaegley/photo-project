@@ -29,12 +29,34 @@ def safe_key(source_file: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", source_file)
 
 
-def needs_regen(src: Path, cache: Path) -> bool:
-    """True if the cached derivative is missing, empty, or stale vs. the source."""
+def cache_key(source_file: str, file_version: str | None = None,
+              *, versioned: bool = False) -> str:
+    """Cache filename for a derivative (SPEC §13.4).
+
+    Local masters keep the bare `safe_key` and rely on the mtime predicate below, so
+    every derivative already on disk stays valid. A **remote** master (B2) can't be
+    stat'd cheaply, so its change-token goes *into* the key instead: when the master
+    changes the key changes, the request lands on a fresh file, and the old one simply
+    orphans (GC'd later). `versioned=True` with no token falls back to the bare key —
+    a not-yet-stamped row still resolves rather than 404ing on a malformed name.
+    """
+    key = safe_key(source_file)
+    return f"{key}.{safe_key(file_version)}" if versioned and file_version else key
+
+
+def needs_regen(src: Path | None, cache: Path) -> bool:
+    """True if the cached derivative is missing, empty, or stale vs. the source.
+
+    `src=None` means the master is remote (SPEC §13.3): there's no cheap source mtime
+    to compare against, so freshness is existence + non-empty. Invalidation for those
+    comes from the version token in `cache_key`, not from this predicate.
+    """
     if not cache.exists():
         return True
     st = cache.stat()
-    return st.st_size == 0 or st.st_mtime < src.stat().st_mtime
+    if st.st_size == 0:
+        return True
+    return src is not None and st.st_mtime < src.stat().st_mtime
 
 
 def generate(src: Path, cache: Path, max_edge: int, transpose: bool = False) -> None:

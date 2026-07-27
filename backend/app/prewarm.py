@@ -10,6 +10,10 @@ the prod container:
 `importer/make_thumbnails.py` is the dev-side wrapper over this. Staleness-aware
 (same predicate as the server) — a plain run only touches missing/zero-byte/stale
 derivatives, so it's cheap to run on every deploy.
+
+A run also **stamps `photo.file_version`** (`stamp_versions`, SPEC §13.4), which is
+what lets the serving path emit `?v=` from a column instead of stat'ing every master
+during serialization. Also idempotent, so the deploy-step guidance is unchanged.
 """
 import sys
 import time
@@ -51,7 +55,8 @@ def prewarm_all(force: bool = False) -> tuple[int, int, int]:
     with SessionLocal() as db:
         rows = (db.query(m.Photo.source_file, m.Photo.storage_path)
                 .filter(m.Photo.origin != "slide",
-                        m.Photo.storage_path.isnot(None)).all())
+                        m.Photo.storage_path.isnot(None),
+                        m.Photo.storage_backend == "local").all())
     for source_file, storage_path in rows:
         src = settings.library_root_path / storage_path
         if not src.exists():
@@ -76,5 +81,39 @@ def prewarm_all(force: bool = False) -> tuple[int, int, int]:
     return made, skipped, errors
 
 
+def stamp_versions() -> tuple[int, int]:
+    """Record each local master's change-token in `photo.file_version` (SPEC §13.4).
+
+    This is what actually retires the per-photo stat: until a row is stamped,
+    `storage.master_version` falls back to probing the master during serialization.
+    Idempotent — only writes rows whose token actually moved, so a re-run after a
+    rotate or a re-export costs one stat per photo and no writes.
+
+    B2-backed rows are skipped: their token is the object ETag, recorded at import
+    and refreshed by the (slice 5) B2 prewarm from the same response that fetches
+    the bytes — stamping them here would mean a HEAD per row for no benefit.
+    """
+    from app.database import SessionLocal
+    from app import models as m
+    from app import storage
+
+    stamped = unchanged = 0
+    with SessionLocal() as db:
+        rows = (db.query(m.Photo)
+                .filter(m.Photo.storage_path.isnot(None),
+                        m.Photo.storage_backend == "local").all())
+        for p in rows:
+            token = storage.probe_version(p)
+            if token and token != p.file_version:
+                p.file_version = token
+                stamped += 1
+            else:
+                unchanged += 1
+        db.commit()
+    print(f"file_version: {stamped} stamped, {unchanged} unchanged")
+    return stamped, unchanged
+
+
 if __name__ == "__main__":
     prewarm_all(force="--force" in sys.argv)
+    stamp_versions()
