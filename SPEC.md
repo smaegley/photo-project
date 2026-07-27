@@ -1091,9 +1091,23 @@ siblings and some sit loose in `PhotoAlbum/` (not a `YYYY/` subfolder) — "serv
 must handle both.
 
 **Prerequisites (before go-live):**
-1. **Backup hardening — HARD prerequisite.** B2-as-master makes the DB the sole map
-   from bucket-key→meaning; losing it unbacked = opaque objects. Fix STATUS known
-   issues **#2** (snapshot-verify no-op) and **#4** (untested off-box coverage) first.
+1. **Backup hardening — HARD prerequisite. ✅ SUBSTANTIALLY MET (2026-07-27).**
+   B2-as-master makes the DB the sole map from bucket-key→meaning; losing it unbacked =
+   opaque objects. Status of the two gating issues:
+   - **#2 snapshot-verify no-op — fixed in git** (`db-snapshot.sh` now verifies the
+     finished artifact and stages via `.partial`). **⚠ Not yet on prod** — ships with
+     the deploy below, and until then the B2 round-trip check is prod's only verification.
+   - **#4 off-box coverage — closed for the DB.** Snapshots replicate direct from LXC 209
+     to B2 (`maegley-apps-offsite/photo-album/db/`, 90-day retention, verified by pulling
+     the object back down). **Restore-drilled and passing 2026-07-27**, including
+     B2-only recovery of a snapshot local retention had already pruned, and the
+     old-schema path (a snapshot one migration behind, upgraded on start, serving 200s).
+     Recovery is under a minute — measured, not assumed. See `infra/RESTORE.md`.
+
+   **Residual, and acceptable to ship against:** the whole-container vzdump restore is
+   still undrilled, and backup alerting catches "ran and failed" but not "never ran".
+   Neither blocks digital — both concern container-rebuild speed, not the DB whose loss
+   would orphan the B2 objects.
 2. **B2 read-only application key** scoped to the bucket + endpoint → `.env` (Steve
    provisions).
 3. **Add Cori Johnson + any new trigger people** to the DB (`seed_people` flow).

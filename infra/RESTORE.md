@@ -22,6 +22,10 @@ docker compose stop api
 #    NOT `cp` — the DB is in WAL mode and recent commits live in photos.db-wal, so
 #    copying the main file alone silently yields a STALE database (measured: 1,148
 #    rows against a live 1,918, no error). Use the online backup API.
+#    NOTE: this failure is INTERMITTENT, which is what makes it dangerous. It depends
+#    on whether a WAL happens to be pending. At the 2026-07-27 drill prod's
+#    photos.db-wal was 0 bytes (freshly checkpointed) and a naive `cp` would have
+#    worked by luck. Don't "test" cp on a quiet box and conclude it's safe.
 python3 -c "
 import sqlite3
 s = sqlite3.connect('data/photos.db'); d = sqlite3.connect('data/photos.db.before-restore')
@@ -39,6 +43,13 @@ rm -f data/photos.db-wal data/photos.db-shm
 gunzip -c snapshots/photos-YYYYMMDD-HHMMSS.db.gz > data/photos.db
 
 # 6. Sanity check the restored file, then bring the API back.
+#    ⚠ Use the HOST python3 (below), NOT the api image. The image's ENTRYPOINT is
+#    entrypoint.sh, which runs `alembic upgrade head` and then execs uvicorn — and it
+#    ignores "$@" entirely, so `docker run <image> python -c ...` does NOT run your
+#    command: it silently migrates the DB and starts the server. An inspection
+#    container will therefore mutate the very artifact you were trying to measure
+#    (hit for real during the 2026-07-27 drill). If you must use the image, override
+#    it: `docker run --entrypoint python3 ...`.
 python3 -c "
 import sqlite3
 c = sqlite3.connect('data/photos.db')
@@ -145,13 +156,48 @@ message says *why*. Tested end-to-end 2026-07-27 by forcing the verify floor to 
   runs the old script (source-connection count, STATUS #2) until it pulls. Until then
   the nightly B2 round-trip in `photo-db-offsite.sh` is **the only verification running
   in production** — which is why that layer being independent matters right now.
-- **⚠ Never drilled.** No restore has been performed or timed — neither from a
-  `SynDS418` vzdump nor from a B2 snapshot. The vzdump steps are deliberately not
-  written down here: an untested runbook written from memory is the failure mode this
-  section exists to prevent. Do one real restore, record what you actually did, then
-  replace this bullet. **Restore from B2 is the cheaper drill and covers the SPEC §13
-  prerequisite — do that one first;** there are 17 verified snapshots in the bucket to
-  drill against.
+- **⚠ The `SynDS418` vzdump restore is still undrilled.** Whole-container recovery needs
+  a spare VMID and storage on `NUC2c` — a separate exercise from the DB drill below, and
+  still outstanding. Its steps are deliberately not written here until someone does one:
+  an untested runbook written from memory is the failure mode this section exists to
+  prevent.
+
+## Restore drill — B2 snapshot path: PASSED (2026-07-27)
+
+Run by the Ops agent against a throwaway container on a copy; **prod was never touched**
+(verified after: `photo-api` up 8h and never restarted, live `data/photos.db` mtime
+unchanged, `/health` still 200). Re-runnable via `/usr/local/sbin/restore-drill.sh` on
+LXC 209 — idempotent, fresh timestamped workspace each run.
+
+| | newest | pre-scan (Jul 15) |
+|---|---|---|
+| Object | `photos-20260727-151448.db.gz` (272K) | `photos-20260715-033001.db.gz` (156K) |
+| Retrieve from B2 | <1s | ~1s |
+| `integrity_check` / photos | ok / **1,910** | ok / **1,140** |
+| alembic at rest | `a7b8c9d0e1f2` (head) | `a6b7c8d9e0f1` (one behind) |
+| alembic on start | none needed | **upgraded → `a7b8c9d0e1f2`** |
+| API healthy | 3s | 2s |
+| Endpoints | all 200 | all 200 |
+
+**End-to-end recovery is well under a minute** — retrieval was never the constraint, and
+now that's measured rather than assumed. Three things this proved that a file-downloads
+check would not have:
+
+1. **The old-schema path works.** The pre-scan snapshot came up one migration behind and
+   `alembic upgrade head` applied the §12.3 scan-ingest migration on container start,
+   then served real queries. Reaching for a snapshot older than your last migration is
+   *the* realistic disaster case, and it had never been tested.
+2. **B2-only recovery works.** `photos-20260715` no longer exists on the LXC — 14-day
+   local retention had pruned it. It came back from B2 alone, which is the 90-day
+   off-site tier earning its keep rather than being assumed.
+3. **The WAL step was genuinely exercised.** The drill *plants* stale `-wal`/`-shm` files
+   before restoring, so step 4 has real work to do. A drill on a clean directory passes
+   for the wrong reason and tells you nothing about the hazard.
+
+**For any future drill:** mount `/mnt/photos/library` `:ro` so a throwaway container
+can't mutate the real library. The production mount is read-write by necessity (slide
+rotation, derivative generation), so a drill container is the one place you can and
+should deny that.
 
 ## Notes
 - `data/photos.db` is the live DB (bind-mounted to `/data/photos.db` in the

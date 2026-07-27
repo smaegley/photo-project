@@ -251,10 +251,15 @@ problem being triaged, or if Steve asks.
    **90-day retention**, verified by pulling the object back down and integrity-checking
    it, with Telegram alerting on failure. Direct rather than via the DS418 by Steve's
    call — the NAS shouldn't be another failure point. Full details: `infra/RESTORE.md`.
-   **Still open:** whole-LXC backups aren't off-site yet (container-rebuild speed, not
-   archive meaning); alerting catches "ran and failed" but not "never ran" (needs a
-   dead-man's switch); and **nothing has ever been restore-drilled** — that's the
-   remaining §13 prerequisite, and restoring from B2 is the cheap way to close it.
+   **✅ Restore-drilled 2026-07-27 and PASSED** — both the newest snapshot and a pre-scan
+   one that existed *only* in B2 (local retention had pruned it). Recovery well under a
+   minute; the old-schema path works (a snapshot one migration behind was upgraded on
+   container start, then served 200s). Prod untouched. Re-run:
+   `/usr/local/sbin/restore-drill.sh` on LXC 209. Details + timings in `infra/RESTORE.md`.
+   **Still open:** the whole-container **vzdump restore is undrilled** (needs a spare
+   VMID + storage on NUC2c); whole-LXC backups aren't off-site yet (container-rebuild
+   speed, not archive meaning); and alerting catches "ran and failed" but not "never ran"
+   (needs a dead-man's switch).
 
 5. **Lower severity, all accepted:** frontend builds on the 2 GB prod box during
    `docker compose up --build` (OOM risk mid-deploy); `/api/admin/geocode` can starve
@@ -281,6 +286,14 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   them — prod deploys via `git pull` and would flip every file to `100755` for no
   benefit. Fix is `git config core.filemode false` (that `.git/config` is the VM's,
   shared over SMB — harmless there, since the VM's native filesystem already sees 644).
+- **The api image ignores your command and migrates the DB.** `ENTRYPOINT` is
+  `backend/entrypoint.sh`, which runs `alembic upgrade head` then `exec uvicorn` — and it
+  never references `"$@"`. So `docker run <image> python -c '...'` does **not** run that
+  python: it migrates whatever DB is mounted and starts the server. Anything inspecting a
+  DB (a restored snapshot, a backup) must use the **host** `python3` or
+  `docker run --entrypoint python3`. Cost the Ops agent a drill run on 2026-07-27 — the
+  inspection container silently upgraded the artifact it was measuring. (`docker compose
+  exec api ...` is fine — exec bypasses ENTRYPOINT entirely.)
 - **`cp data/photos.db` is NOT a backup — it silently gives you a stale one.** The DB
   is in WAL mode, so recent commits live in `photos.db-wal` until a checkpoint. A plain
   `cp` of just the main file produced a copy with **1,148 photo rows against a live
