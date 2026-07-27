@@ -1352,9 +1352,18 @@ while the dev servers run**. Prod LXC 209 (2 GB) is out of the question.
   repo's deploy story. *Do not* run it on prod — §5 and §8 both say enrichment never
   touches the serving box, and 2 GB makes it moot anyway.
 
-**D2 — Enrollment source.** (a) DB regions only (1,784, pre-digital), (b) **+ extract
-digital-era regions from the `.lrcat`** (recommended — see §14.3), (c) bootstrap by
-matching against whatever is confirmed and iterating.
+**D2 — Enrollment source. ✅ DECIDED (2026-07-27): (b), extract from the `.lrcat`.**
+P-F1 closed yes — 49,459 digital-era regions are sitting in the catalog, a **28× increase**
+over the DB's 1,784, covering precisely the 2010s/2020s where we had none. No manual
+tagging required.
+
+*Still to settle when the extractor is built:* the catalog names people we have never
+seen (Paul Woods, Paxton Leyman, Mallory Layman…). The never-auto-create rule (§12.6)
+says those go to a review CSV rather than becoming persons — which is right, but at this
+volume the review list will be long, so expect a `people_seed_faces.csv` pass like the
+digital one. And decide whether the face import may **add people tags** or only attach
+**geometry to tags that already exist** — the conservative default is geometry-only,
+since the image-level keyword links already produced 7,168 digital people tags.
 
 **D3 — Detection scope.** All 6,598 photos, or digital-only first? *Recommended:*
 **digital first** — it is the largest set, the most recent, the best-matching era, and
@@ -1420,9 +1429,26 @@ A new admin view, reusing the §10.3 bulk-tag patterns:
    and low-risk technically, but it is not an afternoon.
 
 ### 14.9 Probes to close first
-- **P-F1 — catalog face regions.** Can `read_lrcat` extract per-face bounding boxes for
-  *digital* photos (LR's `AgLibraryFace` tables) the way `import_photos` reads them from
-  scan XMP? This is the highest-value input (§14.3) and decides D2.
+- **P-F1 — catalog face regions — ✅ CLOSED, YES (2026-07-27).** The catalog holds
+  **49,459 named, non-rejected face regions in the PhotoAlbum tree**, every one with a
+  usable bounding box — against **1,784** in our DB. Join is
+  `AgLibraryFace` → `AgLibraryKeywordFace` → `AgLibraryKeyword` (person name) →
+  `Adobe_images` → the same path/`b2_key_for()` derivation `read_lrcat --digital`
+  already uses, so RAW-vs-JPG naming is already handled (faces sit on the `.CR2`; our
+  key is the `.JPG` twin).
+
+  **Coordinates are normalized 0..1 corners** (`tl_x,tl_y,br_x,br_y`) plus a small
+  `orientation` tilt in radians. Our `photo_person` stores normalized **centre + size**,
+  so the conversion is `cx=(tl_x+br_x)/2, cy=(tl_y+br_y)/2, w=br_x-tl_x, h=br_y-tl_y`.
+
+  **It fills exactly the gap §14.3 identified.** Digital-tree faces by decade:
+  1990s 448 · 2000s 25,578 · **2010s 15,393 · 2020s 6,973**. Our DB has **zero** after
+  2009. Top people: Kate 16,061, Ryan 10,381, Cori 4,128, Steve 3,833 — the same people
+  whose enrollment currently stops when they were children.
+
+  **Consequence: Steve does not need to tag more years.** He offered to; the references
+  already exist in the catalog and just have not been extracted. That was the single
+  biggest risk to §14 and it is now a data-plumbing task rather than months of manual work.
 - **P-F2 — throughput and RAM on VM 201.** Time detection+embedding over ~200 photos and
   watch peak RSS, with the dev servers stopped. Decides D1 and whether batching needs
   tuning.
