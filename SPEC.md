@@ -1205,13 +1205,22 @@ must handle both.
    reporting only (the event vocabulary is still consulted first). And "Google Upload"
    (449) / "Photo Stream" (92) are Lightroom sync plumbing, not events → `DIGITAL_NOISE`.
 
-   *Pre-import review, still open:* the 50 remaining unmatched keywords include a
-   cluster of **professional-photographer SEO terms** ("denver family photographer",
-   "holiday card photos", …) that are noise, and several that are really **places**
-   (Vail, Oregon, San Diego Zoo, Red Rocks) rather than events — the gazetteer/pin-editor
-   path suits those better. 671 GPS points found no gazetteer place within 25 km
-   (largely Colorado, which the slide-era gazetteer doesn't cover); per §13.9 those are
-   added via the pin editor and picked up on a re-run.
+   *Keyword review — ✅ DONE (Steve, 2026-07-27).* 32 marked add / 18 ignore →
+   `seed_events` created 31 events → re-import attached **525 event tags** (Christmas
+   173, Easter 120, Birthday 93, Halloween 80, Vail 65, Zoo 55…). Unmatched fell 50 → 18,
+   which is exactly the ignore list and is expected to reappear every run —
+   `events_seed_digital.csv` is the durable record, not the report.
+
+   *Places — DEFERRED (Steve, 2026-07-27): "not important yet, I'll look them up later."*
+   671 digital photos carry GPS with no gazetteer place within 25 km (largely Colorado,
+   which the slide-era gazetteer never covered). The analysis is done and parked in
+   **`data/review/places_seed_digital.csv`**: the points cluster into just **26 distinct
+   locations** at 15 km, sorted by size, with blank `name`/`region` to fill in — **the
+   top 9 cover 91%** of them (the largest, 421 photos at 39.99889/-105.09500, looks like
+   home). Per §13.9 places are added via the admin pin editor and picked up on a re-run;
+   if that CSV gets filled in instead, a `seed_places` mirroring `seed_people`/
+   `seed_events` would be the consistent way to consume it. Nothing else blocks on this —
+   the photos are imported and browsable, just not mapped.
 
    ~~Digital importer~~ — consume the sidecar → `origin='digital'`,
    `storage_backend='b2'`, `storage_path=<resolved B2 key>`; resolve people/events
