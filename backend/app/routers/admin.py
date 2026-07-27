@@ -21,6 +21,7 @@ from app.auth import require_admin, require_contributor
 from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
+from app.import_photos import _km  # same proximity rule the importer uses (SPEC §12.6)
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
@@ -324,6 +325,77 @@ def _next_place_id(db: Session) -> str:
 def _place_record(pl: m.Place) -> dict:
     return {"id": pl.id, "name": pl.canonical_name, "region": pl.region,
             "precision": pl.precision, "lat": pl.lat, "lon": pl.lon}
+
+
+@router.get("/unresolved-locations")
+def unresolved_locations(radius_km: float = 15.0, db: Session = Depends(get_db),
+                         user: m.User = Depends(require_admin)):
+    """Photos that carry GPS but resolved to no gazetteer place, grouped into clusters.
+
+    The gazetteer is curated — the importers never auto-create places (SPEC §3.4/§13.9),
+    so a photo taken somewhere Steve has not named yet keeps its coordinates and no
+    `place_id`. Raw, that is hundreds of points; clustered it is a short, nameable list
+    (671 digital photos collapse to 26 locations at 15 km).
+
+    Greedy single-pass clustering, seeded by the densest points because rows come back
+    ordered by count — good enough for "which places do I still need to name", and it
+    avoids pulling a clustering dependency in for a few hundred points.
+    """
+    rows = (db.query(m.Photo.id, m.Photo.lat, m.Photo.lon, m.Photo.source_file,
+                     m.Photo.date_start)
+            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None))
+            .all())
+    clusters: list[dict] = []
+    for pid, lat, lon, src, dt in rows:
+        for c in clusters:
+            if _km(lat, lon, c["lat"], c["lon"]) < radius_km:
+                c["count"] += 1
+                c["photo_ids"].append(pid)
+                if dt and (c["first"] is None or dt < c["first"]):
+                    c["first"] = dt
+                if dt and (c["last"] is None or dt > c["last"]):
+                    c["last"] = dt
+                break
+        else:
+            clusters.append({"lat": lat, "lon": lon, "count": 1, "photo_ids": [pid],
+                             "sample_source_file": src, "first": dt, "last": dt})
+    clusters.sort(key=lambda c: -c["count"])
+    return [{"lat": round(c["lat"], 5), "lon": round(c["lon"], 5), "count": c["count"],
+             "sample_source_file": c["sample_source_file"],
+             "sample_photo_id": c["photo_ids"][0],
+             "first_year": c["first"].year if c["first"] else None,
+             "last_year": c["last"].year if c["last"] else None}
+            for c in clusters]
+
+
+@router.post("/places/{place_id}/claim-nearby")
+def claim_nearby(place_id: str, radius_km: float = 15.0, db: Session = Depends(get_db),
+                 user: m.User = Depends(require_admin)):
+    """Attach every unplaced GPS photo within `radius_km` of this place to it.
+
+    Saves re-running the whole importer just to pick up a place named a moment ago.
+
+    **Default is the CLUSTER radius (15 km), not the importer's 25 km match radius.**
+    Deliberate: the admin names a cluster it can see on the map, so the claim must match
+    what was shown. At 25 km, naming the 421-photo Broomfield cluster also swallowed the
+    separate 12-photo Boulder cluster 15.4 km away — surprising, and it silently denies
+    Boulder its own name. Callers wanting the importer's wider behaviour pass
+    `radius_km=25`. Undoable as one contribution."""
+    pl = db.get(m.Place, place_id)
+    if pl is None:
+        raise HTTPException(404, "place not found")
+    if pl.lat is None or pl.lon is None:
+        raise HTTPException(400, "place has no coordinates")
+    rows = (db.query(m.Photo)
+            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None)).all())
+    claimed = [p for p in rows if _km(p.lat, p.lon, pl.lat, pl.lon) < radius_km]
+    for p in claimed:
+        p.place_id = pl.id
+    if claimed:
+        _log(db, user, "place:claim-nearby", None, f"{len(claimed)} photos -> {pl.canonical_name}",
+             inverse={"op": "place_unclaim", "photo_ids": [p.id for p in claimed]})
+    db.commit()
+    return {"claimed": len(claimed), "place": pl.canonical_name}
 
 
 @router.post("/places", response_model=PlaceOut)
@@ -720,6 +792,11 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         pp = db.get(m.PhotoPerson, (inv["photo_id"], inv["person_id"]))
         if pp:
             pp.region_x, pp.region_y, pp.region_w, pp.region_h = inv["prior"]["region"]
+    elif op == "place_unclaim":
+        for pid in inv["photo_ids"]:
+            p = db.get(m.Photo, pid)
+            if p:
+                p.place_id = None
     else:
         raise HTTPException(400, f"don't know how to undo: {op}")
 

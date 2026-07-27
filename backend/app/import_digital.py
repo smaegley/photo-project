@@ -263,9 +263,11 @@ def run(sidecar: Path, dry_run: bool = False, prune: bool = False,
                 photo.date_precision, photo.date_raw = prec, raw
             photo.sort_date = photo.date_start  # materialized sort key (§12.5)
 
+            gps = parse_gps(r.get("gps", ""))
+            if gps:                      # keep the coordinates regardless of resolution
+                photo.lat, photo.lon = gps
             if not photo.place_id:
-                pid, note = resolve_place({}, parse_gps(r.get("gps", "")),
-                                          place_names, place_geo)
+                pid, note = resolve_place({}, gps, place_names, place_geo)
                 if pid:
                     photo.place_id = pid
                     n_placed += 1

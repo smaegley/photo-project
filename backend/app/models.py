@@ -124,6 +124,10 @@ class Photo(Base):
     back_path: Mapped[str | None] = mapped_column(String, nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # The photo's OWN coordinates, kept even when they resolve to no gazetteer place —
+    # that is what lets the admin map show "locations I haven't named yet" (SPEC §13.9).
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject

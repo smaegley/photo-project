@@ -517,3 +517,27 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 
 /* selection hint in the admin bar */
 .admin-hint { font-size: 12px; color: var(--muted); }
+
+/* ---- Unnamed locations admin (SPEC §3.4 / §13.9) ---------------------------- */
+.modal.wide { max-width: 1100px; width: 94vw; }
+.unplaced-body { display: grid; grid-template-columns: 1fr 380px; gap: 14px; min-height: 460px; }
+@media (max-width: 900px) { .unplaced-body { grid-template-columns: 1fr; } }
+.unplaced-map { min-height: 460px; border-radius: 8px; overflow: hidden; border: 1px solid var(--line, #ddd); }
+.unplaced-list { list-style: none; margin: 0; padding: 0; max-height: 62vh; overflow-y: auto; }
+.unplaced-list > li { padding: 10px 12px; border-bottom: 1px solid var(--line, #eee); border-radius: 6px; }
+.unplaced-list > li.active { background: color-mix(in srgb, currentColor 6%, transparent); }
+.unplaced-meta { display: flex; align-items: baseline; gap: 6px; }
+.unplaced-meta .link { margin-left: auto; }
+.unplaced-list .coords { font-size: 11px; font-variant-numeric: tabular-nums; margin: 2px 0 6px; }
+.unplaced-form { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; }
+.unplaced-list .ok { color: var(--ok, #2a7); font-size: 13px; }
+
+/* Count bubbles: sized by photo count, so the big clusters read at a glance. */
+.unplaced-pin {
+  border-radius: 50%; border: 2px solid #fff; cursor: pointer;
+  background: #3b82f6; color: #fff; font-size: 11px; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4); padding: 0;
+}
+.unplaced-pin.active { background: #f59e0b; z-index: 2; }
+.unplaced-pin.placed { background: #22c55e; opacity: .65; }

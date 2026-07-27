@@ -12,6 +12,7 @@ import AdminBar from "./components/AdminBar";
 import EventsAdmin from "./components/EventsAdmin";
 import PeopleAdmin from "./components/PeopleAdmin";
 import PlacesAdmin from "./components/PlacesAdmin";
+import UnplacedAdmin from "./components/UnplacedAdmin";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
 
@@ -74,6 +75,7 @@ export default function App() {
   const [showEvents, setShowEvents] = useState(false);
   const [showPeople, setShowPeople] = useState(false);
   const [showPlaces, setShowPlaces] = useState(false);
+  const [showUnplaced, setShowUnplaced] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -304,6 +306,7 @@ export default function App() {
         onManageEvents={() => setShowEvents(true)}
         onManagePeople={() => setShowPeople(true)}
         onManagePlaces={() => setShowPlaces(true)}
+        onNameLocations={() => setShowUnplaced(true)}
         onManageUsers={() => setShowUsers(true)}
         onShowUsage={() => setShowUsage(true)}
         undoInfo={undoInfo}
@@ -436,6 +439,13 @@ export default function App() {
         <PlacesAdmin
           places={allPlaces}
           onClose={() => setShowPlaces(false)}
+          onChanged={refresh}
+        />
+      )}
+
+      {showUnplaced && (
+        <UnplacedAdmin
+          onClose={() => setShowUnplaced(false)}
           onChanged={refresh}
         />
       )}

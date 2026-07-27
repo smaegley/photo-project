@@ -69,6 +69,12 @@ export const api = {
   updatePlace: (id, body) => send("PATCH", `/api/admin/places/${id}`, body),
   mergePlace: (id, intoId) => send("POST", `/api/admin/places/${id}/merge`, { into_id: intoId }),
   deletePlace: (id) => send("DELETE", `/api/admin/places/${id}`),
+  // Photos with GPS but no named place, clustered server-side (SPEC §3.4 / §13.9).
+  unresolvedLocations: () => get("/api/admin/unresolved-locations"),
+  // radius defaults to the cluster radius so a claim matches the pin you named;
+  // widen it only if you want the importer's 25km proximity behaviour.
+  claimNearby: (id, radiusKm = 15) =>
+    send("POST", `/api/admin/places/${id}/claim-nearby?radius_km=${radiusKm}`, {}),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
