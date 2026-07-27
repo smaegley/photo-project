@@ -1237,10 +1237,22 @@ must handle both.
    **875 `.cr2/.orf/.cr3` resolve via UPPERCASE `.JPG`**); HEIC-origin (131) has no JPG
    twin → use the `.HEIC` key (decode in slice 5); ~25 `.nef/.dng/.tif/.psd` are RAW-only
    → review. Store the resolved `file_version` (ETag) at import so serving never HEADs.
-5. **Prewarm from B2** (§13.7): fetch each master once → thumb+display derivatives +
-   EXIF from the same bytes → cache locally, record `file_version`, discard master.
-   **Add `pillow-heif`** so the 131 iPhone HEICs decode (recent family photos worth
-   keeping); JPGs/CR2-JPGs decode with plain Pillow.
+5. **Prewarm from B2 — ✅ BUILT & RUN (2026-07-27).** `prewarm_b2()`: one GET per photo,
+   both derivatives from the same in-memory bytes, `width`/`height` filled while decoded,
+   master discarded. **All 4,680/4,680 digital photos now have thumbnails + display
+   derivatives** (191 MB + 4.3 GB local cache). `pillow-heif` pinned to **0.21.0
+   deliberately** — ≥1.0 requires Pillow ≥12, and that bump would change JPEG/resampling
+   for every slide and scan derivative too.
+
+   *Two operational findings:* (a) the first run died at 1,900 photos on B2's **default
+   1 GB/day free-tier cap**, not a code fault — Steve raised it to $25 (~2,500 GB) and the
+   rerun completed clean; see the corrected egress numbers in §13.7. (b) One master
+   (`Photo Album/2004/December/2004-12-12-006.JPG`) is **truncated in B2 itself** — the
+   download matched the object's own ContentLength, so the stored file is short 48 bytes.
+   Prewarm now decodes strictly first and only falls back to `LOAD_TRUNCATED_IMAGES` on a
+   truncation error, **salvaging the photo while reporting it**, so archive damage
+   surfaces instead of silently becoming a slightly-wrong thumbnail. Worth checking that
+   file at the source (Mac/NAS) — the sync may have faithfully copied a bad original.
 6. **Frontend — ✅ BUILT (2026-07-27).** Fourth view **"Digital Photos"** added as a
    hard origin scope; the §12.8 mechanic generalized to a `VIEW_ORIGIN` map rather than
    another `view === "scans"` branch, so a fifth origin would be one line. Lightbox badge

@@ -107,9 +107,33 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
     unknowable for a digital row without another B2 round trip.
     """
     import io
-    from PIL import Image
+    from PIL import Image, ImageFile
     from app.database import SessionLocal
     from app import models as m, storage
+
+    def _decode(buf):
+        """Open an image, tolerating a truncated file but never hiding it.
+
+        Strict first: a clean file decodes normally. Only on a truncation error do we
+        retry with `LOAD_TRUNCATED_IMAGES`, which recovers everything up to the damage
+        (a JPEG missing its last bytes loses at most a sliver of the bottom edge). The
+        photo is salvaged *and* reported, so a corrupt master in the archive surfaces
+        instead of silently becoming a slightly-wrong thumbnail. Seen once in the
+        2026-07-27 run: a B2 object short 48 bytes — the stored file, not the transfer.
+        """
+        try:
+            im = Image.open(buf); im.load()
+            return im, False
+        except OSError as e:
+            if "truncated" not in str(e).lower():
+                raise
+            ImageFile.LOAD_TRUNCATED_IMAGES = True
+            try:
+                buf.seek(0)
+                im = Image.open(buf); im.load()
+                return im, True
+            finally:
+                ImageFile.LOAD_TRUNCATED_IMAGES = False
 
     kinds = [
         (settings.thumbnails_dir, derivatives.THUMB_MAX),
@@ -127,7 +151,8 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
         print("no b2-backed photos — nothing to fetch")
         return 0, 0, 0
 
-    fetched = skipped = errors = 0
+    fetched = skipped = errors = salvaged = 0
+    truncated: list[str] = []
     dims: dict[int, tuple[int, int]] = {}
     t0 = time.time()
     for i, (pid, source_file, storage_path, file_version, width) in enumerate(rows, 1):
@@ -141,8 +166,12 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
                                "file_version": file_version})()
         try:
             buf = storage.open_master(photo)          # the single B2 read
-            with Image.open(buf) as im:
-                im.load()
+            im, was_truncated = _decode(buf)
+            if was_truncated:
+                salvaged += 1
+                truncated.append(storage_path)
+                print(f"  ~ salvaged truncated master: {storage_path}", file=sys.stderr)
+            with im:
                 if not width:
                     dims[pid] = im.size
                 for cache, max_edge in targets:
@@ -171,6 +200,11 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
 
     print(f"b2 prewarm: {fetched} fetched+derived, {skipped} already cached, "
           f"{errors} errors in {time.time()-t0:.1f}s  ({len(dims)} dimensions filled)")
+    if truncated:
+        print(f"  ⚠ {salvaged} master(s) truncated in B2 — derived anyway, but the stored "
+              f"object is damaged and worth checking at the source:")
+        for k in truncated[:10]:
+            print(f"      {k}")
     if errors and not HEIF_OK:
         print("  NOTE: pillow-heif is not installed — .HEIC masters cannot decode.",
               file=sys.stderr)
