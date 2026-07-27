@@ -9,7 +9,7 @@ should tell you where to look and what's already known, so you don't re-derive i
 What lives *only* here: current deployment state, known-and-accepted issues, and the
 gotchas that burn time.
 
-**Last reviewed:** 2026-07-14 (full project + prod-setup review; image pool fix §10.16).
+**Last reviewed:** 2026-07-27 (§13 digital shipped to prod; §14 face matching slices 1–3 built).
 
 ---
 
@@ -32,9 +32,10 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | **§13 digital build in flight** — slices 1–3 done (2026-07-27) |
-| Pushed to origin | see `git log`; §13 work is **committed but NOT deployed** (by design) |
-| Deployed to prod | `82166b3` — 2026-07-25, Slide Photos header shows slide count (grid=all slides, roll detail=that roll) not the mixed grand total |
+| Repo HEAD (dev) | `e2f0e1f` — §14 face matching, slices 1–3 built (2026-07-27) |
+| Pushed to origin | yes — dev and `origin/main` in sync |
+| Deployed to prod | **`16bbd26`** — 2026-07-27: all of §13 digital + the unnamed-locations admin |
+| Dev-only, NOT on prod | §14 face tables + 14,245 detected faces + 9,177 imported face regions (by design, §14.8a) |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
@@ -59,24 +60,35 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > rows + `deirdre_carlile`, the 933 MB `Lightroom Database-v13-3.lrcat` in
 > `/mnt/photos/lrcat-drop/`, and a dev backend on :8077.
 
-> **🔨 §13 B2-BACKED DIGITAL PHOTOS — BUILD IN FLIGHT (not deployed).** Prod still runs
-> `82166b3`; everything below is dev-only. Plan + slice status: **SPEC §13.14**.
-> - **Slices 1–3 done:** migration `b8c9d0e1f2a3` (`photo.storage_backend`,
->   `photo.file_version`), `app/storage.py` (local + B2 read-only via boto3), the
->   catalog digital reader (`read_lrcat --digital` → `data/review/digital_sidecar.csv`,
->   4,704 selected / 65 people). Slice 1's caller integration landed 2026-07-27: the
->   per-photo master `.stat()` during serialization is gone, `?v=` comes from
->   `file_version`, and `prewarm` stamps it.
-> - **Next:** slice 4 (digital importer), slice 5 (prewarm from B2, needs `pillow-heif`),
->   slice 6 (frontend Digital Photos view + download → display derivative).
-> - **HARD prerequisite before go-live (§13.14):** backup hardening — known issues
->   **#2** (snapshot-verify no-op) and **#4** (untested off-box coverage) below. B2-as-master
->   makes the DB the only bucket-key→meaning map; losing it unbacked leaves opaque objects.
-> - **`file_version` is stamped by `python -m app.prewarm`.** After deploying §13 to prod,
->   run prewarm or rows keep falling back to a one-time stat until it runs (self-healing,
->   not breaking).
-> - **Dev DB carries 1,910 stamped rows**; the 8 unstamped are the pre-existing dead probe
->   rows whose files are gone.
+> **✅ §13 DIGITAL PHOTOS — SHIPPED TO PROD (2026-07-27).** All six slices built and
+> deployed. Prod holds **6,590 photos** (1,140 slides + 770 scans + **4,680 digital**),
+> spanning 1999–2026. Digital masters live in **Backblaze B2**; the app serves locally
+> cached derivatives and never touches B2 while browsing. Four view tabs
+> (All / Slide / Scanned / Digital). Full design + build log: **SPEC §13**.
+>
+> **🔨 §14 FACE MATCHING — IN BUILD, DEV ONLY.** Design + all four probes closed in
+> SPEC §14. **Slices 1–3 done:** schema (`face`, `face_suggestion`, `face_cluster`),
+> face-region import from the LR catalog (**9,177 regions**, up from 1,784), and a full
+> detection pass (**14,245 faces**, 6,598 photos, 81.7 min).
+> **Next: the dev→prod export path, then slice 4 matching, then the by-person UI.**
+>
+> Key decisions already made — don't re-litigate:
+> - **Enrichment runs on dev and EXPORTS to prod** (§14.8a). Prod never runs detection;
+>   it receives confirmed `photo_person` tags. Export keys on **`source_file`**, never
+>   `photo.id` — row ids differ per database.
+> - **Match threshold 0.45** (P-F3, measured). Below it, faces go to unknown-clusters.
+> - **Suggest, never auto-apply.** ~4.6% of strangers still clear 0.45.
+> - Steve confirms **by person**; unknown faces cluster so background strangers are
+>   dismissed in bulk (§14.7a).
+>
+> **⚠ A dev DB refresh (`scripts/load-prod-snapshot.sh`) destroys the §14 work** — 14,245
+> faces is ~82 min of CPU to rebuild, plus `import_faces` (~1 min) and `import_digital`
+> (~4 min). Build/keep the export path before refreshing dev.
+>
+> **Open, non-blocking:** 26 unnamed GPS locations (Steve naming them on prod);
+> `import_digital` HEADs all 4,704 keys every run (fix before the weekly sync becomes
+> routine); derivative-cache split off the backed-up library mount (~4.5 GB, deferred to
+> the §14 deploy).
 
 Re-confirm prod's actual HEAD any time it matters — it's one command, and this table
 is only as good as its last update:
