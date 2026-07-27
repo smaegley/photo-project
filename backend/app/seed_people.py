@@ -11,6 +11,10 @@ CSV contract (from `read_lrcat` / `extract_people`, reviewed by Steve):
   - `resolves == no`, `is_family` in {Y,N,Pet} -> CREATE a person + alias.
         Y = family; N = friend/non-family; Pet = non-family + `notes='pet'` (a
         durable marker for a future Pets grouping — behaves as non-family for now).
+  - `is_family == ignore`                      -> deliberately skipped, counted
+        separately. Use this for catalog names you do not want in the archive at all;
+        the face import then leaves their regions untagged rather than reporting them
+        as unresolved on every run.
   - `resolves == no` with neither set          -> REFUSED (reported, nothing written)
         so no one is seeded half-specified.
 
@@ -49,7 +53,7 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
         existing_alias = {(a.person_id, metadata.norm_text(a.alias))
                           for a in db.query(m.PersonAlias).all()}
 
-        n_created = n_aliased = n_updated = n_skipped = n_refused = 0
+        n_created = n_aliased = n_updated = n_skipped = n_refused = n_ignored = 0
         refused = []
         with open(csv_path, newline="") as fh:
             for r in csv.DictReader(fh):
@@ -59,6 +63,11 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
                 norm = metadata.norm_text(name)
                 target = (r.get("resolved_person_id") or "").strip()
                 fam = (r.get("is_family") or "").strip().lower()
+
+                # Explicit opt-out: a name Steve does not want in the archive.
+                if fam == "ignore":
+                    n_ignored += 1
+                    continue
 
                 # resolves=yes -> a pre-existing real person; never touch it.
                 if (r.get("resolves") or "").strip().lower() == "yes":
@@ -117,6 +126,7 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
     print(f"updated : {n_updated} (is_family/notes synced)")
     print(f"aliased : {n_aliased}")
     print(f"skipped : {n_skipped} (pre-existing, untouched)")
+    print(f"ignored : {n_ignored} (marked ignore — deliberately not created)")
     print(f"refused : {n_refused}")
     for name, why in refused:
         print(f"   ! {name}: {why}")

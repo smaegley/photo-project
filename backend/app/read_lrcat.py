@@ -271,10 +271,80 @@ def run_digital(lrcat: Path) -> None:
     print(f"         {REVIEW_DIR / 'people_seed_digital.csv'}")
 
 
+def run_faces(lrcat: Path) -> None:
+    """Emit per-face bounding boxes for the digital tree (SPEC §14, probe P-F1).
+
+    `run_digital` reads *image-level* keyword links, which say who is in a photo but not
+    where. Lightroom also stores the face geometry, and there is far more of it than we
+    have ever imported: 49,459 named regions in the PhotoAlbum tree vs 1,784 in the DB,
+    covering the 2010s/2020s where our enrollment is empty. That geometry is what a face
+    matcher trains on (§14.3), so this pulls it out.
+
+    Emits `faces_digital.csv` (one row per face) + `people_seed_faces.csv` for review —
+    the catalog names many people the archive has never heard of, and the never-
+    auto-create rule (§12.6) means they need a decision before any tag is written.
+    """
+    con = sqlite3.connect(f"file:{lrcat}?mode=ro&immutable=1", uri=True)
+    rows = con.execute(
+        "SELECT k.name, fa.tl_x, fa.tl_y, fa.br_x, fa.br_y, "
+        "  rf.absolutePath||fo.pathFromRoot||f.baseName||'.'||f.extension "
+        "FROM AgLibraryFace fa "
+        "JOIN AgLibraryKeywordFace kf ON kf.face=fa.id_local "
+        "JOIN AgLibraryKeyword k ON k.id_local=kf.tag "
+        "JOIN Adobe_images i ON i.id_local=fa.image "
+        "JOIN AgLibraryFile f ON f.id_local=i.rootFile "
+        "JOIN AgLibraryFolder fo ON fo.id_local=f.folder "
+        "JOIN AgLibraryRootFolder rf ON rf.id_local=fo.rootFolder "
+        "WHERE (rf.absolutePath||fo.pathFromRoot) LIKE ? "
+        "  AND kf.userReject IS NOT 1 "
+        "  AND fa.tl_x IS NOT NULL AND fa.br_x IS NOT NULL",
+        (f"%{PHOTOALBUM_MARKER}%",)).fetchall()
+    con.close()
+
+    out = REVIEW_DIR / "faces_digital.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    counts, sample = Counter(), {}
+    n = skipped = 0
+    with open(out, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["b2_key", "person", "cx", "cy", "w", "h"])
+        for name, tlx, tly, brx, bry, full in rows:
+            key = b2_key_for(full)
+            if not key:
+                skipped += 1
+                continue
+            # LR stores normalized 0..1 corners; photo_person stores centre + size.
+            cx, cy = (tlx + brx) / 2, (tly + bry) / 2
+            bw, bh = abs(brx - tlx), abs(bry - tly)
+            if bw <= 0 or bh <= 0:
+                skipped += 1
+                continue
+            w.writerow([key, name, f"{cx:.5f}", f"{cy:.5f}", f"{bw:.5f}", f"{bh:.5f}"])
+            counts[name] += 1
+            sample.setdefault(name, key)
+            n += 1
+    n_new = _write_seed(counts, sample, REVIEW_DIR / "people_seed_faces.csv")
+
+    print(f"faces  : {n} regions across {len({r[5] for r in rows})} catalog images")
+    print(f"  people: {len(counts)} distinct ({n_new} new — review before importing)")
+    if skipped:
+        print(f"  skipped {skipped} (outside the PhotoAlbum tree or a degenerate box)")
+    print(f"wrote  : {out}")
+    print(f"         {REVIEW_DIR / 'people_seed_faces.csv'}")
+    print("\nNext: review people_seed_faces.csv (mark is_family Y/N/Pet, or 'ignore'),")
+    print("      then: python -m app.seed_people --csv people_seed_faces.csv")
+    print("            python -m app.import_faces")
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Read people/events from the LR catalog (SPEC §11.6/§13.14)")
     ap.add_argument("--lrcat", type=Path, default=Path(DEFAULT_LRCAT))
     ap.add_argument("--digital", action="store_true",
                     help="emit the B2-backed origin=digital sidecar (people-rule) instead of scans")
+    ap.add_argument("--faces", action="store_true",
+                    help="emit per-face bounding boxes for the digital tree (SPEC §14)")
     args = ap.parse_args()
-    (run_digital if args.digital else run)(args.lrcat)
+    if args.faces:
+        run_faces(args.lrcat)
+    else:
+        (run_digital if args.digital else run)(args.lrcat)

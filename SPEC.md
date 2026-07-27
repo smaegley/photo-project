@@ -1314,7 +1314,23 @@ enabler.**
    ordinary CPUs. **Never a cloud face API**: family faces don't leave the house. That
    is a privacy decision, and it is also simply unnecessary here.
 
-### 14.3 Enrollment audit — what we actually have (measured 2026-07-27)
+### 14.3 Enrollment audit — ✅ GAP CLOSED (2026-07-27)
+
+> **Resolved the same day it was found.** `read_lrcat --faces` + `import_faces` pulled the
+> catalog's geometry in, taking enrollment from **1,784 regions / 82 people** to
+> **9,173 regions / 109 people** — and, critically, from **zero references after 2009** to
+> 2,092 in the 2010s and 948 in the 2020s. Per-person the change is decisive:
+> Kate 204 → **2,374** (now 1990s–2020s), Ryan 107 → **2,307**, Steve 339 → **1,050**
+> spanning *all seven decades*, Cori 0 → **646**. Steve did not have to tag anything.
+>
+> Import behaviour: **adds people tags, not just geometry** (Steve, 2026-07-27) — 240 new
+> tags plus 7,149 regions backfilled onto tags that already existed. One region per
+> (photo, person), largest box wins. Names resolving to nobody are reported, never
+> auto-created; `ignore` in `people_seed_faces.csv` is the opt-out.
+>
+> The original audit below is kept because it is why this mattered.
+
+#### Original audit (what prompted it)
 The reference set is **not** the same as the tag count, and the gap matters:
 
 | | |
