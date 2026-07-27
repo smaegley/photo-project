@@ -55,6 +55,8 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
 
         n_created = n_aliased = n_updated = n_skipped = n_refused = n_ignored = 0
         refused = []
+        created_names: list[str] = []
+        aliased_names: list[str] = []
         with open(csv_path, newline="") as fh:
             for r in csv.DictReader(fh):
                 name = (r["lr_name"] or "").strip()
@@ -84,6 +86,7 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
                         continue
                     if not dry_run:
                         db.add(m.PersonAlias(person_id=target, alias=name))
+                    aliased_names.append(f"{name} -> {target}")
                     existing_alias.add((target, norm))
                     idx.setdefault(norm, set()).add(target)
                     n_aliased += 1
@@ -113,6 +116,7 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
                     db.add(m.PersonAlias(person_id=slug, alias=name))
                 existing_alias.add((slug, norm))
                 idx.setdefault(norm, set()).add(slug)
+                created_names.append(f"{name} ({'family' if new_family else new_notes or 'friend'})")
                 n_created += 1
 
         if not dry_run:
@@ -130,6 +134,14 @@ def run(csv_path: Path, dry_run: bool = False) -> None:
     print(f"refused : {n_refused}")
     for name, why in refused:
         print(f"   ! {name}: {why}")
+    # Always name who was created. `read_lrcat` pre-fills is_family="N" for unknown
+    # names, so a row can arrive pre-approved and be created without anyone deciding —
+    # on 2026-07-27 that silently made 7 people, including a typo ("ry" for Ryan).
+    # A bare count hid it; a list makes it obvious, in dry-run as well as for real.
+    if created_names:
+        print("\ncreated people: " + ", ".join(sorted(created_names)))
+    if aliased_names:
+        print("aliased: " + ", ".join(sorted(aliased_names)))
 
 
 if __name__ == "__main__":

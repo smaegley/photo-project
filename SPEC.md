@@ -1476,6 +1476,27 @@ the queue surfaces will be faces with no name at all.
 5. **This is the largest single feature discussed for this project.** It is well-trodden
    and low-risk technically, but it is not an afternoon.
 
+### 14.8a Where enrichment runs, and how it reaches prod (DECIDED 2026-07-27)
+§5 said enrichment "writes to the same DB" — written before dev and prod had **separate
+databases**. They do, so this needed settling before the schema was fixed.
+
+**Steve's call: run the batch on dev (VM 201), export the results, import them on prod.**
+Rejected alternatives: running on prod (642 MB and ~56 min of CPU on a 2 GB serving box,
+which §5/§8 both forbid) and running it twice (the two would drift apart).
+
+This is the same shape as everything else here — sidecar and seed CSVs already travel
+out-of-band because `data/` is gitignored — and it has one **schema consequence that is
+cheap now and expensive later**:
+
+> **Face rows must key on a PORTABLE identity — the B2 object key / `source_file` — never
+> a local `photo.id`.** Row ids are assigned per-database and do not agree between dev
+> and prod, so an export keyed on them would silently attach faces to the wrong photos.
+> Everything the importers already ship keys on `source_file` for exactly this reason.
+
+Practically: `face`/`face_suggestion`/`face_cluster` carry `photo.id` internally for join
+performance, but the **export/import format is keyed on `source_file`**, resolved on
+arrival. Same rule as `faces_digital.csv` (§14.3), which already keys on `b2_key`.
+
 ### 14.9 Probes to close first
 - **P-F1 — catalog face regions — ✅ CLOSED, YES (2026-07-27).** The catalog holds
   **49,459 named, non-rejected face regions in the PhotoAlbum tree**, every one with a
