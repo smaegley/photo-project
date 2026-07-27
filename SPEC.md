@@ -1465,15 +1465,26 @@ A new admin view, reusing the §10.3 bulk-tag patterns:
   **Consequence: Steve does not need to tag more years.** He offered to; the references
   already exist in the catalog and just have not been extracted. That was the single
   biggest risk to §14 and it is now a data-plumbing task rather than months of manual work.
-- **P-F2 — throughput and RAM on VM 201.** Time detection+embedding over ~200 photos and
-  watch peak RSS, with the dev servers stopped. Decides D1 and whether batching needs
-  tuning.
+- **P-F2 — throughput and RAM — ✅ CLOSED (2026-07-27). Comfortable.** `buffalo_l`
+  (SCRFD + ArcFace R100) on ONNX Runtime CPU, one session, `OMP_NUM_THREADS=4`, over 200
+  real display derivatives: **peak RSS 642 MB**, model load 8.7 s, **1.98 photos/s** →
+  a full 6,598-photo pass in **~56 min**. That is well under the 1.0–1.5 GB estimated in
+  §14.5 — it would have fitted in the *old* 3.8 GB box, let alone the current 9.5 GB.
+  **D1 resolved: run it here, as an offline batch.** No GPU, no second machine.
+  Note the 00:15 vzdump on VM 201 is `snapshot` mode, so a long batch may span it safely.
 - **P-F3 — accuracy against held-out truth.** Hold out ~20% of confirmed faces, match the
   rest, and measure precision/recall per era (slide / scan / digital) — this turns §14.8's
   aging caveat from a claim into a number, and sets D4's threshold.
-- **P-F4 — HEIC/RAW coverage.** Detection runs on the *display derivative*, not the
-  master (already local, already sized, no second B2 fetch) — confirm 2560px is enough
-  resolution for reliable small-face detection in group shots.
+- **P-F4 — display-derivative resolution — ✅ CLOSED (2026-07-27). 100% recall.**
+  Detection on the local 2560px derivative re-found **502 of 502** known catalog regions
+  at IoU>0.3, sampled deliberately from the **60 most crowded photos** (the hardest case
+  for small faces). It also found **617** faces against 502 labeled — roughly **23% more
+  faces than Lightroom names**, which is extra matching material, not error.
+  **So the pipeline never needs to re-fetch a master from B2**: derivatives are already
+  local, already sized, and sufficient.
+
+  This doubles as validation of the §14.3 coordinate conversion — LR's normalized corners
+  → our centre+size — since a wrong conversion would have scored near zero, not 100%.
 
 ### 14.10 Build order (slices)
 1. **P-F1–F4 probes** — close the enrollment source, the box it runs on, and the threshold.
