@@ -35,6 +35,23 @@ from app.database import SessionLocal
 from app.import_photos import REVIEW_DIR, build_people_index
 
 DEFAULT_FACES = "faces_digital.csv"
+DEFAULT_SEED = "people_seed_faces.csv"
+
+
+def ignored_names(seed_csv: Path) -> set[str]:
+    """Names marked `ignore` in the reviewed seed CSV.
+
+    Without this, an ignored name resolves to no person and so reappears in the
+    unresolved report on *every* run — which makes "ignore" mean "keep nagging me".
+    Reading the same file `seed_people` reads keeps one source of truth for the decision.
+    """
+    path = seed_csv if seed_csv.is_absolute() else REVIEW_DIR / seed_csv.name
+    if not path.exists():
+        return set()
+    with open(path, newline="") as fh:
+        return {metadata.norm_text(r["lr_name"])
+                for r in csv.DictReader(fh)
+                if (r.get("is_family") or "").strip().lower() == "ignore"}
 
 
 def _stem(key: str) -> str:
@@ -44,7 +61,7 @@ def _stem(key: str) -> str:
     return key.rsplit(".", 1)[0].lower()
 
 
-def run(faces_csv: Path, dry_run: bool = False) -> None:
+def run(faces_csv: Path, dry_run: bool = False, seed_csv: Path | None = None) -> None:
     path = faces_csv if faces_csv.is_absolute() else REVIEW_DIR / faces_csv.name
     if not path.exists():
         print(f"faces CSV not found: {path}  (run: python -m app.read_lrcat --faces)")
@@ -52,6 +69,7 @@ def run(faces_csv: Path, dry_run: bool = False) -> None:
 
     db = SessionLocal()
     try:
+        ignored = ignored_names(seed_csv or Path(DEFAULT_SEED))
         people_idx = build_people_index(db)
         valid = {r[0] for r in db.query(m.Person.id).all()}
         # stem -> photo.id, for every B2-backed row we actually imported
@@ -65,7 +83,7 @@ def run(faces_csv: Path, dry_run: bool = False) -> None:
         best: dict[tuple[int, str], tuple[float, tuple]] = {}
         unresolved: dict[str, str] = {}
         no_photo: set[str] = set()
-        n_rows = 0
+        n_rows = n_ignored = 0
 
         with open(path, newline="") as fh:
             for r in csv.DictReader(fh):
@@ -77,7 +95,9 @@ def run(faces_csv: Path, dry_run: bool = False) -> None:
                 names = {p for p in people_idx.get(metadata.norm_text(r["person"]), set())
                          if p in valid}
                 if not names:
-                    unresolved.setdefault(r["person"], r["b2_key"])
+                    if metadata.norm_text(r["person"]) not in ignored:
+                        unresolved.setdefault(r["person"], r["b2_key"])
+                    n_ignored += 1
                     continue
                 try:
                     box = (float(r["cx"]), float(r["cy"]), float(r["w"]), float(r["h"]))
@@ -126,6 +146,8 @@ def run(faces_csv: Path, dry_run: bool = False) -> None:
     print(f"regions kept as-is:  {n_kept}")
     print(f"faces w/o a photo:   {len(no_photo)} (catalog images not in the digital set)")
     print(f"unresolved people:   {len(unresolved)} -> review/unresolved_people_faces.csv")
+    if n_ignored:
+        print(f"faces skipped:       {n_ignored} (person unresolved or marked ignore)")
     if not dry_run and (n_tags or n_regions):
         print("\nEnrollment for face matching (SPEC §14) is now materially larger.")
 
@@ -133,6 +155,8 @@ def run(faces_csv: Path, dry_run: bool = False) -> None:
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Import LR face regions for digital photos (SPEC §14)")
     ap.add_argument("--faces-csv", type=Path, default=Path(DEFAULT_FACES))
+    ap.add_argument("--seed-csv", type=Path, default=Path(DEFAULT_SEED),
+                    help="reviewed seed CSV; its `ignore` rows are not re-reported")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    run(args.faces_csv, dry_run=args.dry_run)
+    run(args.faces_csv, dry_run=args.dry_run, seed_csv=args.seed_csv)
