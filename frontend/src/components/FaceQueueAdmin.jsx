@@ -14,15 +14,21 @@ import { api } from "../api";
 // undoable contribution covering the whole batch.
 
 function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile, box,
-                peeked, hoverPeek = true }) {
-  const info = { faceId, sourceFile, box };
+                peeked, hoverPeek = true, tagRef }) {
+  // `tagRef` crops the TAG's own region. A tag's box and a detected face's box are
+  // independent, so LR-imported tags usually match no detection — resolving them to a
+  // face_id left 254 of 400 rendering as broken squares.
+  const info = { faceId, sourceFile, box, tagRef };
+  const src = tagRef
+    ? `/api/tag-crop/${tagRef[0]}/${encodeURIComponent(tagRef[1])}`
+    : `/api/face-crop/${faceId}`;
   return (
     <button className={`fq-crop ${selected ? "on" : ""} ${peeked ? "peeked" : ""}`}
             type="button"
             onClick={(e) => { onPeek?.(info); onClick?.(e); }}
             onMouseEnter={hoverPeek ? () => onPeek?.(info) : undefined}
             onFocus={hoverPeek ? () => onPeek?.(info) : undefined}>
-      <img src={`/api/face-crop/${faceId}`} alt="" loading="lazy" />
+      <img src={src} alt="" loading="lazy" />
       {score != null && <span className="fq-score">{score.toFixed(2)}</span>}
       {badge && <span className="fq-badge">{badge}</span>}
     </button>
@@ -427,7 +433,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       aria-label="Close preview">✕</button>
             )}
             <div className="fq-peek-col">
-              <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
+              <img className="fq-peek-face" alt=""
+                   src={peek.tagRef
+                     ? `/api/tag-crop/${peek.tagRef[0]}/${encodeURIComponent(peek.tagRef[1])}?size=480`
+                     : `/api/face-crop/${peek.faceId}?size=480`} />
               {peek.sourceFile && (
                 <code className="fq-peek-name" title={peek.sourceFile}>
                   {peek.sourceFile.split("/").pop()}
@@ -518,8 +527,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           {audit.map((a) => (
             <Crop key={a.key} faceId={a.face_id} score={a.score}
                   badge={a.person} sourceFile={a.source_file} box={a.box}
+                  tagRef={auditMode === "tiny" ? [a.photo_id, a.person_id] : null}
                   onPeek={setPeek} hoverPeek={false}
-                  peeked={peek?.faceId === a.face_id}
+                  peeked={peek?.faceId === a.face_id && peek?.tagRef?.[1] === a.person_id}
                   selected={auditSel.has(a.key)}
                   onClick={() => setAuditSel((s2) => {
                     const n = new Set(s2);

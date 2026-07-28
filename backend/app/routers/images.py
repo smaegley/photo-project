@@ -188,6 +188,37 @@ def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
     return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 
+@router.get("/tag-crop/{photo_id}/{person_id}")
+def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_user)):
+    """Crop what a TAG points at, using its own region — not a detected face.
+
+    The tiny-tag audit originally resolved each tag to a `face` row and cropped that, but
+    a tag's box and a detector's box are independent: Lightroom-imported regions rarely
+    coincide with one of our detections, so **254 of 400 tags had no match** and rendered
+    as broken squares. The region on `photo_person` is the thing being audited, so crop
+    that directly and the question "is this tag right?" is always answerable.
+    """
+    with SessionLocal() as db:
+        pp = db.get(m.PhotoPerson, (photo_id, person_id))
+        if pp is None or pp.region_w is None:
+            raise HTTPException(404, "no region for this tag")
+        photo = db.get(m.Photo, photo_id)
+        if photo is None:
+            raise HTTPException(404, "photo not found")
+        region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h)
+        src_file, fv, backend = photo.source_file, photo.file_version, storage.backend_of(photo)
+    src = settings.display_dir / derivatives.cache_key(
+        src_file, fv, versioned=(backend == "b2"))
+    if not src.exists():
+        raise HTTPException(404, "no display derivative — run prewarm")
+    edge = max(120, min(int(size or derivatives.FACE_MAX), 640))
+    key = derivatives.safe_key(f"{photo_id}_{person_id}_{edge}")
+    cache = settings.faces_dir / f"tag_{key}.jpg"
+    if not cache.exists():
+        derivatives.face_thumb(src, cache, region, max_edge=edge)
+    return FileResponse(cache, media_type="image/jpeg", headers=DAY)
+
+
 @router.get("/cards/{filename}")
 def index_card(filename: str, _user=Depends(image_user)):
     if not CARD_RE.match(filename):
