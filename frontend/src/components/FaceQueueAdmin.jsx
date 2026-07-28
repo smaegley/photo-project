@@ -59,10 +59,22 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   // Two lenses on the same problem. "score" only sees tags this app accepted; "tiny"
   // sees every boxed tag however it arrived — including straight from Lightroom, which
   // is where the Mary Emma Beck / Brendan Lefkowicz mis-tags actually came from.
-  const loadAudit = (mx = auditMax, mode = auditMode, who = tinyPerson) =>
-    (mode === "tiny" ? api.tinyTags(0.003, 400, who) : api.acceptedFaces(mx))
-      .then((d) => setAudit(d.map((r) => ({ ...r, key: r.suggestion_id ?? `${r.photo_id}:${r.person_id}` }))))
+  // One loader for the whole audit. Filters are held in state and merged per call, so a
+  // control can change just its own dimension without resetting the others.
+  const reloadAudit = (over = {}) => {
+    const q = {
+      personId: "personId" in over ? over.personId : tinyPerson,
+      maxScore: "maxScore" in over ? over.maxScore : auditMax,
+      maxArea:  "maxArea"  in over ? over.maxArea  : (tinyOnly ? 0.003 : null),
+      sort:     over.sort  ?? auditSort,
+    };
+    api.faceTags({ ...q, limit: 500 })
+      .then((d) => setAudit(d.map((r) => ({ ...r, key: `${r.photo_id}:${r.person_id}` }))))
       .catch((e) => setErr(String(e)));
+    api.faceTagsByPerson({ maxScore: q.maxScore, maxArea: q.maxArea })
+      .then(setTinyPeople).catch(() => {});
+    setAuditSel(new Set());
+  };
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
     .then(([c, s]) => { setClusters(c); setSummary(s); })
     .catch((e) => setErr(String(e)));
@@ -185,6 +197,19 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     decideCluster({ action: "name", cluster_ids: [id], person_id: pid });
   }
 
+  async function removeSelectedTags() {
+    const pairs = audit.filter((a) => auditSel.has(a.key)).map((a) => [a.photo_id, a.person_id]);
+    if (!pairs.length) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.removeTinyTags(pairs);
+      setNote(`Removed ${r.removed} tag(s).`);
+      reloadAudit();
+      await Promise.all([loadQueue(), refreshUndo()]);
+      onChanged?.();
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  }
+
   async function decideCluster(body) {
     setBusy(true); setErr(null);
     try {
@@ -285,9 +310,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const allPeople = useMemo(() => [...(people || []), ...newPeople], [people, newPeople]);
   const [newIsFamily, setNewIsFamily] = useState(false);
   const [audit, setAudit] = useState([]);          // accepted, worst score first
-  const [auditMax, setAuditMax] = useState(0.55);
+  const [auditMax, setAuditMax] = useState(null);      // score filter, null = any
   const [auditSel, setAuditSel] = useState(() => new Set());
-  const [auditMode, setAuditMode] = useState("score");   // "score" | "tiny"
+  const [auditSort, setAuditSort] = useState("area");
+  const [tinyOnly, setTinyOnly] = useState(true);
   const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
   const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
 
@@ -319,7 +345,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
             Unknown faces {clusters ? `(${clusters.length})` : ""}
           </button>
           <button className={tab === "audit" ? "on" : ""}
-                  onClick={() => { setTab("audit"); loadAudit(); }}>
+                  onClick={() => { setTab("audit"); reloadAudit(); }}>
             Check accepted
           </button>
           </div>
@@ -467,101 +493,83 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         )}
 
         {tab === "audit" && (
-      <div className="fq-grid-wrap">
-        <p className="hint">
-          {auditMode === "score"
-            ? "Tags this app accepted, lowest confidence first."
-            : "Every face tag with a tiny box, smallest first — including ones that came straight from Lightroom, which the confidence view cannot see."}
-          {" "}Select any that are wrong and remove them. Click a face to enlarge it and
-          outline it in its photo.
-        </p>
-        <div className="seg fq-tabs">
-          <button className={auditMode === "score" ? "on" : ""}
-                  onClick={() => { setAuditMode("score"); setAuditSel(new Set()); loadAudit(auditMax, "score"); }}>
-            By confidence
-          </button>
-          <button className={auditMode === "tiny" ? "on" : ""}
-                  onClick={() => { setAuditMode("tiny"); setAuditSel(new Set()); setTinyPerson(null); api.tinyTagsByPerson().then(setTinyPeople).catch(() => {}); loadAudit(auditMax, "tiny", null); }}>
-            Tiny faces
-          </button>
-        </div>
-        <div className="fq-actions">
-          <label className="muted">
-            show score ≤{" "}
-            <select value={auditMax} disabled={busy}
-                    onChange={(e) => { setAuditMax(+e.target.value); loadAudit(+e.target.value); }}>
-              <option value={0.5}>0.50</option>
-              <option value={0.55}>0.55</option>
-              <option value={0.6}>0.60</option>
-              <option value={1.0}>all</option>
-            </select>
-          </label>
-          <span className="muted">{audit.length} shown</span>
-          <button onClick={() => setAuditSel(new Set(audit.map((a) => a.key)))}
-                  disabled={busy || !audit.length}>Select all</button>
-          <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>
-            Clear</button>
-          <span className="spacer" />
-          <button className="fq-reject" disabled={busy || !auditSel.size}
-                  onClick={async () => {
-                    setBusy(true); setErr(null);
-                    try {
-                      let r;
-                      if (auditMode === "tiny") {
-                        const pairs = audit.filter((a) => auditSel.has(a.key))
-                                           .map((a) => [a.photo_id, a.person_id]);
-                        r = await api.removeTinyTags(pairs);
-                        setNote(`Removed ${r.removed} tag(s).`);
-                      } else {
-                        r = await api.decideFaces([...auditSel], "unaccept");
-                        setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
-                      }
-                      setAuditSel(new Set());
-                      await Promise.all([loadAudit(auditMax, auditMode), loadQueue(), refreshUndo()]);
-                      onChanged?.();
-                    } catch (e) { setErr(String(e?.message || e)); }
-                    finally { setBusy(false); }
-                  }}>
-            ✕ Remove tag {auditSel.size || ""}
-          </button>
-        </div>
-        <div className={auditMode === "tiny" ? "fq-tinybody" : ""}>
-        {auditMode === "tiny" && (
-          <ol className="fq-people fq-tinypeople">
-            <li><button className={!tinyPerson ? "on" : ""}
-                        onClick={() => { setTinyPerson(null); setAuditSel(new Set());
-                                         loadAudit(auditMax, "tiny", null); }}>
-              <span className="fq-name">Everyone</span>
-              <span className="fq-count">{(tinyPeople || []).reduce((n, r) => n + r.count, 0)}</span>
-            </button></li>
-            {(tinyPeople || []).map((r) => (
-              <li key={r.person_id}><button className={tinyPerson === r.person_id ? "on" : ""}
-                  onClick={() => { setTinyPerson(r.person_id); setAuditSel(new Set());
-                                   loadAudit(auditMax, "tiny", r.person_id); }}>
-                <span className="fq-name">{r.name}</span>
-                <span className="fq-count">{r.count}</span>
-              </button></li>
-            ))}
-          </ol>
+          <div className="fq-grid-wrap">
+            <p className="hint">
+              Every face tag with a box, from any source. Filter and sort to find the wrong
+              ones: small boxes are usually background faces or reflections, and low
+              confidence means the matcher was unsure. Tags marked <b>imported</b> came from
+              Lightroom and have no confidence score at all — those are invisible to a
+              score filter, which is why size matters. Click a face to enlarge it.
+            </p>
+            <div className="fq-actions">
+              <label className="muted">sort{" "}
+                <select value={auditSort} disabled={busy}
+                        onChange={(e) => { setAuditSort(e.target.value); reloadAudit({ sort: e.target.value }); }}>
+                  <option value="area">smallest face first</option>
+                  <option value="score">lowest confidence first</option>
+                </select>
+              </label>
+              <label className="muted">score ≤{" "}
+                <select value={auditMax ?? ""} disabled={busy}
+                        onChange={(e) => { const v = e.target.value === "" ? null : +e.target.value;
+                                            setAuditMax(v); reloadAudit({ maxScore: v }); }}>
+                  <option value="">any</option>
+                  <option value={0.5}>0.50</option>
+                  <option value={0.55}>0.55</option>
+                  <option value={0.6}>0.60</option>
+                </select>
+              </label>
+              <label className="fq-fam">
+                <input type="checkbox" checked={tinyOnly} disabled={busy}
+                       onChange={(e) => { setTinyOnly(e.target.checked);
+                                           reloadAudit({ maxArea: e.target.checked ? 0.003 : null }); }} />
+                tiny faces only
+              </label>
+              <span className="muted">{audit.length} shown</span>
+              <span className="spacer" />
+              <button onClick={() => setAuditSel(new Set(audit.map((a) => a.key)))}
+                      disabled={busy || !audit.length}>Select all {audit.length}</button>
+              <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>Clear</button>
+              <button className="fq-reject" disabled={busy || !auditSel.size}
+                      onClick={removeSelectedTags}>
+                ✕ Remove tag {auditSel.size || ""}
+              </button>
+            </div>
+            <div className="fq-tinybody">
+              <ol className="fq-people fq-tinypeople">
+                <li><button className={!tinyPerson ? "on" : ""}
+                            onClick={() => { setTinyPerson(null); reloadAudit({ personId: null }); }}>
+                  <span className="fq-name">Everyone</span>
+                  <span className="fq-count">{(tinyPeople || []).reduce((n, r) => n + r.count, 0)}</span>
+                </button></li>
+                {(tinyPeople || []).map((r) => (
+                  <li key={r.person_id}><button className={tinyPerson === r.person_id ? "on" : ""}
+                      onClick={() => { setTinyPerson(r.person_id); reloadAudit({ personId: r.person_id }); }}>
+                    <span className="fq-name">{r.name}</span>
+                    <span className="fq-count">{r.count}</span>
+                    <span className="muted fq-sub">{r.imported} imported · smallest {r.smallest.toFixed(5)}</span>
+                  </button></li>
+                ))}
+              </ol>
+              <div className="fq-grid">
+                {audit.map((a) => (
+                  <Crop key={a.key} faceId={null} score={a.score}
+                        badge={tinyPerson ? (a.year || a.origin) : a.person}
+                        sourceFile={a.source_file} box={a.box}
+                        tagRef={[a.photo_id, a.person_id]}
+                        onPeek={setPeek} hoverPeek={false}
+                        peeked={peek?.tagRef?.[0] === a.photo_id && peek?.tagRef?.[1] === a.person_id}
+                        selected={auditSel.has(a.key)}
+                        onClick={() => setAuditSel((s2) => {
+                          const n = new Set(s2);
+                          n.has(a.key) ? n.delete(a.key) : n.add(a.key);
+                          return n;
+                        })} />
+                ))}
+              </div>
+            </div>
+          </div>
         )}
-        <div className="fq-grid">
-          {audit.map((a) => (
-            <Crop key={a.key} faceId={a.face_id} score={a.score}
-                  badge={a.person} sourceFile={a.source_file} box={a.box}
-                  tagRef={auditMode === "tiny" ? [a.photo_id, a.person_id] : null}
-                  onPeek={setPeek} hoverPeek={false}
-                  peeked={peek?.faceId === a.face_id && peek?.tagRef?.[1] === a.person_id}
-                  selected={auditSel.has(a.key)}
-                  onClick={() => setAuditSel((s2) => {
-                    const n = new Set(s2);
-                    n.has(a.key) ? n.delete(a.key) : n.add(a.key);
-                    return n;
-                  })} />
-          ))}
-        </div>
-        </div>
-      </div>
-    )}
 
         {tab === "unknown" && (
           <div className="fq-unknown">

@@ -360,6 +360,85 @@ def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_adm
 # matches routes in declaration order, so with the catch-all first, a request for
 # /face-queue/accepted binds person_id="accepted" and quietly returns an empty list —
 # a 200 with no data, which looks like "nothing to audit" rather than a routing bug.
+def _face_tag_query(db, person_id=None, max_score=None, max_area=None):
+    """Every face-boxed tag, with its confidence where one exists.
+
+    One query behind the whole audit. `By confidence` and `Tiny faces` were two views of
+    this list differing only in filter and sort, which meant a tag could be missed by
+    whichever lens you happened to be using.
+
+    **Score is LEFT-joined and nullable on purpose.** Only tags created by accepting a
+    suggestion have one; tags imported from the Lightroom catalog never do — and those
+    are exactly where the worst mis-IDs came from, so filtering them out by requiring a
+    score would hide the problem. The join is on (photo, person), which is exact, rather
+    than on box geometry, which is not: a tag's box and a detector's box are independent.
+    """
+    area = m.PhotoPerson.region_w * m.PhotoPerson.region_h
+    sub = (db.query(m.FaceSuggestion.person_id.label("pid"),
+                    m.Face.photo_id.label("ph"),
+                    func.min(m.FaceSuggestion.score).label("score"))
+           .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
+           .filter(m.FaceSuggestion.status == m.FACE_ACCEPTED)
+           .group_by(m.FaceSuggestion.person_id, m.Face.photo_id).subquery())
+    q = (db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
+                  m.PhotoPerson.region_x, m.PhotoPerson.region_y,
+                  m.PhotoPerson.region_w, m.PhotoPerson.region_h,
+                  m.Person.canonical_name, m.Photo.source_file, m.Photo.date_start,
+                  sub.c.score, area.label("area"))
+         .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
+         .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+         .outerjoin(sub, (sub.c.pid == m.PhotoPerson.person_id)
+                    & (sub.c.ph == m.PhotoPerson.photo_id))
+         .filter(m.PhotoPerson.region_w.isnot(None)))
+    if person_id:
+        q = q.filter(m.PhotoPerson.person_id == person_id)
+    if max_area is not None:
+        q = q.filter(area <= max_area)
+    if max_score is not None:
+        q = q.filter(sub.c.score <= max_score)
+    return q, area
+
+
+@router.get("/face-tags")
+def face_tags(person_id: str | None = None, max_score: float | None = None,
+              max_area: float | None = None, sort: str = "area", limit: int = 500,
+              db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """The unified audit list — filter by person / score / size, sort by size or score."""
+    q, area = _face_tag_query(db, person_id, max_score, max_area)
+    q = q.order_by(area.asc() if sort == "area"
+                   else m.PhotoPerson.region_w.asc() if sort == "width"
+                   else _nulls_last_score())
+    rows = q.limit(limit).all()
+    return [{"photo_id": ph, "person_id": pid, "person": pname,
+             "area": round(a, 6), "score": round(sc, 3) if sc is not None else None,
+             "origin": "suggested" if sc is not None else "imported",
+             "source_file": sf, "year": dt.year if dt else None,
+             "box": [round(rx, 5), round(ry, 5), round(rw, 5), round(rh, 5)]}
+            for ph, pid, rx, ry, rw, rh, pname, sf, dt, sc, a in rows]
+
+
+def _nulls_last_score():
+    from sqlalchemy import literal_column
+    return literal_column("score IS NULL, score ASC")
+
+
+@router.get("/face-tags/by-person")
+def face_tags_by_person(max_score: float | None = None, max_area: float | None = None,
+                        db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """Per-person counts under the SAME filters, so the sidebar always agrees with the grid."""
+    q, _area = _face_tag_query(db, None, max_score, max_area)
+    counts = {}
+    for row in q.all():
+        pid, pname = row[1], row[6]
+        e = counts.setdefault(pid, {"person_id": pid, "name": pname, "count": 0,
+                                    "smallest": 1.0, "imported": 0})
+        e["count"] += 1
+        e["smallest"] = min(e["smallest"], row[10])
+        if row[9] is None:
+            e["imported"] += 1
+    return sorted(counts.values(), key=lambda r: -r["count"])
+
+
 @router.get("/face-queue/tiny-tags")
 def tiny_tags(max_area: float = 0.003, limit: int = 400, person_id: str | None = None,
               db: Session = Depends(get_db), user: m.User = Depends(require_admin)):

@@ -83,11 +83,15 @@ export const api = {
   acceptedFaces: (maxScore = 1.0, limit = 400) =>
     get(`/api/admin/face-queue/accepted?max_score=${maxScore}&limit=${limit}`),
   acceptedSummary: () => get("/api/admin/face-queue/accepted/summary"),
-  tinyTags: (maxArea = 0.003, limit = 400, personId = null) =>
-    get(`/api/admin/face-queue/tiny-tags?max_area=${maxArea}&limit=${limit}` +
-        (personId ? `&person_id=${encodeURIComponent(personId)}` : "")),
-  tinyTagsByPerson: (maxArea = 0.003) =>
-    get(`/api/admin/face-queue/tiny-tags/by-person?max_area=${maxArea}`),
+  faceTags: ({ personId = null, maxScore = null, maxArea = null,
+               sort = "area", limit = 500 } = {}) =>
+    get("/api/admin/face-tags?" + new URLSearchParams(Object.entries({
+      person_id: personId, max_score: maxScore, max_area: maxArea, sort, limit,
+    }).filter(([, v]) => v !== null && v !== "")).toString()),
+  faceTagsByPerson: ({ maxScore = null, maxArea = null } = {}) =>
+    get("/api/admin/face-tags/by-person?" + new URLSearchParams(Object.entries({
+      max_score: maxScore, max_area: maxArea,
+    }).filter(([, v]) => v !== null && v !== "")).toString()),
   removeTinyTags: (pairs) =>
     send("POST", "/api/admin/face-queue/tiny-tags/remove", { pairs }),
   decideFaces: (suggestionIds, action) =>
