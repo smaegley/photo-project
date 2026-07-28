@@ -1,11 +1,21 @@
 # Maegley Photo Album
 
-Private family photo archive — browse ~1,140 digitized 35mm slides (1962–1976,
-shot and hand-captioned by Steve's father Wendel) by **people, place, date, and
-event**, with a map and timeline. Plus an admin layer to curate the metadata.
+Private family photo archive spanning **1940s–2020s**, browsable by **people, place,
+date, and event** with a map and timeline, plus an admin layer to curate the metadata.
 
-See **`SPEC.md`** — §§1–9 are the frozen v1.0 design; **§10 is the current build
-log** (source of truth where it refines the design).
+Three kinds of photo, all in one interleaved timeline:
+- **1,140 digitized 35mm slides** (1962–1976), shot and hand-captioned by Steve's
+  father Wendel — the original collection.
+- **770 scanned prints** (1940s–2000s), FastFoto (SPEC §12).
+- **4,680 born-digital photos** (1999–2026), served from **Backblaze B2** by pointer
+  rather than a second copy (SPEC §13).
+
+See **`SPEC.md`** — §§1–9 are the frozen v1.0 design; **§10 is the build log**, **§12**
+scanned prints, **§13** B2-backed digital, **§14** face matching. Later sections are
+the source of truth where they refine earlier ones.
+
+**▶ Read `STATUS.md` first** for current deployment state and the gotchas that waste
+time.
 
 ## What it does
 - **Faceted browse:** four AND-combined facets (time / people / events / map) with

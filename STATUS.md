@@ -9,7 +9,7 @@ should tell you where to look and what's already known, so you don't re-derive i
 What lives *only* here: current deployment state, known-and-accepted issues, and the
 gotchas that burn time.
 
-**Last reviewed:** 2026-07-27 (§13 digital shipped to prod; §14 face matching slices 1–3 built).
+**Last reviewed:** 2026-07-28 (§13 shipped to prod; §14 slices 1–5 built + reviewed on dev).
 
 ---
 
@@ -66,28 +66,24 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > cached derivatives and never touches B2 while browsing. Four view tabs
 > (All / Slide / Scanned / Digital). Full design + build log: **SPEC §13**.
 >
-> **🔨 §14 FACE MATCHING — SLICES 1–5 BUILT, IN USE, DEV ONLY.** Design + all four probes
-> in SPEC §14. 14,245 faces detected across 6,598 photos; 10,241 enrolled regions;
-> **1,008 suggestions accepted / 44 rejected = 95.8% precision**; 22 unknown groups named,
-> 34 ignored. Review UI at **⚙ Admin → Manage ▾ → Review faces…**
-> Review complete: **1,029 accepted / 48 rejected**, 81 groups named, 380 ignored.
-> **Audit tooling** (Manage ▾ → Review faces… → *Check accepted*) has two lenses: by
-> confidence (tags this app accepted) and **Tiny faces** (every boxed tag by size, any
-> origin, grouped per person). The second exists because some mis-tags came **straight
-> from the Lightroom catalog** — LR face regions that disagree with its own keywords —
-> which scoring can't see. Face size is the origin-independent signal: rejected faces
-> measured 6× smaller than accepted ones.
-> **Next: slice 6** (weekly-sync integration) + the prod export of confirmed tags.
+> **🔨 §14 FACE MATCHING — BUILT AND IN USE, DEV ONLY.** Design + probes in SPEC §14.
+> 14,245 faces detected across 6,598 photos; **10,280 enrolled regions**; review complete
+> (1,029 suggestions accepted / 48 rejected, 81 groups named, 380 ignored) and Steve is
+> now auditing mis-tags. UI: **⚙ Admin → Manage ▾ → Review faces…** — five tabs
+> (Suggestions · Unknown faces · Check accepted · Missing thumbnails).
+>
+> **The hand-off to prod EXISTS: `app/tags_io.py`.** `--export` on dev → 0.21 MB file →
+> `--import [--prune]` on prod. Verified against a prod-shaped DB to exact parity. Review
+> work is a one-time cost, not per-environment. **Nothing has been shipped to prod yet.**
 >
 > Key decisions — don't re-litigate:
-> - **Enrichment runs on dev and EXPORTS to prod** (§14.8a). Prod never runs detection;
->   it receives confirmed `photo_person` tags. Export keys on **`source_file`**, never
->   `photo.id` — row ids differ per database.
-> - **Match threshold 0.45** (P-F3, measured). Below it, faces go to unknown-clusters.
+> - **Enrichment runs on dev and EXPORTS to prod** (§14.8a). Export keys on
+>   **`source_file`**, never `photo.id` — row ids differ per database.
+> - **Match threshold 0.45** (P-F3, measured). Below it → unknown-face clusters.
 > - **Suggest, never auto-apply.** ~4.6% of strangers still clear 0.45.
-> - Confirm **by person**; unknown faces cluster so background strangers go in bulk.
-> - **Pets ARE detected** (D5's premise was wrong) but not separable by the matcher —
->   all dogs look alike to ArcFace. Split them by hand in the group view.
+> - **Pets are detected but not separable** — all dogs look alike to ArcFace; split by hand.
+> - **Face size is the origin-independent audit signal.** Many mis-tags came straight
+>   from the Lightroom catalog and have no confidence score at all.
 >
 > **⚠ A dev DB refresh (`scripts/load-prod-snapshot.sh`) destroys the §14 work** — 14,245
 > faces is ~82 min of CPU to rebuild, plus `import_faces` (~1 min) and `import_digital`

@@ -1829,6 +1829,41 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
    **exactly** dev's 10,682 tags / 10,280 regions / 126 people. A second run is a clean
    no-op.
 
+5d. **Review UI, as it settled (2026-07-28).** Driven by Steve using it; recorded
+   because the shape is not obvious from the original §14.7 sketch.
+
+   **Five tabs**: *Suggestions* (by person, confidence-sorted) · *Unknown faces* (groups,
+   splittable) · *Check accepted* (the audit) · *Missing thumbnails* · with the peek
+   preview shared across all of them.
+
+   **The audit became one view, not three.** "By confidence" and "Tiny faces" started as
+   separate tabs and were merged on Steve's observation that they are the same list with
+   different filters — separate lenses meant a bad tag could hide from whichever one you
+   were using. Now: person sidebar (Everyone + per-person counts), sort by size or
+   confidence, optional score ceiling, optional tiny-only. Filters compose; sidebar counts
+   honour them, so the sidebar can never disagree with the grid.
+
+   **Paged, never capped.** It first took 500 rows silently — with 10,275 tags there was
+   no way to tell what was hidden. Now "300 of 988" with *Load more*. Paging rather than
+   a bigger cap because the grid makes one image request per row.
+
+   **Missing thumbnails**: 106 of 126 people had none. Every tagged person now has face
+   boxes, so the app proposes each person's **largest** box (bigger crop = better 240px
+   thumbnail) with alternatives to click. Nothing written until Set; one undoable batch.
+
+   **Rotation now moves face boxes with the pixels** (`_rotate_regions`). `region_*` and
+   `face.x/y/w/h` are normalized to the image *as stored*, so rotating pixels alone left
+   every outline pointing elsewhere — silently. Zero rotations had happened, but 1,150
+   local photos carry boxes, so the lightbox rotate button had become a landmine.
+   **Digital photos refuse rotation**: B2 masters are read-only and rotating just the
+   derivative would be reverted by the next prewarm.
+
+   **Recurring root cause worth naming: code written before §13 assumes a local master.**
+   `photo_file()` correctly refuses remote masters, so three separate image paths 404'd
+   for digital photos before being switched to the display derivative — most recently
+   `/api/faces/{person_id}`, which would have broken most of the new thumbnails. Anything
+   reaching for pixels must go through `derivatives.cache_key`, not the master.
+
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
 
