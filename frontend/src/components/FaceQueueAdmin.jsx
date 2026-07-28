@@ -61,19 +61,34 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   // is where the Mary Emma Beck / Brendan Lefkowicz mis-tags actually came from.
   // One loader for the whole audit. Filters are held in state and merged per call, so a
   // control can change just its own dimension without resetting the others.
+  const PAGE = 300;
+  // Paged rather than capped. The grid makes one image request per row, so loading
+  // 10,000 at once stalls the browser — but a silent cap is worse, because you cannot
+  // tell what you are not seeing. The sidebar counts give the true total, and "load
+  // more" appends a page.
+  const auditFilters = (over = {}) => ({
+    personId: "personId" in over ? over.personId : tinyPerson,
+    maxScore: "maxScore" in over ? over.maxScore : auditMax,
+    maxArea:  "maxArea"  in over ? over.maxArea  : (tinyOnly ? 0.003 : null),
+    sort:     over.sort  ?? auditSort,
+  });
   const reloadAudit = (over = {}) => {
-    const q = {
-      personId: "personId" in over ? over.personId : tinyPerson,
-      maxScore: "maxScore" in over ? over.maxScore : auditMax,
-      maxArea:  "maxArea"  in over ? over.maxArea  : (tinyOnly ? 0.003 : null),
-      sort:     over.sort  ?? auditSort,
-    };
-    api.faceTags({ ...q, limit: 500 })
+    const q = auditFilters(over);
+    setAuditFilter(q);
+    api.faceTags({ ...q, limit: PAGE, offset: 0 })
       .then((d) => setAudit(d.map((r) => ({ ...r, key: `${r.photo_id}:${r.person_id}` }))))
       .catch((e) => setErr(String(e)));
     api.faceTagsByPerson({ maxScore: q.maxScore, maxArea: q.maxArea })
       .then(setTinyPeople).catch(() => {});
     setAuditSel(new Set());
+  };
+  const loadMoreAudit = () => {
+    setBusy(true);
+    api.faceTags({ ...auditFilter, limit: PAGE, offset: audit.length })
+      .then((d) => setAudit((cur) => [...cur,
+        ...d.map((r) => ({ ...r, key: `${r.photo_id}:${r.person_id}` }))]))
+      .catch((e) => setErr(String(e)))
+      .finally(() => setBusy(false));
   };
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
     .then(([c, s]) => { setClusters(c); setSummary(s); })
@@ -313,6 +328,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [auditMax, setAuditMax] = useState(null);      // score filter, null = any
   const [auditSel, setAuditSel] = useState(() => new Set());
   const [auditSort, setAuditSort] = useState("area");
+  const [auditFilter, setAuditFilter] = useState({});
   const [tinyOnly, setTinyOnly] = useState(true);
   const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
   const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
@@ -323,6 +339,13 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     return map;
   }, [allPeople]);
   const resolvePerson = (text) => personByName.get((text || "").trim().toLowerCase()) || null;
+
+  const auditTotal = useMemo(() => {
+    if (!tinyPeople) return audit.length;
+    return tinyPerson
+      ? (tinyPeople.find((r) => r.person_id === tinyPerson)?.count ?? audit.length)
+      : tinyPeople.reduce((n, r) => n + r.count, 0);
+  }, [tinyPeople, tinyPerson, audit.length]);
 
   const totalPending = useMemo(
     () => (queue || []).reduce((n, r) => n + r.pending, 0), [queue]);

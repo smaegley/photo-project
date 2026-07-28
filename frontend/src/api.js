@@ -84,9 +84,9 @@ export const api = {
     get(`/api/admin/face-queue/accepted?max_score=${maxScore}&limit=${limit}`),
   acceptedSummary: () => get("/api/admin/face-queue/accepted/summary"),
   faceTags: ({ personId = null, maxScore = null, maxArea = null,
-               sort = "area", limit = 500 } = {}) =>
+               sort = "area", limit = 300, offset = 0 } = {}) =>
     get("/api/admin/face-tags?" + new URLSearchParams(Object.entries({
-      person_id: personId, max_score: maxScore, max_area: maxArea, sort, limit,
+      person_id: personId, max_score: maxScore, max_area: maxArea, sort, limit, offset,
     }).filter(([, v]) => v !== null && v !== "")).toString()),
   faceTagsByPerson: ({ maxScore = null, maxArea = null } = {}) =>
     get("/api/admin/face-tags/by-person?" + new URLSearchParams(Object.entries({

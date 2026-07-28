@@ -402,13 +402,19 @@ def _face_tag_query(db, person_id=None, max_score=None, max_area=None):
 @router.get("/face-tags")
 def face_tags(person_id: str | None = None, max_score: float | None = None,
               max_area: float | None = None, sort: str = "area", limit: int = 500,
+              offset: int = 0,
               db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
-    """The unified audit list — filter by person / score / size, sort by size or score."""
+    """The unified audit list — filter by person / score / size, sort by size or score.
+
+    Paged. The grid renders one image request per row, so returning 10,000 at once would
+    stall the browser; `offset` lets the panel append a page at a time while the sidebar
+    counts show the true total, so a cap can never silently hide work.
+    """
     q, area = _face_tag_query(db, person_id, max_score, max_area)
     q = q.order_by(area.asc() if sort == "area"
                    else m.PhotoPerson.region_w.asc() if sort == "width"
                    else _nulls_last_score())
-    rows = q.limit(limit).all()
+    rows = q.offset(max(0, offset)).limit(limit).all()
     return [{"photo_id": ph, "person_id": pid, "person": pname,
              "area": round(a, 6), "score": round(sc, 3) if sc is not None else None,
              "origin": "suggested" if sc is not None else "imported",
