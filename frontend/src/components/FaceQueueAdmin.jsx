@@ -415,62 +415,6 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           // settles it faster than resolution does (who else is in frame, where it is).
           <div className={`fq-peek ${tab === "unknown" ? "sticky" : ""}`}
                onMouseLeave={() => { if (tab !== "unknown") setPeek(null); }}>
-            {tab === "audit" && (
-          <div className="fq-grid-wrap">
-            <p className="hint">
-              Everything already accepted, <b>lowest confidence first</b> — these are the
-              likeliest mis-IDs. Select any that are wrong and remove the tag; the
-              suggestion goes back to pending so you can reject it properly.
-              Click a face to enlarge it and outline it in its photo.
-            </p>
-            <div className="fq-actions">
-              <label className="muted">
-                show score ≤{" "}
-                <select value={auditMax} disabled={busy}
-                        onChange={(e) => { setAuditMax(+e.target.value); loadAudit(+e.target.value); }}>
-                  <option value={0.5}>0.50</option>
-                  <option value={0.55}>0.55</option>
-                  <option value={0.6}>0.60</option>
-                  <option value={1.0}>all</option>
-                </select>
-              </label>
-              <span className="muted">{audit.length} shown</span>
-              <button onClick={() => setAuditSel(new Set(audit.map((a) => a.suggestion_id)))}
-                      disabled={busy || !audit.length}>Select all</button>
-              <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>
-                Clear</button>
-              <span className="spacer" />
-              <button className="fq-reject" disabled={busy || !auditSel.size}
-                      onClick={async () => {
-                        setBusy(true); setErr(null);
-                        try {
-                          const r = await api.decideFaces([...auditSel], "unaccept");
-                          setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
-                          setAuditSel(new Set());
-                          await Promise.all([loadAudit(), loadQueue(), refreshUndo()]);
-                          onChanged?.();
-                        } catch (e) { setErr(String(e?.message || e)); }
-                        finally { setBusy(false); }
-                      }}>
-                ✕ Remove tag {auditSel.size || ""}
-              </button>
-            </div>
-            <div className="fq-grid">
-              {audit.map((a) => (
-                <Crop key={a.suggestion_id} faceId={a.face_id} score={a.score}
-                      badge={a.person} sourceFile={a.source_file} box={a.box}
-                      onPeek={setPeek} hoverPeek={false}
-                      peeked={peek?.faceId === a.face_id}
-                      selected={auditSel.has(a.suggestion_id)}
-                      onClick={() => setAuditSel((s2) => {
-                        const n = new Set(s2);
-                        n.has(a.suggestion_id) ? n.delete(a.suggestion_id) : n.add(a.suggestion_id);
-                        return n;
-                      })} />
-              ))}
-            </div>
-          </div>
-        )}
 
         {tab === "unknown" && (
               <button className="fq-peek-close" onClick={() => setPeek(null)}
@@ -497,6 +441,63 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
             )}
           </div>
         )}
+
+        {tab === "audit" && (
+      <div className="fq-grid-wrap">
+        <p className="hint">
+          Everything already accepted, <b>lowest confidence first</b> — these are the
+          likeliest mis-IDs. Select any that are wrong and remove the tag; the
+          suggestion goes back to pending so you can reject it properly.
+          Click a face to enlarge it and outline it in its photo.
+        </p>
+        <div className="fq-actions">
+          <label className="muted">
+            show score ≤{" "}
+            <select value={auditMax} disabled={busy}
+                    onChange={(e) => { setAuditMax(+e.target.value); loadAudit(+e.target.value); }}>
+              <option value={0.5}>0.50</option>
+              <option value={0.55}>0.55</option>
+              <option value={0.6}>0.60</option>
+              <option value={1.0}>all</option>
+            </select>
+          </label>
+          <span className="muted">{audit.length} shown</span>
+          <button onClick={() => setAuditSel(new Set(audit.map((a) => a.suggestion_id)))}
+                  disabled={busy || !audit.length}>Select all</button>
+          <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>
+            Clear</button>
+          <span className="spacer" />
+          <button className="fq-reject" disabled={busy || !auditSel.size}
+                  onClick={async () => {
+                    setBusy(true); setErr(null);
+                    try {
+                      const r = await api.decideFaces([...auditSel], "unaccept");
+                      setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
+                      setAuditSel(new Set());
+                      await Promise.all([loadAudit(), loadQueue(), refreshUndo()]);
+                      onChanged?.();
+                    } catch (e) { setErr(String(e?.message || e)); }
+                    finally { setBusy(false); }
+                  }}>
+            ✕ Remove tag {auditSel.size || ""}
+          </button>
+        </div>
+        <div className="fq-grid">
+          {audit.map((a) => (
+            <Crop key={a.suggestion_id} faceId={a.face_id} score={a.score}
+                  badge={a.person} sourceFile={a.source_file} box={a.box}
+                  onPeek={setPeek} hoverPeek={false}
+                  peeked={peek?.faceId === a.face_id}
+                  selected={auditSel.has(a.suggestion_id)}
+                  onClick={() => setAuditSel((s2) => {
+                    const n = new Set(s2);
+                    n.has(a.suggestion_id) ? n.delete(a.suggestion_id) : n.add(a.suggestion_id);
+                    return n;
+                  })} />
+          ))}
+        </div>
+      </div>
+    )}
 
         {tab === "unknown" && (
           <div className="fq-unknown">
