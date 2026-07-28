@@ -314,6 +314,13 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   `seed_events`, `places_seed*.csv` → the admin pin editor. Nearly cost Steve 51
   keyword decisions on 2026-07-27. If you hand someone a review file, say which kind it
   is.
+- **Rotating a photo must rotate its face boxes too.** `photo_person.region_*` and
+  `face.x/y/w/h` are normalized to the image *as stored*, so rotating pixels without
+  rotating boxes leaves every face outline pointing somewhere else — silently. Fixed
+  2026-07-27 (`_rotate_regions`), but it is the shape to watch for: any future operation
+  that transforms an image has to transform its geometry. **Digital photos cannot be
+  rotated at all** — B2 masters are read-only, and rotating only the cached derivative
+  would be undone by the next prewarm; the endpoint now refuses with an explanation.
 - **The api image ignores your command and migrates the DB.** `ENTRYPOINT` is
   `backend/entrypoint.sh`, which runs `alembic upgrade head` then `exec uvicorn` — and it
   never references `"$@"`. So `docker run <image> python -c '...'` does **not** run that

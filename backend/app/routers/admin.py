@@ -76,6 +76,32 @@ def _place_out(db: Session, pl: m.Place) -> PlaceOut:
                     photo_count=_place_count(db, pl.id))
 
 
+def _rotate_regions(db: Session, p: m.Photo, deg: int) -> None:
+    """Rotate every face box on this photo to match the pixels (SPEC §14).
+
+    `photo_person.region_*` and `face.x/y/w/h` are normalized to the image as it is
+    stored. Rotating the pixels without rotating the boxes leaves every face outline
+    pointing somewhere else — silently, since nothing re-checks them. That did not matter
+    before there were face boxes; it matters now that 1,150 local photos carry them.
+
+    Clockwise, on normalized centre coords: 90° (x,y)->(1-y,x); 180° ->(1-x,1-y);
+    270° ->(y,1-x). Width and height swap for the quarter turns.
+    """
+    def turn(x, y, w, h):
+        if deg == 90:
+            return 1.0 - y, x, h, w
+        if deg == 180:
+            return 1.0 - x, 1.0 - y, w, h
+        return y, 1.0 - x, h, w          # 270
+
+    for pp in db.query(m.PhotoPerson).filter(m.PhotoPerson.photo_id == p.id,
+                                             m.PhotoPerson.region_w.isnot(None)).all():
+        pp.region_x, pp.region_y, pp.region_w, pp.region_h = turn(
+            pp.region_x, pp.region_y, pp.region_w, pp.region_h)
+    for f in db.query(m.Face).filter(m.Face.photo_id == p.id).all():
+        f.x, f.y, f.w, f.h = turn(f.x, f.y, f.w, f.h)
+
+
 def _rotate_file(p: m.Photo, deg: int) -> None:
     """Rotate the slide on disk (clockwise) and refresh its cached derivatives."""
     rot_map = {90: Image.Transpose.ROTATE_270, 180: Image.Transpose.ROTATE_180,
@@ -1033,7 +1059,14 @@ def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
     deg = body.degrees % 360
     if deg not in (90, 180, 270):
         raise HTTPException(400, "degrees must be 90, 180 or 270 (clockwise)")
+    if storage.backend_of(p) != "local":
+        # B2 masters are read-only and there is no local file to rewrite. Rotating only
+        # the cached derivative would diverge from the master and be undone by the next
+        # prewarm, so refuse rather than appear to work (SPEC §13.3).
+        raise HTTPException(400, "digital photos are stored in B2 and cannot be rotated "
+                                 "here — rotate in Lightroom and re-sync")
     _rotate_file(p, deg)
+    _rotate_regions(db, p, deg)
     _log(db, user, "photo:rotate", None, f"{deg}cw", photo_id=p.id,
          inverse={"op": "photo_rotate", "photo_id": p.id, "degrees": (360 - deg) % 360})
     db.commit()
@@ -1343,6 +1376,7 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         p = db.get(m.Photo, inv["photo_id"])
         if p and inv["degrees"] in (90, 180, 270):
             _rotate_file(p, inv["degrees"])
+            _rotate_regions(db, p, inv["degrees"])
     elif op == "photo_caption":
         p = db.get(m.Photo, inv["photo_id"])
         if p:
