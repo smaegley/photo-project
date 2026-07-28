@@ -585,3 +585,9 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 .fq-peek-face { width: 190px; height: 190px; object-fit: cover; border-radius: 8px; }
 .fq-peek-photo { max-width: 420px; max-height: 300px; object-fit: contain; border-radius: 6px; }
 @media (max-width: 900px) { .fq-peek-photo { display: none; } }
+/* A failed admin action must be impossible to miss — the face-accept IntegrityError
+   showed as literally nothing on screen because .error had no styling at all. */
+.error { background: #b91c1c; color: #fff; padding: 8px 11px; border-radius: 7px;
+  margin: 6px 0; font-size: 13px; font-weight: 500; }
+.hint.note { background: color-mix(in srgb, currentColor 9%, transparent);
+  border-radius: 7px; padding: 7px 10px; }

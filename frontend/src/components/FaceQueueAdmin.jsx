@@ -40,6 +40,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [peek, setPeek] = useState(null);   // {faceId, sourceFile} under the cursor
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [note, setNote] = useState(null);
 
   const loadQueue = () => api.faceQueue().then(setQueue).catch((e) => setErr(String(e)));
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
@@ -62,7 +63,14 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     if (!ids.length) return;
     setBusy(true); setErr(null);
     try {
-      await api.decideFaces(ids, action);
+      const res = await api.decideFaces(ids, action);
+      if (action === "accept" && res && res.decided > (res.tags_added + res.regions_filled)) {
+        // Not an error: some faces resolve to a (photo, person) that already has a box,
+        // so accepting them changes nothing. Say so rather than appearing to no-op.
+        setNote(`${res.decided} reviewed · ${res.tags_added} tagged` +
+                (res.regions_filled ? ` · ${res.regions_filled} outlined` : "") +
+                ` · ${res.decided - res.tags_added - res.regions_filled} already covered`);
+      } else setNote(null);
       const rest = items.filter((i) => !ids.includes(i.suggestion_id));
       setItems(rest);
       setSel(new Set());
@@ -125,7 +133,15 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           </button>
         </div>
 
-        {err && <p className="error">{err}</p>}
+        {err && (
+          <p className="error" role="alert">
+            {err}
+            <button className="link" style={{ marginLeft: 10, color: "#fff" }}
+                    onClick={() => setErr(null)}>dismiss</button>
+          </p>
+        )}
+
+        {note && <p className="hint note">{note}</p>}
 
         {tab === "suggestions" && (
           <div className="fq-body">

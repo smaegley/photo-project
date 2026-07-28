@@ -337,6 +337,14 @@ escapes); all 27 `/api/admin/*` routes role-gated; `database.py` WAL + `busy_tim
   nothing stays pinned. It only appeared with *slow-reading clients* standing in for
   tunnel latency (9.56s vs 0.03s). If prod misbehaves under load and dev looks fine,
   simulate the slow client before concluding it's environmental.
+- **`db.get()` cannot see rows added earlier in the same transaction.** Bulk-accepting
+  face suggestions blew up with `UNIQUE constraint failed: photo_person.photo_id,
+  photo_person.person_id` because a batch can hold **two faces of one person in one
+  photo** (mis-detection, reflection, photo-of-a-photo). Each `db.get` returned None, both
+  inserts queued, and the flush failed — taking the *whole* batch down. Any bulk writer
+  here must track what the request has already queued, not just what the DB holds. It
+  only bites at scale: 3 such pairs existed in 1,003 suggestions, so small batches passed
+  and Steve's 171 did not.
 - **Vite dying at startup with `ENOSPC: System limit for number of file watchers
   reached` is a HOST limit, not a code fault.** The VM shares its inotify budget with
   VS Code Server, which watches the whole workspace; when that's exhausted Vite can't

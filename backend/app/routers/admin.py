@@ -397,7 +397,14 @@ def decide_suggestions(body: dict, db: Session = Depends(get_db),
         m.FaceSuggestion.id.in_(ids), m.FaceSuggestion.status == m.FACE_PENDING).all()
     now = datetime.now(timezone.utc)
     added = []
-    for sg in sugs:
+    # `photo_person` is unique on (photo_id, person_id), and a batch can legitimately
+    # contain TWO faces of the same person in one photo — a mis-detection, a reflection,
+    # a photo-of-a-photo. `db.get` cannot see a row added earlier in this same
+    # transaction, so checking it alone let a duplicate through and the whole accept
+    # failed with an IntegrityError. Track what this request has queued as well.
+    # Best-scoring face first, so if two compete for one slot the stronger box wins.
+    queued: set[tuple[int, str]] = set()
+    for sg in sorted(sugs, key=lambda x: -x.score):
         sg.status = m.FACE_ACCEPTED if action == "accept" else m.FACE_REJECTED
         sg.decided_by, sg.decided_at = user.email, now
         if action != "accept":
@@ -405,12 +412,16 @@ def decide_suggestions(body: dict, db: Session = Depends(get_db),
         f = db.get(m.Face, sg.face_id)
         if not f:
             continue
-        pp = db.get(m.PhotoPerson, (f.photo_id, sg.person_id))
+        key = (f.photo_id, sg.person_id)
+        if key in queued:
+            continue          # a better-scoring face in this batch already took the slot
+        pp = db.get(m.PhotoPerson, key)
         if pp is None:
             db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=sg.person_id,
                                  source=SOURCE_HUMAN, uncertain=False,
                                  region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
             added.append([f.photo_id, sg.person_id, True])
+            queued.add(key)
         elif pp.region_w is None:
             pp.region_x, pp.region_y, pp.region_w, pp.region_h = f.x, f.y, f.w, f.h
             added.append([f.photo_id, sg.person_id, False])
@@ -488,10 +499,15 @@ def assign_faces(body: dict, db: Session = Depends(get_db),
         db.flush()
         new_cluster_id = cl.id
 
+    queued_pairs: set[tuple[int, str]] = set()
     for f in faces:
         moved.append([f.id, f.cluster_id])
         if action == "name":
+            if (f.photo_id, person_id) in queued_pairs:
+                f.cluster_id = None
+                continue
             if db.get(m.PhotoPerson, (f.photo_id, person_id)) is None:
+                queued_pairs.add((f.photo_id, person_id))
                 db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=person_id,
                                      source=SOURCE_HUMAN, uncertain=False,
                                      region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
@@ -572,6 +588,7 @@ def decide_clusters(body: dict, db: Session = Depends(get_db),
 
     now = datetime.now(timezone.utc)
     added = []
+    queued_pairs: set[tuple[int, str]] = set()
     for c in cl:
         c.status = m.CLUSTER_NAMED if action == "name" else m.CLUSTER_IGNORED
         c.person_id = person_id if action == "name" else None
@@ -579,7 +596,10 @@ def decide_clusters(body: dict, db: Session = Depends(get_db),
         if action != "name":
             continue
         for f in db.query(m.Face).filter(m.Face.cluster_id == c.id).all():
+            if (f.photo_id, person_id) in queued_pairs:
+                continue      # same (photo, person) already queued in this request
             if db.get(m.PhotoPerson, (f.photo_id, person_id)) is None:
+                queued_pairs.add((f.photo_id, person_id))
                 db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=person_id,
                                      source=SOURCE_HUMAN, uncertain=False,
                                      region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
