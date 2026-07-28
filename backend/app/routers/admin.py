@@ -361,7 +361,8 @@ def face_queue_person(person_id: str, limit: int = 300, db: Session = Depends(ge
                       user: m.User = Depends(require_admin)):
     """The pending suggestions for one person, highest confidence first."""
     rows = (db.query(m.FaceSuggestion.id, m.FaceSuggestion.face_id, m.FaceSuggestion.score,
-                     m.Face.photo_id, m.Photo.source_file, m.Photo.date_start)
+                     m.Face.photo_id, m.Photo.source_file, m.Photo.date_start,
+                     m.Face.x, m.Face.y, m.Face.w, m.Face.h)
             .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
             .join(m.Photo, m.Photo.id == m.Face.photo_id)
             .filter(m.FaceSuggestion.person_id == person_id,
@@ -372,8 +373,11 @@ def face_queue_person(person_id: str, limit: int = 300, db: Session = Depends(ge
     return [{"suggestion_id": sid, "face_id": fid, "score": round(sc, 3),
              "photo_id": pid, "source_file": sf,
              "year": dt.year if dt else None,
-             "backfill": pid in tagged}
-            for sid, fid, sc, pid, sf, dt in rows]
+             "backfill": pid in tagged,
+             # normalized centre+size, so the preview can outline WHICH face this is —
+             # adjacent faces otherwise both land inside the crop and are ambiguous
+             "box": [round(x, 5), round(y, 5), round(w, 5), round(h, 5)]}
+            for sid, fid, sc, pid, sf, dt, x, y, w, h in rows]
 
 
 @router.post("/face-suggestions/decide")
@@ -443,14 +447,15 @@ def face_cluster_faces(cluster_id: int, limit: int = 400, db: Session = Depends(
     out-of-domain corner. Whole-cluster decisions alone would force naming both as one
     animal or ignoring both."""
     rows = (db.query(m.Face.id, m.Face.det_score, m.Face.w, m.Face.h,
-                     m.Photo.source_file, m.Photo.date_start)
+                     m.Photo.source_file, m.Photo.date_start, m.Face.x, m.Face.y)
             .join(m.Photo, m.Photo.id == m.Face.photo_id)
             .filter(m.Face.cluster_id == cluster_id)
             .order_by((m.Face.w * m.Face.h).desc()).limit(limit).all())
     return [{"face_id": fid, "det_score": round(ds or 0, 3),
              "area": round(w * h, 5), "source_file": sf,
-             "year": dt.year if dt else None}
-            for fid, ds, w, h, sf, dt in rows]
+             "year": dt.year if dt else None,
+             "box": [round(x, 5), round(y, 5), round(w, 5), round(h, 5)]}
+            for fid, ds, w, h, sf, dt, x, y in rows]
 
 
 @router.post("/faces/assign")

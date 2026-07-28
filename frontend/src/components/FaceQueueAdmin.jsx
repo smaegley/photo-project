@@ -13,11 +13,11 @@ import { api } from "../api";
 // threshold, so the human click is the defence, not the score. Every action is one
 // undoable contribution covering the whole batch.
 
-function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile }) {
+function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile, box }) {
   return (
     <button className={`fq-crop ${selected ? "on" : ""}`} onClick={onClick} type="button"
-            onMouseEnter={() => onPeek?.({ faceId, sourceFile })}
-            onFocus={() => onPeek?.({ faceId, sourceFile })}>
+            onMouseEnter={() => onPeek?.({ faceId, sourceFile, box })}
+            onFocus={() => onPeek?.({ faceId, sourceFile, box })}>
       <img src={`/api/face-crop/${faceId}`} alt="" loading="lazy" />
       {score != null && <span className="fq-score">{score.toFixed(2)}</span>}
       {badge && <span className="fq-badge">{badge}</span>}
@@ -196,7 +196,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                   <div className="fq-grid" onMouseLeave={() => setPeek(null)}>
                     {items.map((i) => (
                       <Crop key={i.suggestion_id} faceId={i.face_id} score={i.score}
-                            sourceFile={i.source_file} onPeek={setPeek}
+                            sourceFile={i.source_file} box={i.box} onPeek={setPeek}
                             badge={i.backfill ? "box-only" : (i.year || null)}
                             selected={sel.has(i.suggestion_id)}
                             onClick={() => toggle(i.suggestion_id)} />
@@ -215,8 +215,22 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           <div className="fq-peek" onMouseLeave={() => setPeek(null)}>
             <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
             {peek.sourceFile && (
-              <img className="fq-peek-photo"
-                   src={`/api/display/${encodeURIComponent(peek.sourceFile)}`} alt="" />
+              // The wrapper shrink-wraps the image (no object-fit), so a box positioned
+              // in % of the wrapper lands exactly on the face regardless of how the
+              // photo scales. Without this outline, two adjacent faces both sit inside
+              // the crop and there is no way to tell which one is being judged.
+              <span className="fq-peek-wrap">
+                <img className="fq-peek-photo"
+                     src={`/api/display/${encodeURIComponent(peek.sourceFile)}`} alt="" />
+                {peek.box && (
+                  <span className="fq-peek-box" style={{
+                    left: `${(peek.box[0] - peek.box[2] / 2) * 100}%`,
+                    top: `${(peek.box[1] - peek.box[3] / 2) * 100}%`,
+                    width: `${peek.box[2] * 100}%`,
+                    height: `${peek.box[3] * 100}%`,
+                  }} />
+                )}
+              </span>
             )}
           </div>
         )}
@@ -296,7 +310,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       <div className="fq-grid small">
                         {clusterFaces.map((f) => (
                           <Crop key={f.face_id} faceId={f.face_id}
-                                sourceFile={f.source_file} onPeek={setPeek}
+                                sourceFile={f.source_file} box={f.box} onPeek={setPeek}
                                 selected={faceSel.has(f.face_id)}
                                 onClick={() => setFaceSel((s) => {
                                   const n = new Set(s);

@@ -591,3 +591,8 @@ a.menu-item { text-decoration: none; cursor: pointer; }
   margin: 6px 0; font-size: 13px; font-weight: 500; }
 .hint.note { background: color-mix(in srgb, currentColor 9%, transparent);
   border-radius: 7px; padding: 7px 10px; }
+/* Outline the subject face on the context photo. The wrapper shrink-wraps the image so
+   percentage coords map exactly onto it at any rendered size. */
+.fq-peek-wrap { position: relative; display: inline-block; line-height: 0; }
+.fq-peek-box { position: absolute; border: 2px solid #22d3ee; border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(0,0,0,.55), 0 0 10px rgba(34,211,238,.65); pointer-events: none; }
