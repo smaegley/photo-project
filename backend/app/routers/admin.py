@@ -548,10 +548,18 @@ def face_clusters(status: str = "pending", min_faces: int = 2, limit: int = 200,
          .order_by(m.FaceCluster.prominence.desc().nullslast()).limit(limit).all())
     out = []
     for c in q:
-        fids = [r[0] for r in db.query(m.Face.id).filter(m.Face.cluster_id == c.id).limit(8).all()]
+        # Samples carry the photo + box so the panel can preview one in context. Ids
+        # alone forced the collapsed view to render crops it could say nothing about.
+        rows = (db.query(m.Face.id, m.Face.x, m.Face.y, m.Face.w, m.Face.h,
+                         m.Photo.source_file)
+                .join(m.Photo, m.Photo.id == m.Face.photo_id)
+                .filter(m.Face.cluster_id == c.id)
+                .order_by((m.Face.w * m.Face.h).desc()).limit(8).all())
         out.append({"id": c.id, "n_faces": c.n_faces,
                     "prominence": round(c.prominence or 0, 5),
-                    "sample_face_ids": fids})
+                    "samples": [{"face_id": fid, "source_file": sf,
+                                 "box": [round(x, 5), round(y, 5), round(w, 5), round(h, 5)]}
+                                for fid, x, y, w, h, sf in rows]})
     return out
 
 

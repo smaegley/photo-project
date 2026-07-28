@@ -13,11 +13,15 @@ import { api } from "../api";
 // threshold, so the human click is the defence, not the score. Every action is one
 // undoable contribution covering the whole batch.
 
-function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile, box }) {
+function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile, box,
+                peeked, hoverPeek = true }) {
+  const info = { faceId, sourceFile, box };
   return (
-    <button className={`fq-crop ${selected ? "on" : ""}`} onClick={onClick} type="button"
-            onMouseEnter={() => onPeek?.({ faceId, sourceFile, box })}
-            onFocus={() => onPeek?.({ faceId, sourceFile, box })}>
+    <button className={`fq-crop ${selected ? "on" : ""} ${peeked ? "peeked" : ""}`}
+            type="button"
+            onClick={(e) => { onPeek?.(info); onClick?.(e); }}
+            onMouseEnter={hoverPeek ? () => onPeek?.(info) : undefined}
+            onFocus={hoverPeek ? () => onPeek?.(info) : undefined}>
       <img src={`/api/face-crop/${faceId}`} alt="" loading="lazy" />
       {score != null && <span className="fq-score">{score.toFixed(2)}</span>}
       {badge && <span className="fq-badge">{badge}</span>}
@@ -254,6 +258,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     document.querySelector(".fq-cluster.active")?.scrollIntoView({ block: "nearest" });
   }, [activeCluster]);
 
+  // The Unknown-faces preview is click-sticky, so drop it when the context changes —
+  // otherwise it lingers showing a face from a group that is no longer on screen.
+  useEffect(() => { setPeek(null); }, [tab, openCluster]);
+
   // A <select> only type-ahead-matches from the START of an option, which is useless
   // across 116 people — typing "mae" should find every Maegley. An input + datalist is a
   // real combo box: substring matching, keyboard-driven, native dropdown. It hands back
@@ -389,7 +397,12 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           // Grid crops are ~96px, which is not enough to tell two dogs or two siblings
           // apart. Hovering shows a much larger crop AND the whole photo — context often
           // settles it faster than resolution does (who else is in frame, where it is).
-          <div className="fq-peek" onMouseLeave={() => setPeek(null)}>
+          <div className={`fq-peek ${tab === "unknown" ? "sticky" : ""}`}
+               onMouseLeave={() => { if (tab !== "unknown") setPeek(null); }}>
+            {tab === "unknown" && (
+              <button className="fq-peek-close" onClick={() => setPeek(null)}
+                      aria-label="Close preview">✕</button>
+            )}
             <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
             {peek.sourceFile && (
               // The wrapper shrink-wraps the image (no object-fit), so a box positioned
@@ -415,7 +428,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         {tab === "unknown" && (
           <div className="fq-unknown">
             <p className="hint">
-<kbd>↑</kbd><kbd>↓</kbd> move between groups · <kbd>N</kbd> name it (type any part,
+Click any face to enlarge it and outline it in its photo.
+              <kbd>↑</kbd><kbd>↓</kbd> move between groups · <kbd>N</kbd> name it (type any part,
               e.g. "mae") · <kbd>T</kbd> or <kbd>Enter</kbd> tags them all · <kbd>I</kbd> ignores.
               Faces matching nobody enrolled, grouped by who they look like and ordered by
               prominence — the biggest, sharpest faces first, since those are the ones worth
@@ -526,6 +540,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                         {clusterFaces.map((f) => (
                           <Crop key={f.face_id} faceId={f.face_id}
                                 sourceFile={f.source_file} box={f.box} onPeek={setPeek}
+                                hoverPeek={false} peeked={peek?.faceId === f.face_id}
                                 selected={faceSel.has(f.face_id)}
                                 onClick={() => setFaceSel((s) => {
                                   const n = new Set(s);
@@ -537,7 +552,11 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     </>
                   ) : (
                     <div className="fq-grid small">
-                      {c.sample_face_ids.map((fid) => <Crop key={fid} faceId={fid} />)}
+                      {(c.samples || []).map((f) => (
+                        <Crop key={f.face_id} faceId={f.face_id} sourceFile={f.source_file}
+                              box={f.box} onPeek={setPeek} hoverPeek={false}
+                              peeked={peek?.faceId === f.face_id} />
+                      ))}
                     </div>
                   )}
                 </div>

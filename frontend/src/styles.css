@@ -632,3 +632,9 @@ button:disabled kbd { opacity: .3; }
 .fq-fam input { margin: 0; }
 .link.danger { color: #b91c1c; }
 [data-theme="dark"] .link.danger { color: #f87171; }
+/* Click-sticky preview needs a dismiss and a pointer, unlike the hover one. */
+.fq-peek.sticky { pointer-events: auto; }
+.fq-peek-close { position: absolute; top: 4px; right: 6px; background: none; border: 0;
+  color: inherit; opacity: .6; cursor: pointer; font-size: 13px; line-height: 1; }
+.fq-peek-close:hover { opacity: 1; }
+.fq-crop.peeked { border-color: #22d3ee; }
