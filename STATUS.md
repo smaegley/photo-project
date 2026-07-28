@@ -66,20 +66,21 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > cached derivatives and never touches B2 while browsing. Four view tabs
 > (All / Slide / Scanned / Digital). Full design + build log: **SPEC §13**.
 >
-> **🔨 §14 FACE MATCHING — IN BUILD, DEV ONLY.** Design + all four probes closed in
-> SPEC §14. **Slices 1–3 done:** schema (`face`, `face_suggestion`, `face_cluster`),
-> face-region import from the LR catalog (**9,177 regions**, up from 1,784), and a full
-> detection pass (**14,245 faces**, 6,598 photos, 81.7 min).
-> **Next: the dev→prod export path, then slice 4 matching, then the by-person UI.**
+> **🔨 §14 FACE MATCHING — SLICES 1–5 BUILT, IN USE, DEV ONLY.** Design + all four probes
+> in SPEC §14. 14,245 faces detected across 6,598 photos; 10,241 enrolled regions;
+> **1,008 suggestions accepted / 44 rejected = 95.8% precision**; 22 unknown groups named,
+> 34 ignored. Review UI at **⚙ Admin → Manage ▾ → Review faces…**
+> **Next: slice 6** (weekly-sync integration) + the prod export of confirmed tags.
 >
-> Key decisions already made — don't re-litigate:
+> Key decisions — don't re-litigate:
 > - **Enrichment runs on dev and EXPORTS to prod** (§14.8a). Prod never runs detection;
 >   it receives confirmed `photo_person` tags. Export keys on **`source_file`**, never
 >   `photo.id` — row ids differ per database.
 > - **Match threshold 0.45** (P-F3, measured). Below it, faces go to unknown-clusters.
 > - **Suggest, never auto-apply.** ~4.6% of strangers still clear 0.45.
-> - Steve confirms **by person**; unknown faces cluster so background strangers are
->   dismissed in bulk (§14.7a).
+> - Confirm **by person**; unknown faces cluster so background strangers go in bulk.
+> - **Pets ARE detected** (D5's premise was wrong) but not separable by the matcher —
+>   all dogs look alike to ArcFace. Split them by hand in the group view.
 >
 > **⚠ A dev DB refresh (`scripts/load-prod-snapshot.sh`) destroys the §14 work** — 14,245
 > faces is ~82 min of CPU to rebuild, plus `import_faces` (~1 min) and `import_digital`

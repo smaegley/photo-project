@@ -1285,8 +1285,14 @@ meantime. Nothing here is blocked by tagging coverage — build against the curr
 
 ## 14. Phase 3 design — Face matching & bulk confirm (2026-07-27)
 
-> **Status:** designed **2026-07-27**, **not built**. This realizes the face-recognition
-> half of **§5**'s enrichment pipeline, which reserved the slot but never specified it.
+> **Status: slices 1–5 BUILT and IN USE on dev (2026-07-28).** Designed 2026-07-27; all
+> four probes closed the same day. Realizes the face-recognition half of **§5**'s
+> enrichment pipeline, which reserved the slot but never specified it.
+>
+> **Where it stands:** 14,245 faces detected across 6,598 photos · 10,241 enrolled regions
+> · **1,008 suggestions accepted, 44 rejected (95.8% observed precision)** · 22 unknown
+> groups named, 34 ignored. Remaining: **slice 6** (fold into the weekly sync) and the
+> prod-facing export of confirmed tags. **Dev only** — prod never runs detection (§14.8a).
 > It **refines §5** where §5 is vague, and depends on §13 having landed: matching needs
 > pixel access, which the B2 storage layer now provides.
 >
@@ -1493,7 +1499,12 @@ the queue surfaces will be faces with no name at all.
 2. **Suggest, never auto-apply** (D4). A threshold plus human confirmation keeps
    mistakes out of a family archive that is meant to be trustworthy.
 3. **Pets are out** (D5).
-4. **A 29-person long tail** had only 1–2 catalog examples as of 2026-07-26 and will
+4. **Pets are detected but not separable** (D5, corrected). SCRFD finds dog faces and
+   clusters them together — ArcFace maps anything out-of-domain into one corner, so all
+   dogs look alike to it. A human separates them instantly, which is what per-face
+   splitting (§14.7a) is for. Practical side-benefit, not the out-of-scope item D5
+   originally assumed.
+5. **A 29-person long tail** had only 1–2 catalog examples as of 2026-07-26 and will
    match poorly. That is fine — they are exactly the faces worth tagging by hand, and
    the matcher handles the volume instead.
 5. **This is the largest single feature discussed for this project.** It is well-trodden
@@ -1693,25 +1704,70 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
    counts alone looked fine. Those are now filtered at match time. The data model cannot
    represent a second face of the same person in one frame, so nothing is lost by not
    asking. **Queue: 1,400 → 1,077** (1,007 genuinely new, 70 true region backfill).
-5. **Bulk-confirm UI** (§14.7) + undo integration. **Backend ✅ BUILT (2026-07-27).**
-   `cluster_faces.py` + six admin endpoints + `/api/face-crop/{id}` (crops the display
-   derivative — the same file detection ran on, so boxes line up exactly).
+5. **Bulk-confirm UI — ✅ BUILT (2026-07-27/28), in use.** `cluster_faces.py`, eight admin
+   endpoints, `/api/face-crop/{id}` (crops the display derivative — the same file
+   detection ran on, so boxes line up exactly), and the `FaceQueueAdmin` panel under
+   **Manage ▾ → Review faces…**.
 
    **Clustering reality check:** 4,003 unidentified faces → 2,976 clusters, but **2,520
    are singletons**. A threshold sweep (0.40–0.60) showed singletons dominate at *every*
    setting — lowering it merely merges strangers into implausible blobs (largest cluster
    183 at 0.40 vs 86 at 0.55). So this is inherent, not mistuned: background people
-   genuinely appear once. Singletons are 1.6× less prominent than multi-face clusters,
-   confirming they are the background tail.
+   genuinely appear once. Singletons measured **1.6× less prominent** than multi-face
+   clusters, confirming they are the background tail. **The fix was UI, not tuning:** show
+   the 456 multi-face groups, make the 2,520 singletons one bulk action.
 
-   **The fix is UI, not tuning:** the queue shows the **456 multi-face clusters** (1,483
-   faces) for naming and treats the 2,520 singletons as **one bulk action**. Review
-   burden is ~456 decisions + one click, not 2,976. `/face-clusters` defaults to
-   `min_faces=2` for exactly this reason.
+   **The interface, as it settled after live use.** Steve drove the design by using it;
+   most of what follows came from his feedback rather than the original §14.7 sketch:
+   - **Two tabs** — *Suggestions* ("is this Kate?", one person at a time, crops sorted
+     most-confident first) and *Unknown faces* ("who is this, if anyone?").
+   - **Hover preview**: a 480px crop **plus the whole photo, with the subject face
+     outlined**. The outline matters more than the resolution — with two adjacent faces
+     the crop contains both and there is no other way to tell which is being judged.
+     Context (who else is in frame, where) often settles identity faster than pixels.
+   - **Keyboard loop**, because a 1,000-item pass is otherwise all mouse travel:
+     `↑↓` move · `S` select all · `C` clear · `A` accept · `R` reject · `Esc` clear-then-
+     close. On Unknown faces: `↑↓` move · `N` name · `T`/`Enter` tag all · `I` ignore.
+     Guarded so typing in a field never triggers a bulk write.
+   - **Auto-advance** to the next person/group when the current one is finished, so the
+     reviewer stays in the grid rather than back in the sidebar.
+   - **Undo in the panel header**, showing what it will reverse. Undo otherwise lives in
+     the header menu *which this panel covers*, so fixing a mis-click meant abandoning
+     your place mid-pass.
+   - **Type-ahead name box**, not a `<select>`: native selects only match from the *start*
+     of an option, useless across 118 people — typing "mae" must find every Maegley.
+   - **Create-a-person inline**, as a visibly distinct `＋ Create "<name>" & tag` action.
+     Deliberately not a silent fallback — that is the shape that produced seven unreviewed
+     people earlier the same day (§14.3).
+   - **Per-face splitting** for mixed groups (§14.7a) — the Abby/Toby case.
+   - **`DELETE /api/admin/people/{id}`**, offered only at zero photos, refusing (never
+     cascading) when tags, kin links or a user account still point at the person. Added
+     because inline creation had no way back from a fat-fingered name.
 
-   Every action is undoable — `face_decide` and `face_cluster_decide` inverses restore
-   suggestions to `pending` and remove only the tags that decision created. Verified end
-   to end: accept 3 → tag added → undo → tag gone, all 1,400 back to pending.
+   **Two bugs worth remembering, both found by using it rather than testing it:**
+   - **Bulk accept died on `UNIQUE constraint failed: photo_person`.** A batch can hold
+     **two faces of one person in one photo** (mis-detection, reflection, photo-of-a-photo)
+     and `db.get()` cannot see a row added earlier in the same transaction, so both
+     inserts queued and the flush failed — taking the *whole* batch down. Exactly 3 such
+     pairs existed in 1,003 suggestions, two of them Steve's, which is why it reproduced
+     only for him. **Any bulk writer here must track what the request has queued, not just
+     what the DB holds.**
+   - **The failure was invisible**: `.error` had *no CSS at all*, so a 500 rendered as
+     nothing. "Nothing happens" was literally true. Errors are now a red banner, and
+     partial outcomes report honestly ("107 reviewed · 105 tagged · 2 already covered").
+
+   **Live results (2026-07-28), which is the real validation:**
+   **1,008 accepted / 44 rejected = 95.8% observed precision**, against P-F3's predicted
+   93.5% — better because the queue only ever shows faces clearing 0.45, so the marginal
+   cases were filtered before Steve saw them. 22 groups named, 34 ignored, 25 suggestions
+   left. Enrollment has grown 9,177 → **10,241 regions** as a side-effect of confirming.
+
+   *Steve's read on his own rejections:* mostly **reflections and pictures-of-pictures**.
+   They measure 6× smaller in area than accepted faces (median 0.0017 vs 0.0097) with
+   lower detection scores — worth rejecting not because the tag would be wrong but because
+   such faces make poor references and would drag a person's centroid toward "small and
+   blurry".
+
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
 
