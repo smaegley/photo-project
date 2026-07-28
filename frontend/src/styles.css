@@ -622,3 +622,8 @@ kbd { font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 5px;
   opacity: .5; vertical-align: middle; }
 button:disabled kbd { opacity: .3; }
+.fq-topbar { display: flex; align-items: center; gap: 10px; }
+.fq-topbar .seg { flex: 0 0 auto; }
+.fq-undo { margin-left: auto; font-size: 12px; max-width: 340px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.fq-cluster.active { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6 inset; }

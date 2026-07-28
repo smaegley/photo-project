@@ -42,12 +42,23 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
 
+  const refreshUndo = () => api.undoPeek().then(setUndoInfo).catch(() => setUndoInfo(null));
   const loadQueue = () => api.faceQueue().then(setQueue).catch((e) => setErr(String(e)));
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
     .then(([c, s]) => { setClusters(c); setSummary(s); })
     .catch((e) => setErr(String(e)));
 
-  useEffect(() => { loadQueue(); loadClusters(); }, []);
+  useEffect(() => { loadQueue(); loadClusters(); refreshUndo(); }, []);
+
+  // Land on the first person automatically — on open, and again whenever the current
+  // one is finished and drops out of the queue. Saves a click per person across a long
+  // pass, and keeps the reviewer in the grid rather than back in the sidebar.
+  useEffect(() => {
+    if (!queue || !queue.length) return;
+    if (!person || !queue.some((q) => q.person_id === person)) {
+      setPerson(queue[0].person_id);
+    }
+  }, [queue]);   // eslint-disable-line
 
   useEffect(() => {
     if (!person) { setItems([]); return; }
@@ -75,7 +86,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
       setItems(rest);
       setSel(new Set());
       await loadQueue();
-      if (!rest.length) setPerson(null);
+      await refreshUndo();
       onChanged?.();
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
@@ -99,6 +110,18 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
       setClusterFaces((f) => f.filter((x) => !faceSel.has(x.face_id)));
       setFaceSel(new Set());
       await loadClusters();
+      await refreshUndo();
+      onChanged?.();
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  }
+
+  async function doUndo() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.undo();
+      setNote(`Undone: ${r.undone}${r.new ? ` — ${r.new}` : ""}`);
+      await Promise.all([loadQueue(), loadClusters(), refreshUndo()]);
+      if (person) api.faceQueuePerson(person).then(setItems).catch(() => {});
       onChanged?.();
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
@@ -108,6 +131,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     try {
       await api.decideClusters(body);
       await loadClusters();
+      await refreshUndo();
       onChanged?.();
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
@@ -125,7 +149,21 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         if (sel.size) { e.preventDefault(); setSel(new Set()); } else onClose();
         return;
       }
-      if (busy || tab !== "suggestions" || !person) return;
+      if (busy) return;
+      if (tab === "unknown") {
+        // `I` ignores whatever is highlighted: the selected faces inside an expanded
+        // group, else the whole group under the cursor. The highlight is what makes it
+        // unambiguous which one is about to go.
+        if (k === "i") {
+          if (openCluster && faceSel.size) { e.preventDefault(); assignSelected("ignore"); }
+          else if (activeCluster) {
+            e.preventDefault();
+            decideCluster({ action: "ignore", cluster_ids: [activeCluster] });
+          }
+        }
+        return;
+      }
+      if (tab !== "suggestions" || !person) return;
       if (k === "a" && sel.size) { e.preventDefault(); decide("accept", [...sel]); }
       else if (k === "r" && sel.size) { e.preventDefault(); decide("reject", [...sel]); }
       else if (k === "s") { e.preventDefault(); setSel(new Set(items.map((i) => i.suggestion_id))); }
@@ -133,7 +171,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, person, sel, items, busy]);   // eslint-disable-line
+  }, [tab, person, sel, items, busy, activeCluster, openCluster, faceSel]);   // eslint-disable-line
 
   const totalPending = useMemo(
     () => (queue || []).reduce((n, r) => n + r.pending, 0), [queue]);
@@ -147,12 +185,24 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           <button className="lb-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
-        <div className="seg fq-tabs">
+        <div className="fq-topbar">
+          <div className="seg fq-tabs">
           <button className={tab === "suggestions" ? "on" : ""} onClick={() => setTab("suggestions")}>
             Suggestions {totalPending ? `(${totalPending.toLocaleString()})` : ""}
           </button>
           <button className={tab === "unknown" ? "on" : ""} onClick={() => setTab("unknown")}>
             Unknown faces {clusters ? `(${clusters.length})` : ""}
+          </button>
+          </div>
+          {/* Undo lives in the header menu, which this panel covers — and closing the
+              panel loses your place mid-pass. Surfacing it here makes a mis-click one
+              click to reverse without leaving the queue. */}
+          <button className="fq-undo" disabled={busy || !undoInfo?.available}
+                  onClick={doUndo}
+                  title={undoInfo?.available
+                    ? `Undo ${undoInfo.field}${undoInfo.new ? `: ${undoInfo.new}` : ""}`
+                    : "Nothing to undo"}>
+            ↶ Undo{undoInfo?.available && undoInfo.new ? ` · ${undoInfo.new}` : ""}
           </button>
         </div>
 
@@ -288,7 +338,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
               {!clusters && <p className="muted">Loading…</p>}
               {clusters?.length === 0 && <p className="muted">No groups left to review.</p>}
               {clusters?.map((c) => (
-                <div className="fq-cluster" key={c.id}>
+                <div className={`fq-cluster ${activeCluster === c.id ? "active" : ""}`}
+                     key={c.id} onMouseEnter={() => setActiveCluster(c.id)}>
                   <div className="fq-cluster-head">
                     <b>{c.n_faces} faces</b>
                     <button className="link" onClick={() => openGroup(c.id)}>
@@ -305,9 +356,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                                                            person_id: naming[c.id] })}>
                       Tag all
                     </button>
-                    <button disabled={busy}
+                    <button className="fq-reject" disabled={busy}
                             onClick={() => decideCluster({ action: "ignore", cluster_ids: [c.id] })}>
-                      Ignore
+                      Ignore <kbd>I</kbd>
                     </button>
                   </div>
                   {openCluster === c.id ? (
