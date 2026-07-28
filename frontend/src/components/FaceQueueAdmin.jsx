@@ -548,11 +548,16 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                                            reloadAudit({ maxArea: e.target.checked ? 0.003 : null }); }} />
                 tiny faces only
               </label>
-              <span className="muted">{audit.length} shown</span>
+              <span className="muted">{audit.length.toLocaleString()} of {auditTotal.toLocaleString()}</span>
               <span className="spacer" />
               <button onClick={() => setAuditSel(new Set(audit.map((a) => a.key)))}
                       disabled={busy || !audit.length}>Select all {audit.length}</button>
               <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>Clear</button>
+              {audit.length < auditTotal && (
+                <button onClick={loadMoreAudit} disabled={busy}>
+                  Load {Math.min(300, auditTotal - audit.length).toLocaleString()} more
+                </button>
+              )}
               <button className="fq-reject" disabled={busy || !auditSel.size}
                       onClick={removeSelectedTags}>
                 ✕ Remove tag {auditSel.size || ""}
