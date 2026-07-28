@@ -827,6 +827,53 @@ def edit_notes(photo_id: int, body: NotesReq, db: Session = Depends(get_db),
     return {"notes": p.notes}
 
 
+@router.delete("/people/{person_id}")
+def delete_person(person_id: str, db: Session = Depends(get_db),
+                  user: m.User = Depends(require_admin)):
+    """Remove a person — for typos and mistaken creations, not for curation.
+
+    **Refuses while anything still points at them**, with a count, rather than cascading:
+    deleting a tagged person would silently strip them from photos, and there is no way
+    to tell "this was a typo" from "I tagged 40 photos then changed my mind" at this
+    layer. Untag or merge first if that is what you meant.
+
+    Undoable — the inverse carries the whole row plus its aliases, so the person comes
+    back intact rather than as a bare id.
+    """
+    p = db.get(m.Person, person_id)
+    if p is None:
+        raise HTTPException(404, "person not found")
+
+    tags = db.query(func.count(m.PhotoPerson.photo_id)).filter(
+        m.PhotoPerson.person_id == person_id).scalar() or 0
+    if tags:
+        raise HTTPException(409, f"'{person_id}' is tagged on {tags} photo(s) — "
+                                 "untag or merge them first")
+    kin = db.query(func.count(m.Person.id)).filter(
+        (m.Person.father_id == person_id) | (m.Person.mother_id == person_id)
+        | (m.Person.spouse_id == person_id)).scalar() or 0
+    if kin:
+        raise HTTPException(409, f"'{person_id}' is listed as a parent/spouse of "
+                                 f"{kin} other person(s) — clear those links first")
+    users = db.query(func.count(m.User.email)).filter(
+        m.User.person_id == person_id).scalar() or 0
+    if users:
+        raise HTTPException(409, f"'{person_id}' is linked to {users} user account(s)")
+
+    aliases = [a.alias for a in db.query(m.PersonAlias)
+               .filter(m.PersonAlias.person_id == person_id).all()]
+    row = {"id": p.id, "canonical_name": p.canonical_name, "is_family": bool(p.is_family),
+           "notes": p.notes, "father_id": p.father_id, "mother_id": p.mother_id,
+           "spouse_id": p.spouse_id, "representative_photo_id": p.representative_photo_id}
+    db.query(m.PersonAlias).filter(m.PersonAlias.person_id == person_id).delete(
+        synchronize_session=False)
+    db.delete(p)
+    _log(db, user, "person:delete", person_id, None,
+         inverse={"op": "person_undelete", "row": row, "aliases": aliases})
+    db.commit()
+    return {"deleted": person_id}
+
+
 @router.post("/people")
 def create_person(body: PersonCreate, db: Session = Depends(get_db),
                   user: m.User = Depends(require_admin)):
@@ -1096,6 +1143,13 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.delete(pp)          # the tag itself came from this decision
             else:
                 pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "person_undelete":
+        r = inv["row"]
+        if db.get(m.Person, r["id"]) is None:
+            db.add(m.Person(**r))
+            db.flush()
+            for a in inv.get("aliases", []):
+                db.add(m.PersonAlias(person_id=r["id"], alias=a))
     elif op == "faces_assign":
         for photo_id, person_id in inv.get("added", []):
             pp = db.get(m.PhotoPerson, (photo_id, person_id))

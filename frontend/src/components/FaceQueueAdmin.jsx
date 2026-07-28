@@ -62,6 +62,15 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     }
   }, [queue]);   // eslint-disable-line
 
+  // Same auto-advance for groups: after a Tag all / Ignore the list reloads and the
+  // old id is gone, which left nothing highlighted and broke the ↑/↓ loop.
+  useEffect(() => {
+    if (!clusters || !clusters.length) return;
+    if (!activeCluster || !clusters.some((c) => c.id === activeCluster)) {
+      setActiveCluster(clusters[0].id);
+    }
+  }, [clusters]);   // eslint-disable-line
+
   useEffect(() => {
     if (!person) { setItems([]); return; }
     setSel(new Set());

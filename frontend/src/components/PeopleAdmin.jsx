@@ -80,6 +80,14 @@ export default function PeopleAdmin({ onClose, onChanged }) {
       run(`renamed to ${name.trim()}`, () => api.renamePerson(p.id, name.trim()));
   };
 
+  // Only offered at zero photos. The server refuses a tagged person anyway — deleting
+  // one would silently strip them from photos — so showing it on someone with 200 tags
+  // would be an error waiting to happen. This is for typos and mistaken creations.
+  const remove = (p) => {
+    if (!window.confirm(`Delete "${p.name}"? They have no photos. This is undoable.`)) return;
+    run(`deleted ${p.name}`, () => api.deletePerson(p.id));
+  };
+
   const toggleFamily = (p) =>
     run(`${p.name} is now ${p.is_family ? "non-family" : "family"}`,
         () => api.renamePerson(p.id, p.name, !p.is_family));
@@ -145,6 +153,12 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                       {editingLinks === p.id ? "cancel" : "edit links"}
                     </button>
                   )}
+                    {p.photo_count === 0 && (
+                      <button className="link danger" onClick={() => remove(p)} disabled={busy}
+                              title="Only possible while they have no photos">
+                        delete
+                      </button>
+                    )}
                 </span>
               </div>
               {editingLinks === p.id && (

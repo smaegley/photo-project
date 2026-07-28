@@ -630,3 +630,5 @@ button:disabled kbd { opacity: .3; }
 .fq-nameinput { min-width: 170px; }
 .fq-fam { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; opacity: .8; }
 .fq-fam input { margin: 0; }
+.link.danger { color: #b91c1c; }
+[data-theme="dark"] .link.danger { color: #f87171; }

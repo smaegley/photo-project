@@ -92,6 +92,7 @@ export const api = {
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
   createPerson: (body) => send("POST", "/api/admin/people", body),
+  deletePerson: (id) => send("DELETE", `/api/admin/people/${encodeURIComponent(id)}`),
   renamePerson: (id, canonical_name, is_family) =>
     send("PATCH", `/api/admin/people/${id}`,
       is_family === undefined ? { canonical_name } : { canonical_name, is_family }),
