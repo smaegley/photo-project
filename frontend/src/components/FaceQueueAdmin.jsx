@@ -13,9 +13,11 @@ import { api } from "../api";
 // threshold, so the human click is the defence, not the score. Every action is one
 // undoable contribution covering the whole batch.
 
-function Crop({ faceId, score, badge, selected, onClick }) {
+function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile }) {
   return (
-    <button className={`fq-crop ${selected ? "on" : ""}`} onClick={onClick} type="button">
+    <button className={`fq-crop ${selected ? "on" : ""}`} onClick={onClick} type="button"
+            onMouseEnter={() => onPeek?.({ faceId, sourceFile })}
+            onFocus={() => onPeek?.({ faceId, sourceFile })}>
       <img src={`/api/face-crop/${faceId}`} alt="" loading="lazy" />
       {score != null && <span className="fq-score">{score.toFixed(2)}</span>}
       {badge && <span className="fq-badge">{badge}</span>}
@@ -35,6 +37,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [openCluster, setOpenCluster] = useState(null);   // expanded cluster id
   const [clusterFaces, setClusterFaces] = useState([]);   // its full face list
   const [faceSel, setFaceSel] = useState(() => new Set());
+  const [peek, setPeek] = useState(null);   // {faceId, sourceFile} under the cursor
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -174,9 +177,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     <b> box-only</b> means this person is already tagged on that photo and
                     accepting just adds the face outline.
                   </p>
-                  <div className="fq-grid">
+                  <div className="fq-grid" onMouseLeave={() => setPeek(null)}>
                     {items.map((i) => (
                       <Crop key={i.suggestion_id} faceId={i.face_id} score={i.score}
+                            sourceFile={i.source_file} onPeek={setPeek}
                             badge={i.backfill ? "box-only" : (i.year || null)}
                             selected={sel.has(i.suggestion_id)}
                             onClick={() => toggle(i.suggestion_id)} />
@@ -185,6 +189,19 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {peek && (
+          // Grid crops are ~96px, which is not enough to tell two dogs or two siblings
+          // apart. Hovering shows a much larger crop AND the whole photo — context often
+          // settles it faster than resolution does (who else is in frame, where it is).
+          <div className="fq-peek" onMouseLeave={() => setPeek(null)}>
+            <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
+            {peek.sourceFile && (
+              <img className="fq-peek-photo"
+                   src={`/api/display/${encodeURIComponent(peek.sourceFile)}`} alt="" />
+            )}
           </div>
         )}
 
@@ -263,6 +280,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       <div className="fq-grid small">
                         {clusterFaces.map((f) => (
                           <Crop key={f.face_id} faceId={f.face_id}
+                                sourceFile={f.source_file} onPeek={setPeek}
                                 selected={faceSel.has(f.face_id)}
                                 onClick={() => setFaceSel((s) => {
                                   const n = new Set(s);

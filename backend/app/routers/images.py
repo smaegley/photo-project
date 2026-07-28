@@ -160,7 +160,7 @@ def face(person_id: str, _user=Depends(image_user)):
 
 
 @router.get("/face-crop/{face_id}")
-def face_crop(face_id: int, _user=Depends(image_user)):
+def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
     """Cropped face for the §14 confirm queue.
 
     Crops the **display derivative**, which is already local and already sized — the same
@@ -178,9 +178,13 @@ def face_crop(face_id: int, _user=Depends(image_user)):
         src_file, fv, versioned=(backend == "b2"))
     if not src.exists():
         raise HTTPException(404, "no display derivative — run prewarm")
-    cache = settings.faces_dir / f"face{face_id}.jpg"
+    # `size` serves a larger crop for close inspection — grid thumbnails are too small to
+    # tell similar subjects apart (two dogs, siblings). Cached per size; clamped so the
+    # parameter can't be used to generate unbounded work.
+    edge = max(120, min(int(size or derivatives.FACE_MAX), 640))
+    cache = settings.faces_dir / f"face{face_id}_{edge}.jpg"
     if not cache.exists():
-        derivatives.face_thumb(src, cache, region)
+        derivatives.face_thumb(src, cache, region, max_edge=edge)
     return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
 
 

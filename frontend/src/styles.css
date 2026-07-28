@@ -577,3 +577,11 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 .fq-cluster-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .fq-cluster-head .spacer { flex: 1; }
 .fq-split { padding: 6px 0; border-top: 1px dashed var(--line, #ddd); }
+/* Hover preview: big crop + the whole photo, so context helps where pixels don't. */
+.fq-peek { position: fixed; right: 22px; bottom: 22px; z-index: 60;
+  background: var(--panel, #1b1b1b); border: 1px solid var(--line, #444);
+  border-radius: 10px; padding: 8px; display: flex; gap: 8px; align-items: flex-start;
+  box-shadow: 0 8px 28px rgba(0,0,0,.45); pointer-events: none; max-width: 62vw; }
+.fq-peek-face { width: 190px; height: 190px; object-fit: cover; border-radius: 8px; }
+.fq-peek-photo { max-width: 420px; max-height: 300px; object-fit: contain; border-radius: 6px; }
+@media (max-width: 900px) { .fq-peek-photo { display: none; } }
