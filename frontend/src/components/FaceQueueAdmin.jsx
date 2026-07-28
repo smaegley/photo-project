@@ -50,8 +50,13 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
 
   const refreshUndo = () => api.undoPeek().then(setUndoInfo).catch(() => setUndoInfo(null));
   const loadQueue = () => api.faceQueue().then(setQueue).catch((e) => setErr(String(e)));
-  const loadAudit = (mx = auditMax) =>
-    api.acceptedFaces(mx).then(setAudit).catch((e) => setErr(String(e)));
+  // Two lenses on the same problem. "score" only sees tags this app accepted; "tiny"
+  // sees every boxed tag however it arrived — including straight from Lightroom, which
+  // is where the Mary Emma Beck / Brendan Lefkowicz mis-tags actually came from.
+  const loadAudit = (mx = auditMax, mode = auditMode) =>
+    (mode === "tiny" ? api.tinyTags(0.003) : api.acceptedFaces(mx))
+      .then((d) => setAudit(d.map((r) => ({ ...r, key: r.suggestion_id ?? `${r.photo_id}:${r.person_id}` }))))
+      .catch((e) => setErr(String(e)));
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
     .then(([c, s]) => { setClusters(c); setSummary(s); })
     .catch((e) => setErr(String(e)));
@@ -276,6 +281,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [audit, setAudit] = useState([]);          // accepted, worst score first
   const [auditMax, setAuditMax] = useState(0.55);
   const [auditSel, setAuditSel] = useState(() => new Set());
+  const [auditMode, setAuditMode] = useState("score");   // "score" | "tiny"
 
   const personByName = useMemo(() => {
     const map = new Map();
@@ -420,7 +426,14 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
               <button className="fq-peek-close" onClick={() => setPeek(null)}
                       aria-label="Close preview">✕</button>
             )}
-            <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
+            <div className="fq-peek-col">
+              <img className="fq-peek-face" src={`/api/face-crop/${peek.faceId}?size=480`} alt="" />
+              {peek.sourceFile && (
+                <code className="fq-peek-name" title={peek.sourceFile}>
+                  {peek.sourceFile.split("/").pop()}
+                </code>
+              )}
+            </div>
             {peek.sourceFile && (
               // The wrapper shrink-wraps the image (no object-fit), so a box positioned
               // in % of the wrapper lands exactly on the face regardless of how the
@@ -445,11 +458,22 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         {tab === "audit" && (
       <div className="fq-grid-wrap">
         <p className="hint">
-          Everything already accepted, <b>lowest confidence first</b> — these are the
-          likeliest mis-IDs. Select any that are wrong and remove the tag; the
-          suggestion goes back to pending so you can reject it properly.
-          Click a face to enlarge it and outline it in its photo.
+          {auditMode === "score"
+            ? "Tags this app accepted, lowest confidence first."
+            : "Every face tag with a tiny box, smallest first — including ones that came straight from Lightroom, which the confidence view cannot see."}
+          {" "}Select any that are wrong and remove them. Click a face to enlarge it and
+          outline it in its photo.
         </p>
+        <div className="seg fq-tabs">
+          <button className={auditMode === "score" ? "on" : ""}
+                  onClick={() => { setAuditMode("score"); setAuditSel(new Set()); loadAudit(auditMax, "score"); }}>
+            By confidence
+          </button>
+          <button className={auditMode === "tiny" ? "on" : ""}
+                  onClick={() => { setAuditMode("tiny"); setAuditSel(new Set()); loadAudit(auditMax, "tiny"); }}>
+            Tiny faces
+          </button>
+        </div>
         <div className="fq-actions">
           <label className="muted">
             show score ≤{" "}
@@ -462,7 +486,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
             </select>
           </label>
           <span className="muted">{audit.length} shown</span>
-          <button onClick={() => setAuditSel(new Set(audit.map((a) => a.suggestion_id)))}
+          <button onClick={() => setAuditSel(new Set(audit.map((a) => a.key)))}
                   disabled={busy || !audit.length}>Select all</button>
           <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>
             Clear</button>
@@ -471,10 +495,18 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                   onClick={async () => {
                     setBusy(true); setErr(null);
                     try {
-                      const r = await api.decideFaces([...auditSel], "unaccept");
-                      setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
+                      let r;
+                      if (auditMode === "tiny") {
+                        const pairs = audit.filter((a) => auditSel.has(a.key))
+                                           .map((a) => [a.photo_id, a.person_id]);
+                        r = await api.removeTinyTags(pairs);
+                        setNote(`Removed ${r.removed} tag(s).`);
+                      } else {
+                        r = await api.decideFaces([...auditSel], "unaccept");
+                        setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
+                      }
                       setAuditSel(new Set());
-                      await Promise.all([loadAudit(), loadQueue(), refreshUndo()]);
+                      await Promise.all([loadAudit(auditMax, auditMode), loadQueue(), refreshUndo()]);
                       onChanged?.();
                     } catch (e) { setErr(String(e?.message || e)); }
                     finally { setBusy(false); }
@@ -484,14 +516,14 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         </div>
         <div className="fq-grid">
           {audit.map((a) => (
-            <Crop key={a.suggestion_id} faceId={a.face_id} score={a.score}
+            <Crop key={a.key} faceId={a.face_id} score={a.score}
                   badge={a.person} sourceFile={a.source_file} box={a.box}
                   onPeek={setPeek} hoverPeek={false}
                   peeked={peek?.faceId === a.face_id}
-                  selected={auditSel.has(a.suggestion_id)}
+                  selected={auditSel.has(a.key)}
                   onClick={() => setAuditSel((s2) => {
                     const n = new Set(s2);
-                    n.has(a.suggestion_id) ? n.delete(a.suggestion_id) : n.add(a.suggestion_id);
+                    n.has(a.key) ? n.delete(a.key) : n.add(a.key);
                     return n;
                   })} />
           ))}

@@ -360,6 +360,65 @@ def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_adm
 # matches routes in declaration order, so with the catch-all first, a request for
 # /face-queue/accepted binds person_id="accepted" and quietly returns an empty list —
 # a 200 with no data, which looks like "nothing to audit" rather than a routing bug.
+@router.get("/face-queue/tiny-tags")
+def tiny_tags(max_area: float = 0.003, limit: int = 400,
+              db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """Every face-boxed tag whose face is tiny, smallest first — regardless of origin.
+
+    The accepted-suggestion audit only sees tags this app created. It misses the other
+    two sources entirely: tags imported from the Lightroom catalog (`import_faces`) and
+    tags applied by naming a cluster. A real example — photo 6388, a crowd scene with 19
+    detected faces, carried "Mary Emma Beck" and "Brendan Lefkowicz" on ~2%-wide boxes
+    straight from LR, with no suggestion behind either.
+
+    **Face size is the origin-independent signal.** Steve's rejections measured 6× smaller
+    than his accepts, and a box under ~2% of frame width is a background face, a
+    reflection or a photo-of-a-photo far more often than it is a person worth tagging.
+    """
+    rows = (db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
+                     m.PhotoPerson.region_x, m.PhotoPerson.region_y,
+                     m.PhotoPerson.region_w, m.PhotoPerson.region_h,
+                     m.Person.canonical_name, m.Photo.source_file, m.Photo.date_start)
+            .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
+            .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+            .filter(m.PhotoPerson.region_w.isnot(None),
+                    (m.PhotoPerson.region_w * m.PhotoPerson.region_h) <= max_area)
+            .order_by((m.PhotoPerson.region_w * m.PhotoPerson.region_h).asc())
+            .limit(limit).all())
+    out = []
+    for ph, pid, rx, ry, rw, rh, pname, sf, dt in rows:
+        # find the detected face that matches this box, so the UI can crop it
+        f = (db.query(m.Face.id).filter(m.Face.photo_id == ph,
+                                        m.Face.x > rx - 1e-4, m.Face.x < rx + 1e-4).first())
+        out.append({"photo_id": ph, "person_id": pid, "person": pname,
+                    "face_id": f[0] if f else None,
+                    "area": round(rw * rh, 6), "source_file": sf,
+                    "year": dt.year if dt else None,
+                    "box": [round(rx, 5), round(ry, 5), round(rw, 5), round(rh, 5)]})
+    return out
+
+
+@router.post("/face-queue/tiny-tags/remove")
+def remove_tiny_tags(body: dict, db: Session = Depends(get_db),
+                     user: m.User = Depends(require_admin)):
+    """Drop specific (photo, person) tags. Undoable, and restores the box on undo."""
+    pairs = [(int(a), str(b)) for a, b in body.get("pairs", [])]
+    if not pairs:
+        raise HTTPException(400, "no pairs")
+    removed = []
+    for ph, pid in pairs:
+        pp = db.get(m.PhotoPerson, (ph, pid))
+        if pp is None:
+            continue
+        removed.append([ph, pid, [pp.region_x, pp.region_y, pp.region_w, pp.region_h],
+                        pp.source, bool(pp.uncertain)])
+        db.delete(pp)
+    _log(db, user, "face:untag", None, f"{len(removed)} tags",
+         inverse={"op": "face_untag", "removed": removed})
+    db.commit()
+    return {"removed": len(removed)}
+
+
 @router.get("/face-queue/accepted")
 def accepted_faces(person_id: str | None = None, max_score: float = 1.0,
                    limit: int = 400, db: Session = Depends(get_db),
@@ -1224,6 +1283,12 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.delete(pp)          # the tag itself came from this decision
             else:
                 pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "face_untag":
+        for ph, pid, box, src, unc in inv.get("removed", []):
+            if db.get(m.PhotoPerson, (ph, pid)) is None:
+                db.add(m.PhotoPerson(photo_id=ph, person_id=pid, source=src,
+                                     uncertain=unc, region_x=box[0], region_y=box[1],
+                                     region_w=box[2], region_h=box[3]))
     elif op == "face_unaccept":
         db.query(m.FaceSuggestion).filter(
             m.FaceSuggestion.id.in_(inv["suggestion_ids"])).update(

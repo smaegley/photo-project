@@ -643,3 +643,6 @@ button:disabled kbd { opacity: .3; }
 [data-theme="dark"] .warn { background: #451a03; }
 .warn-inline { font-size: 11.5px; color: #b45309; font-weight: 600; }
 [data-theme="dark"] .warn-inline { color: #fbbf24; }
+.fq-peek-col { display: flex; flex-direction: column; gap: 5px; align-items: center; }
+.fq-peek-name { font-size: 10.5px; opacity: .8; max-width: 190px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; user-select: all; }
