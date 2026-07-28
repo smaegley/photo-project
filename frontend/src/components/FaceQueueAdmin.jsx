@@ -59,8 +59,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   // Two lenses on the same problem. "score" only sees tags this app accepted; "tiny"
   // sees every boxed tag however it arrived — including straight from Lightroom, which
   // is where the Mary Emma Beck / Brendan Lefkowicz mis-tags actually came from.
-  const loadAudit = (mx = auditMax, mode = auditMode) =>
-    (mode === "tiny" ? api.tinyTags(0.003) : api.acceptedFaces(mx))
+  const loadAudit = (mx = auditMax, mode = auditMode, who = tinyPerson) =>
+    (mode === "tiny" ? api.tinyTags(0.003, 400, who) : api.acceptedFaces(mx))
       .then((d) => setAudit(d.map((r) => ({ ...r, key: r.suggestion_id ?? `${r.photo_id}:${r.person_id}` }))))
       .catch((e) => setErr(String(e)));
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
@@ -288,6 +288,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [auditMax, setAuditMax] = useState(0.55);
   const [auditSel, setAuditSel] = useState(() => new Set());
   const [auditMode, setAuditMode] = useState("score");   // "score" | "tiny"
+  const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
+  const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
 
   const personByName = useMemo(() => {
     const map = new Map();
@@ -479,7 +481,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
             By confidence
           </button>
           <button className={auditMode === "tiny" ? "on" : ""}
-                  onClick={() => { setAuditMode("tiny"); setAuditSel(new Set()); loadAudit(auditMax, "tiny"); }}>
+                  onClick={() => { setAuditMode("tiny"); setAuditSel(new Set()); setTinyPerson(null); api.tinyTagsByPerson().then(setTinyPeople).catch(() => {}); loadAudit(auditMax, "tiny", null); }}>
             Tiny faces
           </button>
         </div>
@@ -523,6 +525,25 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
             ✕ Remove tag {auditSel.size || ""}
           </button>
         </div>
+        <div className={auditMode === "tiny" ? "fq-tinybody" : ""}>
+        {auditMode === "tiny" && (
+          <ol className="fq-people fq-tinypeople">
+            <li><button className={!tinyPerson ? "on" : ""}
+                        onClick={() => { setTinyPerson(null); setAuditSel(new Set());
+                                         loadAudit(auditMax, "tiny", null); }}>
+              <span className="fq-name">Everyone</span>
+              <span className="fq-count">{(tinyPeople || []).reduce((n, r) => n + r.count, 0)}</span>
+            </button></li>
+            {(tinyPeople || []).map((r) => (
+              <li key={r.person_id}><button className={tinyPerson === r.person_id ? "on" : ""}
+                  onClick={() => { setTinyPerson(r.person_id); setAuditSel(new Set());
+                                   loadAudit(auditMax, "tiny", r.person_id); }}>
+                <span className="fq-name">{r.name}</span>
+                <span className="fq-count">{r.count}</span>
+              </button></li>
+            ))}
+          </ol>
+        )}
         <div className="fq-grid">
           {audit.map((a) => (
             <Crop key={a.key} faceId={a.face_id} score={a.score}
@@ -537,6 +558,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     return n;
                   })} />
           ))}
+        </div>
         </div>
       </div>
     )}

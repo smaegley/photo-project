@@ -646,3 +646,6 @@ button:disabled kbd { opacity: .3; }
 .fq-peek-col { display: flex; flex-direction: column; gap: 5px; align-items: center; }
 .fq-peek-name { font-size: 10.5px; opacity: .8; max-width: 190px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; user-select: all; }
+.fq-tinybody { display: grid; grid-template-columns: 210px 1fr; gap: 12px; }
+@media (max-width: 900px) { .fq-tinybody { grid-template-columns: 1fr; } }
+.fq-tinypeople { max-height: 52vh; }

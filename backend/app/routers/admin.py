@@ -361,7 +361,7 @@ def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_adm
 # /face-queue/accepted binds person_id="accepted" and quietly returns an empty list —
 # a 200 with no data, which looks like "nothing to audit" rather than a routing bug.
 @router.get("/face-queue/tiny-tags")
-def tiny_tags(max_area: float = 0.003, limit: int = 400,
+def tiny_tags(max_area: float = 0.003, limit: int = 400, person_id: str | None = None,
               db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
     """Every face-boxed tag whose face is tiny, smallest first — regardless of origin.
 
@@ -383,8 +383,10 @@ def tiny_tags(max_area: float = 0.003, limit: int = 400,
             .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
             .filter(m.PhotoPerson.region_w.isnot(None),
                     (m.PhotoPerson.region_w * m.PhotoPerson.region_h) <= max_area)
-            .order_by((m.PhotoPerson.region_w * m.PhotoPerson.region_h).asc())
-            .limit(limit).all())
+            .order_by((m.PhotoPerson.region_w * m.PhotoPerson.region_h).asc()))
+    if person_id:
+        rows = rows.filter(m.PhotoPerson.person_id == person_id)
+    rows = rows.limit(limit).all()
     out = []
     for ph, pid, rx, ry, rw, rh, pname, sf, dt in rows:
         # find the detected face that matches this box, so the UI can crop it
@@ -396,6 +398,22 @@ def tiny_tags(max_area: float = 0.003, limit: int = 400,
                     "year": dt.year if dt else None,
                     "box": [round(rx, 5), round(ry, 5), round(rw, 5), round(rh, 5)]})
     return out
+
+
+@router.get("/face-queue/tiny-tags/by-person")
+def tiny_tags_by_person(max_area: float = 0.003, db: Session = Depends(get_db),
+                        user: m.User = Depends(require_admin)):
+    """How many tiny-boxed tags each person has. Reviewing one person at a time is far
+    easier than a mixed grid: you hold one face in your head instead of forty."""
+    rows = (db.query(m.PhotoPerson.person_id, m.Person.canonical_name,
+                     func.count(m.PhotoPerson.photo_id),
+                     func.min(m.PhotoPerson.region_w * m.PhotoPerson.region_h))
+            .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
+            .filter(m.PhotoPerson.region_w.isnot(None),
+                    (m.PhotoPerson.region_w * m.PhotoPerson.region_h) <= max_area)
+            .group_by(m.PhotoPerson.person_id, m.Person.canonical_name).all())
+    return sorted([{"person_id": p, "name": n, "count": c, "smallest": round(sm or 0, 6)}
+                   for p, n, c, sm in rows], key=lambda r: -r["count"])
 
 
 @router.post("/face-queue/tiny-tags/remove")
