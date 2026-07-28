@@ -70,6 +70,13 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > in SPEC §14. 14,245 faces detected across 6,598 photos; 10,241 enrolled regions;
 > **1,008 suggestions accepted / 44 rejected = 95.8% precision**; 22 unknown groups named,
 > 34 ignored. Review UI at **⚙ Admin → Manage ▾ → Review faces…**
+> Review complete: **1,029 accepted / 48 rejected**, 81 groups named, 380 ignored.
+> **Audit tooling** (Manage ▾ → Review faces… → *Check accepted*) has two lenses: by
+> confidence (tags this app accepted) and **Tiny faces** (every boxed tag by size, any
+> origin, grouped per person). The second exists because some mis-tags came **straight
+> from the Lightroom catalog** — LR face regions that disagree with its own keywords —
+> which scoring can't see. Face size is the origin-independent signal: rejected faces
+> measured 6× smaller than accepted ones.
 > **Next: slice 6** (weekly-sync integration) + the prod export of confirmed tags.
 >
 > Key decisions — don't re-litigate:

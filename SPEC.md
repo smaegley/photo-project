@@ -1768,6 +1768,42 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
    such faces make poor references and would drag a person's centroid toward "small and
    blurry".
 
+5b. **Audit tooling — ✅ BUILT (2026-07-28), added after live review found mis-IDs.**
+   Steve worked the queue to completion (1,029 accepted / 48 rejected, 81 groups named,
+   380 ignored) then found wrong people while browsing the People filters. Two distinct
+   causes, and the second was the more important one:
+
+   **(a) Bulk-accepting unseen faces.** Single accepts of **105, 105 and 102** happened
+   against a grid showing ~3 rows, so most of each batch was committed without being
+   looked at, and confidence falls toward the bottom of a sorted list. Fixed by stating
+   the count ("Select all 105"), warning above 12 selected, showing "only 8 shown — 78
+   hidden" on groups, and **disabling Tag all until a group is expanded**.
+
+   **(b) Mis-tags that this app never created.** A crowd photo carried "Mary Emma Beck"
+   and "Brendan Lefkowicz" on ~2%-wide boxes **straight from the Lightroom catalog** —
+   no suggestion, no cluster naming. LR's own face data disagreed with its keyword list
+   for the same photo. `import_faces` imported it faithfully.
+
+   That made the first audit view structurally blind: scoring only covers tags *this app*
+   accepted. **Face size is the origin-independent signal** — Steve's rejections measured
+   **6× smaller** than his accepts (median area 0.0017 vs 0.0097).
+
+   **Two audit lenses**, under *Check accepted*:
+   - **By confidence** — accepted suggestions, lowest score first; `unaccept` removes the
+     tag and returns the suggestion to pending.
+   - **Tiny faces** — *every* boxed tag by ascending area regardless of provenance, with
+     a **per-person sidebar** (79 people carry tiny tags; Steve 170, Kate 142, Karen 121).
+     Reviewing one person at a time means holding one face in mind instead of forty.
+
+   **`/api/tag-crop/{photo_id}/{person_id}` crops the tag's own region**, not a detected
+   face. Resolving tags to `face` rows left **254 of 400 unrenderable** — a tag's box and
+   a detector's box are independent, so LR-imported regions rarely coincide with a
+   detection. The region is the thing being audited, so crop that.
+
+   *Both removals are undoable and restore the box.* Some crops are legitimately near
+   black: a few-pixel face on an underexposed slide really is unreadable, which is itself
+   the answer about whether the tag is worth keeping.
+
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
 
