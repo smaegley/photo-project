@@ -152,6 +152,25 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         return;
       }
       if (busy) return;
+
+      // ↑/↓ step through the list on whichever tab is open. preventDefault stops the
+      // browser scrolling the panel out from under the selection.
+      if (k === "arrowdown" || k === "arrowup") {
+        const down = k === "arrowdown";
+        if (tab === "suggestions" && queue?.length) {
+          e.preventDefault();
+          const ids = queue.map((q) => q.person_id);
+          const i = ids.indexOf(person);
+          setPerson(ids[i < 0 ? 0 : Math.min(Math.max(i + (down ? 1 : -1), 0), ids.length - 1)]);
+        } else if (tab === "unknown" && clusters?.length) {
+          e.preventDefault();
+          const ids = clusters.map((c) => c.id);
+          const i = ids.indexOf(activeCluster);
+          setActiveCluster(ids[i < 0 ? 0 : Math.min(Math.max(i + (down ? 1 : -1), 0), ids.length - 1)]);
+        }
+        return;
+      }
+
       if (tab === "unknown") {
         // `I` ignores whatever is highlighted: the selected faces inside an expanded
         // group, else the whole group under the cursor. The highlight is what makes it
@@ -173,7 +192,17 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, person, sel, items, busy, activeCluster, openCluster, faceSel]);   // eslint-disable-line
+  }, [tab, person, sel, items, busy, activeCluster, openCluster, faceSel, queue, clusters]);   // eslint-disable-line
+
+  // Both lists scroll, so a keyboard step that lands off-screen would look like
+  // nothing happened. `block: "nearest"` scrolls only when it has to, so mouse-driven
+  // selection doesn't jump the list around.
+  useEffect(() => {
+    document.querySelector(".fq-people button.on")?.scrollIntoView({ block: "nearest" });
+  }, [person]);
+  useEffect(() => {
+    document.querySelector(".fq-cluster.active")?.scrollIntoView({ block: "nearest" });
+  }, [activeCluster]);
 
   const totalPending = useMemo(
     () => (queue || []).reduce((n, r) => n + r.pending, 0), [queue]);
@@ -268,6 +297,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     </button>
                   </div>
                   <p className="hint">
+                    <kbd>↑</kbd><kbd>↓</kbd> move between people.
                     Click a face to select it. Crops are sorted most-confident first, so the
                     reliable ones cluster at the top — scan down until they stop looking right.
                     <b> box-only</b> means this person is already tagged on that photo and
@@ -318,6 +348,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         {tab === "unknown" && (
           <div className="fq-unknown">
             <p className="hint">
+<kbd>↑</kbd><kbd>↓</kbd> move between groups, <kbd>I</kbd> ignores the highlighted one.
               Faces matching nobody enrolled, grouped by who they look like and ordered by
               prominence — the biggest, sharpest faces first, since those are the ones worth
               naming. Name a group to tag every face in it, or ignore it and it stays quiet
