@@ -607,3 +607,18 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 /* The score-threshold bulk accept is deliberately quiet: it commits unseen faces. */
 .fq-bulk { font-size: 12px; opacity: .75; }
 .fq-bulk:hover:not(:disabled) { opacity: 1; }
+
+/* The face-review modal builds its own layout, so it needs the edge padding that
+   .modal-head/.modal-body give the simpler panels. */
+.modal.face-queue > .modal-head { padding: 14px 20px; }
+.modal.face-queue > *:not(.modal-head):not(.fq-peek) { margin-left: 20px; margin-right: 20px; }
+.modal.face-queue > *:last-child { margin-bottom: 18px; }
+.modal.unplaced-admin > *:not(header) { margin-left: 18px; margin-right: 18px; }
+.modal.unplaced-admin > *:last-child { margin-bottom: 16px; }
+.modal.unplaced-admin > header { padding: 14px 18px; }
+
+/* Shortcut hints — quiet, so they read as affordances not decoration. */
+kbd { font: 600 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; margin-left: 5px;
+  opacity: .5; vertical-align: middle; }
+button:disabled kbd { opacity: .3; }

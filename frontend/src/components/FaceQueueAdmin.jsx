@@ -112,6 +112,29 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
 
+  // Keyboard shortcuts. A 360-item pass is mostly mouse travel otherwise, and accept/
+  // reject are the two keys pressed constantly. Guarded so typing in the cluster-naming
+  // select or any input never triggers a bulk write.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      const k = e.key.toLowerCase();
+      if (k === "escape") {            // clear first, close only when nothing is selected
+        if (sel.size) { e.preventDefault(); setSel(new Set()); } else onClose();
+        return;
+      }
+      if (busy || tab !== "suggestions" || !person) return;
+      if (k === "a" && sel.size) { e.preventDefault(); decide("accept", [...sel]); }
+      else if (k === "r" && sel.size) { e.preventDefault(); decide("reject", [...sel]); }
+      else if (k === "s") { e.preventDefault(); setSel(new Set(items.map((i) => i.suggestion_id))); }
+      else if (k === "c") { e.preventDefault(); setSel(new Set()); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, person, sel, items, busy]);   // eslint-disable-line
+
   const totalPending = useMemo(
     () => (queue || []).reduce((n, r) => n + r.pending, 0), [queue]);
   const highConf = items.filter((i) => i.score >= 0.6).map((i) => i.suggestion_id);
@@ -119,10 +142,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal wide face-queue" onClick={(e) => e.stopPropagation()}>
-        <header>
+        <div className="modal-head">
           <h2>Face review</h2>
-          <button className="icon" onClick={onClose} aria-label="Close">✕</button>
-        </header>
+          <button className="lb-close" onClick={onClose} aria-label="Close">✕</button>
+        </div>
 
         <div className="seg fq-tabs">
           <button className={tab === "suggestions" ? "on" : ""} onClick={() => setTab("suggestions")}>
@@ -170,8 +193,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     <b>{queue?.find((q) => q.person_id === person)?.name}</b>
                     <span className="muted">{items.length} pending</span>
                     <button onClick={() => setSel(new Set(items.map((i) => i.suggestion_id)))}
-                            disabled={busy}>Select all</button>
-                    <button onClick={() => setSel(new Set())} disabled={busy || !sel.size}>Clear</button>
+                            disabled={busy}>Select all <kbd>S</kbd></button>
+                    <button onClick={() => setSel(new Set())} disabled={busy || !sel.size}>
+                      Clear <kbd>C</kbd></button>
                     {/* Bulk-accept-by-score is a power tool: it commits without the
                         reviewer looking at the faces, so it sits with the selection
                         helpers as a quiet link rather than beside the primary actions
@@ -184,11 +208,11 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     <span className="spacer" />
                     <button className="fq-accept" disabled={busy || !sel.size}
                             onClick={() => decide("accept", [...sel])}>
-                      ✓ Accept {sel.size || ""}
+                      ✓ Accept {sel.size || ""} <kbd>A</kbd>
                     </button>
                     <button className="fq-reject" disabled={busy || !sel.size}
                             onClick={() => decide("reject", [...sel])}>
-                      ✕ Reject {sel.size || ""}
+                      ✕ Reject {sel.size || ""} <kbd>R</kbd>
                     </button>
                   </div>
                   <p className="hint">
