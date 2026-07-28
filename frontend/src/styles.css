@@ -627,3 +627,4 @@ button:disabled kbd { opacity: .3; }
 .fq-undo { margin-left: auto; font-size: 12px; max-width: 340px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; }
 .fq-cluster.active { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6 inset; }
+.fq-nameinput { min-width: 170px; }

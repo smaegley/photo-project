@@ -128,6 +128,12 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
 
+  function tagCluster(id) {
+    const pid = resolvePerson(naming[id]);
+    if (!pid) { setErr("Pick a name from the list first."); return; }
+    decideCluster({ action: "name", cluster_ids: [id], person_id: pid });
+  }
+
   async function decideCluster(body) {
     setBusy(true); setErr(null);
     try {
@@ -175,6 +181,16 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         // `I` ignores whatever is highlighted: the selected faces inside an expanded
         // group, else the whole group under the cursor. The highlight is what makes it
         // unambiguous which one is about to go.
+        if (k === "n" && activeCluster) {
+          // Jump into the name box for the highlighted group. Explicit rather than
+          // auto-focusing on arrow-navigation, which would swallow the next ↑/↓.
+          e.preventDefault();
+          document.querySelector(`.fq-nameinput[data-cluster="${activeCluster}"]`)?.focus();
+          return;
+        }
+        if (k === "t" && activeCluster && resolvePerson(naming[activeCluster])) {
+          e.preventDefault(); tagCluster(activeCluster); return;
+        }
         if (k === "i") {
           if (openCluster && faceSel.size) { e.preventDefault(); assignSelected("ignore"); }
           else if (activeCluster) {
@@ -192,7 +208,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tab, person, sel, items, busy, activeCluster, openCluster, faceSel, queue, clusters]);   // eslint-disable-line
+  }, [tab, person, sel, items, busy, activeCluster, openCluster, faceSel, queue, clusters, naming]);   // eslint-disable-line
 
   // Both lists scroll, so a keyboard step that lands off-screen would look like
   // nothing happened. `block: "nearest"` scrolls only when it has to, so mouse-driven
@@ -203,6 +219,17 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   useEffect(() => {
     document.querySelector(".fq-cluster.active")?.scrollIntoView({ block: "nearest" });
   }, [activeCluster]);
+
+  // A <select> only type-ahead-matches from the START of an option, which is useless
+  // across 116 people — typing "mae" should find every Maegley. An input + datalist is a
+  // real combo box: substring matching, keyboard-driven, native dropdown. It hands back
+  // TEXT though, so resolve it to a person id (case-insensitively) on commit.
+  const personByName = useMemo(() => {
+    const map = new Map();
+    (people || []).forEach((p) => map.set((p.name || "").toLowerCase(), p.id));
+    return map;
+  }, [people]);
+  const resolvePerson = (text) => personByName.get((text || "").trim().toLowerCase()) || null;
 
   const totalPending = useMemo(
     () => (queue || []).reduce((n, r) => n + r.pending, 0), [queue]);
@@ -348,7 +375,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
         {tab === "unknown" && (
           <div className="fq-unknown">
             <p className="hint">
-<kbd>↑</kbd><kbd>↓</kbd> move between groups, <kbd>I</kbd> ignores the highlighted one.
+<kbd>↑</kbd><kbd>↓</kbd> move between groups · <kbd>N</kbd> name it (type any part,
+              e.g. "mae") · <kbd>T</kbd> or <kbd>Enter</kbd> tags them all · <kbd>I</kbd> ignores.
               Faces matching nobody enrolled, grouped by who they look like and ordered by
               prominence — the biggest, sharpest faces first, since those are the ones worth
               naming. Name a group to tag every face in it, or ignore it and it stays quiet
@@ -379,15 +407,23 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       {openCluster === c.id ? "collapse" : "split / pick faces"}
                     </button>
                     <span className="spacer" />
-                    <select value={naming[c.id] || ""} disabled={busy}
-                            onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}>
-                      <option value="">Name as…</option>
-                      {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    </select>
-                    <button className="primary" disabled={busy || !naming[c.id]}
-                            onClick={() => decideCluster({ action: "name", cluster_ids: [c.id],
-                                                           person_id: naming[c.id] })}>
-                      Tag all
+                    <input className="fq-nameinput" list={`ppl-${c.id}`} placeholder="Name as…"
+                           value={naming[c.id] || ""} disabled={busy}
+                           data-cluster={c.id}
+                           onFocus={() => setActiveCluster(c.id)}
+                           onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}
+                           onKeyDown={(e) => {
+                             // Enter commits from inside the field — the natural gesture,
+                             // and it avoids `T` fighting with typing a name containing t.
+                             if (e.key === "Enter") { e.preventDefault(); tagCluster(c.id); }
+                             if (e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
+                           }} />
+                    <datalist id={`ppl-${c.id}`}>
+                      {people.map((p) => <option key={p.id} value={p.name} />)}
+                    </datalist>
+                    <button className="primary" disabled={busy || !resolvePerson(naming[c.id])}
+                            onClick={() => tagCluster(c.id)}>
+                      Tag all <kbd>T</kbd>
                     </button>
                     <button className="fq-reject" disabled={busy}
                             onClick={() => decideCluster({ action: "ignore", cluster_ids: [c.id] })}>
@@ -405,13 +441,24 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                         <button onClick={() => setFaceSel(new Set())} disabled={busy || !faceSel.size}>
                           None</button>
                         <span className="spacer" />
-                        <select value={naming[c.id] || ""} disabled={busy}
-                                onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}>
-                          <option value="">Tag selected as…</option>
-                          {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                        <button className="primary" disabled={busy || !faceSel.size || !naming[c.id]}
-                                onClick={() => assignSelected("name", naming[c.id])}>
+                        <input className="fq-nameinput" list={`pplx-${c.id}`}
+                               placeholder="Tag selected as…" value={naming[c.id] || ""}
+                               disabled={busy} data-cluster={c.id}
+                               onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}
+                               onKeyDown={(e) => {
+                                 if (e.key === "Enter") {
+                                   e.preventDefault();
+                                   const pid = resolvePerson(naming[c.id]);
+                                   if (pid && faceSel.size) assignSelected("name", pid);
+                                 }
+                                 if (e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
+                               }} />
+                        <datalist id={`pplx-${c.id}`}>
+                          {people.map((p) => <option key={p.id} value={p.name} />)}
+                        </datalist>
+                        <button className="primary"
+                                disabled={busy || !faceSel.size || !resolvePerson(naming[c.id])}
+                                onClick={() => assignSelected("name", resolvePerson(naming[c.id]))}>
                           Tag {faceSel.size || ""}
                         </button>
                         <button disabled={busy || !faceSel.size}
