@@ -1804,6 +1804,31 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
    black: a few-pixel face on an underexposed slide really is unreadable, which is itself
    the answer about whether the tag is worth keeping.
 
+5c. **Prod hand-off — ✅ BUILT (2026-07-28, `app/tags_io.py`).** The only path by which
+   review work reaches the live site, and the thing that makes the review a one-time
+   cost rather than something to repeat per environment.
+
+   `--export` on dev writes **`tags_export.json.gz` (0.21 MB)** — every `photo_person`
+   with its box, plus the people and aliases, keyed on `source_file` and `person.id` per
+   §14.8a. `--import` on prod adds tags, fills in regions, and **creates people that only
+   exist on dev** (12 of them: Veronica, Katie Kissinger, Mary Francis Hollenkamp…) —
+   those are human decisions being applied, not auto-creation.
+
+   **`--prune` carries removals**, which matters as much as additions: a mis-tagged face
+   deleted during review has to disappear on prod too, or the cleanup never lands where
+   the family actually looks. Gated and dry-run-first.
+
+   **Bug found in testing, worth remembering:** the export first listed only photos that
+   still *had* tags. A photo whose tags were **all** removed then fell outside prune's
+   scope, so prod kept them — silently, with nothing reporting a difference. Scope is now
+   every photo dev knows about (6,598), not just the 5,992 with surviving tags. It cost
+   20 stale tags in a test and would have cost them permanently in production.
+
+   *Verified against a real prod-shaped DB* (dev's pre-face-import snapshot): import
+   added 1,315 tags, filled 7,185 regions, created 12 people, pruned 38 — ending at
+   **exactly** dev's 10,682 tags / 10,280 regions / 126 people. A second run is a clean
+   no-op.
+
 6. **Rerun cadence** — folds into the weekly `sync` script (§13.14) so newly imported
    photos get suggestions automatically.
 
