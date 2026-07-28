@@ -596,3 +596,14 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 .fq-peek-wrap { position: relative; display: inline-block; line-height: 0; }
 .fq-peek-box { position: absolute; border: 2px solid #22d3ee; border-radius: 3px;
   box-shadow: 0 0 0 2px rgba(0,0,0,.55), 0 0 10px rgba(34,211,238,.65); pointer-events: none; }
+
+/* Accept/reject read at a glance by colour — the two actions are opposite and are
+   pressed hundreds of times in a session, so they shouldn't look identical. */
+.fq-accept { color: #15803d; font-weight: 600; }
+.fq-reject { color: #b91c1c; font-weight: 600; }
+[data-theme="dark"] .fq-accept { color: #4ade80; }
+[data-theme="dark"] .fq-reject { color: #f87171; }
+.fq-accept:disabled, .fq-reject:disabled { opacity: .45; font-weight: 500; }
+/* The score-threshold bulk accept is deliberately quiet: it commits unseen faces. */
+.fq-bulk { font-size: 12px; opacity: .75; }
+.fq-bulk:hover:not(:disabled) { opacity: 1; }

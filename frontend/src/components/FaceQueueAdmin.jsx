@@ -172,17 +172,21 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     <button onClick={() => setSel(new Set(items.map((i) => i.suggestion_id)))}
                             disabled={busy}>Select all</button>
                     <button onClick={() => setSel(new Set())} disabled={busy || !sel.size}>Clear</button>
-                    <span className="spacer" />
-                    <button disabled={busy || !highConf.length}
-                            title="Accept every suggestion scoring 0.60 or better"
+                    {/* Bulk-accept-by-score is a power tool: it commits without the
+                        reviewer looking at the faces, so it sits with the selection
+                        helpers as a quiet link rather than beside the primary actions
+                        where it can be hit by reflex. */}
+                    <button className="link fq-bulk" disabled={busy || !highConf.length}
+                            title="Accept every suggestion scoring 0.60 or better, without reviewing them"
                             onClick={() => decide("accept", highConf)}>
-                      Accept ≥0.60 ({highConf.length})
+                      accept ≥0.60 ({highConf.length})
                     </button>
-                    <button className="primary" disabled={busy || !sel.size}
+                    <span className="spacer" />
+                    <button className="fq-accept" disabled={busy || !sel.size}
                             onClick={() => decide("accept", [...sel])}>
                       ✓ Accept {sel.size || ""}
                     </button>
-                    <button disabled={busy || !sel.size}
+                    <button className="fq-reject" disabled={busy || !sel.size}
                             onClick={() => decide("reject", [...sel])}>
                       ✕ Reject {sel.size || ""}
                     </button>
