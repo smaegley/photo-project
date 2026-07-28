@@ -660,3 +660,8 @@ button:disabled kbd { opacity: .3; }
 .fq-tinybody > * { min-height: 0; }
 .fq-tinypeople { max-height: 52vh; overflow-y: auto; }
 .fq-grid-wrap { min-height: 0; display: flex; flex-direction: column; }
+.fq-noface { max-height: 60vh; overflow-y: auto; min-height: 0; }
+.fq-nf-row { display: grid; grid-template-columns: 170px 1fr; gap: 10px; align-items: center;
+  padding: 7px 0; border-bottom: 1px solid var(--border); }
+@media (max-width: 900px) { .fq-nf-row { grid-template-columns: 1fr; } }
+.fq-nf-name { font-size: 13px; }

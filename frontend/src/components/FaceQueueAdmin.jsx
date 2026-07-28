@@ -82,6 +82,28 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
       .then(setTinyPeople).catch(() => {});
     setAuditSel(new Set());
   };
+  const loadNoFace = () =>
+    api.peopleWithoutFace().then((d) => {
+      setNoFace(d);
+      // Pre-select each person's largest face. A thumbnail is cosmetic, not a claim
+      // about who is in a photo, so proposing one is safe — but it is still a proposal:
+      // nothing is written until Set is pressed.
+      setPick(Object.fromEntries(d.filter((p) => p.candidates.length)
+                                  .map((p) => [p.person_id, p.candidates[0].photo_id])));
+    }).catch((e) => setErr(String(e)));
+
+  async function saveRepresentatives(only = null) {
+    const picks = Object.entries(pick).filter(([k]) => !only || k === only);
+    if (!picks.length) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.setRepresentatives(picks);
+      setNote(`Set ${r.set} thumbnail(s).`);
+      await Promise.all([loadNoFace(), refreshUndo()]);
+      onChanged?.();
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  }
+
   const loadMoreAudit = () => {
     setBusy(true);
     api.faceTags({ ...auditFilter, limit: PAGE, offset: audit.length })
@@ -329,6 +351,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [auditSel, setAuditSel] = useState(() => new Set());
   const [auditSort, setAuditSort] = useState("area");
   const [auditFilter, setAuditFilter] = useState({});
+  const [noFace, setNoFace] = useState(null);      // people lacking a thumbnail
+  const [pick, setPick] = useState({});            // person_id -> chosen photo_id
   const [tinyOnly, setTinyOnly] = useState(true);
   const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
   const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
@@ -370,6 +394,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           <button className={tab === "audit" ? "on" : ""}
                   onClick={() => { setTab("audit"); reloadAudit(); }}>
             Check accepted
+          </button>
+          <button className={tab === "faces" ? "on" : ""}
+                  onClick={() => { setTab("faces"); loadNoFace(); }}>
+            Missing thumbnails{noFace ? ` (${noFace.length})` : ""}
           </button>
           </div>
           {/* Undo lives in the header menu, which this panel covers — and closing the
@@ -515,6 +543,43 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           </div>
         )}
 
+        {tab === "faces" && (
+          <div className="fq-grid-wrap">
+            <p className="hint">
+              People with no thumbnail in the People filter. The largest face box is
+              pre-selected for each — bigger crops make better thumbnails — but click any
+              alternative to choose it instead. Nothing is written until you press Set.
+            </p>
+            <div className="fq-actions">
+              <span className="muted">{(noFace || []).length} without a thumbnail</span>
+              <span className="spacer" />
+              <button className="primary" disabled={busy || !Object.keys(pick).length}
+                      onClick={() => saveRepresentatives()}>
+                Set all {Object.keys(pick).length}
+              </button>
+            </div>
+            <div className="fq-noface">
+              {(noFace || []).map((p) => (
+                <div className="fq-nf-row" key={p.person_id}>
+                  <div className="fq-nf-name">
+                    <b>{p.name}</b>
+                    {!p.candidates.length && <span className="muted"> — no face boxes yet</span>}
+                  </div>
+                  <div className="fq-grid small">
+                    {p.candidates.map((c) => (
+                      <Crop key={c.photo_id} faceId={null} tagRef={[c.photo_id, p.person_id]}
+                            sourceFile={c.source_file} badge={c.year || null}
+                            onPeek={setPeek} hoverPeek={false}
+                            selected={pick[p.person_id] === c.photo_id}
+                            onClick={() => setPick((x) => ({ ...x, [p.person_id]: c.photo_id }))} />
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        
         {tab === "audit" && (
           <div className="fq-grid-wrap">
             <p className="hint">

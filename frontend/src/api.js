@@ -88,6 +88,10 @@ export const api = {
     get("/api/admin/face-tags?" + new URLSearchParams(Object.entries({
       person_id: personId, max_score: maxScore, max_area: maxArea, sort, limit, offset,
     }).filter(([, v]) => v !== null && v !== "")).toString()),
+  peopleWithoutFace: (limit = 200) =>
+    get(`/api/admin/people/without-face?limit=${limit}`),
+  setRepresentatives: (picks) =>
+    send("POST", "/api/admin/people/set-representatives", { picks }),
   faceTagsByPerson: ({ maxScore = null, maxArea = null } = {}) =>
     get("/api/admin/face-tags/by-person?" + new URLSearchParams(Object.entries({
       max_score: maxScore, max_area: maxArea,

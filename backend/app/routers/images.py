@@ -150,11 +150,22 @@ def face(person_id: str, _user=Depends(image_user)):
         if not person or not person.representative_photo_id:
             raise HTTPException(404, "no representative photo")
         rep = db.get(m.Photo, person.representative_photo_id)
-        src = photo_file(rep)
+        if rep is None:
+            raise HTTPException(404, "representative photo missing")
         pp = db.get(m.PhotoPerson, (rep.id, person_id))
         region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
-        cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep.id, region)}.jpg"
-    if not cache.exists() or cache.stat().st_mtime < src.stat().st_mtime:
+        rep_id, src_file, fv = rep.id, rep.source_file, rep.file_version
+        backend = storage.backend_of(rep)
+    # Crop the DISPLAY DERIVATIVE, not the master. The master is only local for slides
+    # and scans; a B2-backed digital photo has none, so reading it 404'd the thumbnail
+    # for any person whose best face happens to be a digital photo — which, with 4,661
+    # of the boxed photos being digital, is most of them.
+    src = settings.display_dir / derivatives.cache_key(
+        src_file, fv, versioned=(backend == "b2"))
+    if not src.exists():
+        raise HTTPException(404, "no display derivative — run prewarm")
+    cache = settings.faces_dir / f"{_safe_key(person_id)}_{derivatives.face_version(rep_id, region)}.jpg"
+    if derivatives.needs_regen(src if backend == "local" else None, cache):
         derivatives.face_thumb(src, cache, region)
     return FileResponse(cache, media_type="image/jpeg", headers=DAY)
 

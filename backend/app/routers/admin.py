@@ -1217,6 +1217,59 @@ def update_person_links(person_id: str, body: PersonLinksUpdate, db: Session = D
             "mother_id": person.mother_id, "spouse_id": person.spouse_id}
 
 
+@router.get("/people/without-face")
+def people_without_face(limit: int = 200, candidates: int = 6,
+                        db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """People with no filter thumbnail, each with candidate faces to choose from.
+
+    Only worth building now that face boxes exist: 106 of 126 people had no thumbnail,
+    and picking one used to mean hunting through the gallery for a photo where they are
+    recognisable. Now every tagged person has boxes, so the app can *propose* — ranked by
+    **box area**, since a bigger face makes a better 240px crop, which is the only thing
+    a thumbnail has to be good at.
+    """
+    area = m.PhotoPerson.region_w * m.PhotoPerson.region_h
+    people = (db.query(m.Person.id, m.Person.canonical_name)
+              .filter(m.Person.representative_photo_id.is_(None))
+              .order_by(m.Person.canonical_name).limit(limit).all())
+    out = []
+    for pid, name in people:
+        rows = (db.query(m.PhotoPerson.photo_id, area.label("a"),
+                         m.Photo.source_file, m.Photo.date_start)
+                .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+                .filter(m.PhotoPerson.person_id == pid,
+                        m.PhotoPerson.region_w.isnot(None))
+                .order_by(area.desc()).limit(candidates).all())
+        out.append({"person_id": pid, "name": name,
+                    "candidates": [{"photo_id": ph, "area": round(a, 5),
+                                    "source_file": sf,
+                                    "year": dt.year if dt else None}
+                                   for ph, a, sf, dt in rows]})
+    return out
+
+
+@router.post("/people/set-representatives")
+def set_representatives(body: dict, db: Session = Depends(get_db),
+                        user: m.User = Depends(require_admin)):
+    """Set several people's thumbnails at once — one undoable contribution for the batch."""
+    picks = [(str(a), int(b)) for a, b in body.get("picks", [])]
+    if not picks:
+        raise HTTPException(400, "no picks")
+    prior = []
+    done = 0
+    for person_id, photo_id in picks:
+        person = db.get(m.Person, person_id)
+        if person is None or db.get(m.Photo, photo_id) is None:
+            continue
+        prior.append([person_id, person.representative_photo_id])
+        person.representative_photo_id = photo_id
+        done += 1
+    _log(db, user, "person:representative-bulk", None, f"{done} people",
+         inverse={"op": "person_representative_bulk", "prior": prior})
+    db.commit()
+    return {"set": done}
+
+
 @router.post("/people/{person_id}/representative")
 def set_representative(person_id: str, body: RepresentativeReq, db: Session = Depends(get_db),
                        user: m.User = Depends(require_admin)):
@@ -1420,6 +1473,11 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.delete(pp)          # the tag itself came from this decision
             else:
                 pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "person_representative_bulk":
+        for person_id, prev in inv.get("prior", []):
+            person = db.get(m.Person, person_id)
+            if person is not None:
+                person.representative_photo_id = prev
     elif op == "face_untag":
         for ph, pid, box, src, unc in inv.get("removed", []):
             if db.get(m.PhotoPerson, (ph, pid)) is None:
