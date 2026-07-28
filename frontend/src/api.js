@@ -80,6 +80,9 @@ export const api = {
   faceQueue: () => get("/api/admin/face-queue"),
   faceQueuePerson: (personId, limit = 300) =>
     get(`/api/admin/face-queue/${encodeURIComponent(personId)}?limit=${limit}`),
+  acceptedFaces: (maxScore = 1.0, limit = 400) =>
+    get(`/api/admin/face-queue/accepted?max_score=${maxScore}&limit=${limit}`),
+  acceptedSummary: () => get("/api/admin/face-queue/accepted/summary"),
   decideFaces: (suggestionIds, action) =>
     send("POST", "/api/admin/face-suggestions/decide", { suggestion_ids: suggestionIds, action }),
   faceClusters: (minFaces = 2, limit = 200) =>

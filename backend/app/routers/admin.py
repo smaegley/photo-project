@@ -356,6 +356,51 @@ def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_adm
         key=lambda r: -r["pending"])
 
 
+# NOTE: this and /accepted/summary MUST stay above `/face-queue/{person_id}`. FastAPI
+# matches routes in declaration order, so with the catch-all first, a request for
+# /face-queue/accepted binds person_id="accepted" and quietly returns an empty list —
+# a 200 with no data, which looks like "nothing to audit" rather than a routing bug.
+@router.get("/face-queue/accepted")
+def accepted_faces(person_id: str | None = None, max_score: float = 1.0,
+                   limit: int = 400, db: Session = Depends(get_db),
+                   user: m.User = Depends(require_admin)):
+    """Already-accepted suggestions, **worst score first** — for auditing bulk accepts.
+
+    Exists because "Select all → Accept" on a scrolling grid commits faces the reviewer
+    never saw: single accepts of 105, 105 and 102 happened against a grid showing ~3
+    rows. Score is the best available proxy for which of those are wrong, and it was
+    recorded at match time, so the damage is reviewable after the fact rather than lost.
+    """
+    q = (db.query(m.FaceSuggestion.id, m.FaceSuggestion.face_id, m.FaceSuggestion.score,
+                  m.FaceSuggestion.person_id, m.Person.canonical_name,
+                  m.Face.photo_id, m.Face.x, m.Face.y, m.Face.w, m.Face.h,
+                  m.Photo.source_file, m.Photo.date_start)
+         .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
+         .join(m.Photo, m.Photo.id == m.Face.photo_id)
+         .join(m.Person, m.Person.id == m.FaceSuggestion.person_id)
+         .filter(m.FaceSuggestion.status == m.FACE_ACCEPTED,
+                 m.FaceSuggestion.score <= max_score))
+    if person_id:
+        q = q.filter(m.FaceSuggestion.person_id == person_id)
+    rows = q.order_by(m.FaceSuggestion.score.asc()).limit(limit).all()
+    return [{"suggestion_id": sid, "face_id": fid, "score": round(sc, 3),
+             "person_id": pid, "person": pname, "photo_id": ph,
+             "source_file": sf, "year": dt.year if dt else None,
+             "box": [round(x, 5), round(y, 5), round(w, 5), round(h, 5)]}
+            for sid, fid, sc, pid, pname, ph, x, y, w, h, sf, dt in rows]
+
+
+@router.get("/face-queue/accepted/summary")
+def accepted_summary(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    buckets = []
+    for lo, hi in ((0.0, 0.50), (0.50, 0.55), (0.55, 0.60), (0.60, 1.01)):
+        n = (db.query(func.count(m.FaceSuggestion.id))
+             .filter(m.FaceSuggestion.status == m.FACE_ACCEPTED,
+                     m.FaceSuggestion.score >= lo, m.FaceSuggestion.score < hi).scalar() or 0)
+        buckets.append({"from": lo, "to": hi, "count": n})
+    return {"buckets": buckets}
+
+
 @router.get("/face-queue/{person_id}")
 def face_queue_person(person_id: str, limit: int = 300, db: Session = Depends(get_db),
                       user: m.User = Depends(require_admin)):
@@ -392,8 +437,36 @@ def decide_suggestions(body: dict, db: Session = Depends(get_db),
     click to undo."""
     ids = [int(i) for i in body.get("suggestion_ids", [])]
     action = (body.get("action") or "").lower()
+    if action == "unaccept":
+        # Undo a bad bulk accept after the fact. The undo stack is serial and long gone
+        # by the time a mis-ID surfaces in the People filter, so this is targeted: revert
+        # these specific suggestions to pending and drop the tag each one created.
+        ids2 = [int(i) for i in body.get("suggestion_ids", [])]
+        if not ids2:
+            raise HTTPException(400, "no suggestion_ids")
+        sugs2 = db.query(m.FaceSuggestion).filter(
+            m.FaceSuggestion.id.in_(ids2),
+            m.FaceSuggestion.status == m.FACE_ACCEPTED).all()
+        removed = []
+        for sg in sugs2:
+            f = db.get(m.Face, sg.face_id)
+            sg.status, sg.decided_by, sg.decided_at = m.FACE_PENDING, None, None
+            if not f:
+                continue
+            pp = db.get(m.PhotoPerson, (f.photo_id, sg.person_id))
+            # Only drop a tag whose box matches this face — never one the human made by
+            # hand or that came from the Lightroom import.
+            if pp is not None and pp.region_w is not None and abs((pp.region_x or 0) - f.x) < 1e-6:
+                db.delete(pp)
+                removed.append([f.photo_id, sg.person_id,
+                                [f.x, f.y, f.w, f.h]])
+        _log(db, user, "face:unaccept", None, f"{len(sugs2)} faces",
+             inverse={"op": "face_unaccept", "suggestion_ids": [s.id for s in sugs2],
+                      "removed": removed})
+        db.commit()
+        return {"reverted": len(sugs2), "tags_removed": len(removed)}
     if action not in ("accept", "reject"):
-        raise HTTPException(400, "action must be accept or reject")
+        raise HTTPException(400, "action must be accept, reject or unaccept")
     if not ids:
         raise HTTPException(400, "no suggestion_ids")
 
@@ -1151,6 +1224,16 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.delete(pp)          # the tag itself came from this decision
             else:
                 pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "face_unaccept":
+        db.query(m.FaceSuggestion).filter(
+            m.FaceSuggestion.id.in_(inv["suggestion_ids"])).update(
+            {"status": m.FACE_ACCEPTED}, synchronize_session=False)
+        for photo_id, person_id, box in inv.get("removed", []):
+            if db.get(m.PhotoPerson, (photo_id, person_id)) is None:
+                db.add(m.PhotoPerson(photo_id=photo_id, person_id=person_id,
+                                     source=SOURCE_HUMAN, uncertain=False,
+                                     region_x=box[0], region_y=box[1],
+                                     region_w=box[2], region_h=box[3]))
     elif op == "person_undelete":
         r = inv["row"]
         if db.get(m.Person, r["id"]) is None:

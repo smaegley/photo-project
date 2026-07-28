@@ -50,6 +50,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
 
   const refreshUndo = () => api.undoPeek().then(setUndoInfo).catch(() => setUndoInfo(null));
   const loadQueue = () => api.faceQueue().then(setQueue).catch((e) => setErr(String(e)));
+  const loadAudit = (mx = auditMax) =>
+    api.acceptedFaces(mx).then(setAudit).catch((e) => setErr(String(e)));
   const loadClusters = () => Promise.all([api.faceClusters(), api.faceClusterSummary()])
     .then(([c, s]) => { setClusters(c); setSummary(s); })
     .catch((e) => setErr(String(e)));
@@ -271,6 +273,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [newPeople, setNewPeople] = useState([]);
   const allPeople = useMemo(() => [...(people || []), ...newPeople], [people, newPeople]);
   const [newIsFamily, setNewIsFamily] = useState(false);
+  const [audit, setAudit] = useState([]);          // accepted, worst score first
+  const [auditMax, setAuditMax] = useState(0.55);
+  const [auditSel, setAuditSel] = useState(() => new Set());
 
   const personByName = useMemo(() => {
     const map = new Map();
@@ -298,6 +303,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           </button>
           <button className={tab === "unknown" ? "on" : ""} onClick={() => setTab("unknown")}>
             Unknown faces {clusters ? `(${clusters.length})` : ""}
+          </button>
+          <button className={tab === "audit" ? "on" : ""}
+                  onClick={() => { setTab("audit"); loadAudit(); }}>
+            Check accepted
           </button>
           </div>
           {/* Undo lives in the header menu, which this panel covers — and closing the
@@ -349,7 +358,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     <b>{queue?.find((q) => q.person_id === person)?.name}</b>
                     <span className="muted">{items.length} pending</span>
                     <button onClick={() => setSel(new Set(items.map((i) => i.suggestion_id)))}
-                            disabled={busy}>Select all <kbd>S</kbd></button>
+                            disabled={busy}>Select all {items.length} <kbd>S</kbd></button>
                     <button onClick={() => setSel(new Set())} disabled={busy || !sel.size}>
                       Clear <kbd>C</kbd></button>
                     {/* Bulk-accept-by-score is a power tool: it commits without the
@@ -371,6 +380,13 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       ✕ Reject {sel.size || ""} <kbd>R</kbd>
                     </button>
                   </div>
+                  {sel.size > 12 && (
+                    <p className="warn">
+                      ⚠ {sel.size} selected — the grid scrolls, so most of these are
+                      off-screen. Scroll through them before accepting: confidence drops
+                      toward the bottom, and that is where mis-IDs live.
+                    </p>
+                  )}
                   <p className="hint">
                     <kbd>↑</kbd><kbd>↓</kbd> move between people.
                     Click a face to select it. Crops are sorted most-confident first, so the
@@ -399,7 +415,64 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           // settles it faster than resolution does (who else is in frame, where it is).
           <div className={`fq-peek ${tab === "unknown" ? "sticky" : ""}`}
                onMouseLeave={() => { if (tab !== "unknown") setPeek(null); }}>
-            {tab === "unknown" && (
+            {tab === "audit" && (
+          <div className="fq-grid-wrap">
+            <p className="hint">
+              Everything already accepted, <b>lowest confidence first</b> — these are the
+              likeliest mis-IDs. Select any that are wrong and remove the tag; the
+              suggestion goes back to pending so you can reject it properly.
+              Click a face to enlarge it and outline it in its photo.
+            </p>
+            <div className="fq-actions">
+              <label className="muted">
+                show score ≤{" "}
+                <select value={auditMax} disabled={busy}
+                        onChange={(e) => { setAuditMax(+e.target.value); loadAudit(+e.target.value); }}>
+                  <option value={0.5}>0.50</option>
+                  <option value={0.55}>0.55</option>
+                  <option value={0.6}>0.60</option>
+                  <option value={1.0}>all</option>
+                </select>
+              </label>
+              <span className="muted">{audit.length} shown</span>
+              <button onClick={() => setAuditSel(new Set(audit.map((a) => a.suggestion_id)))}
+                      disabled={busy || !audit.length}>Select all</button>
+              <button onClick={() => setAuditSel(new Set())} disabled={busy || !auditSel.size}>
+                Clear</button>
+              <span className="spacer" />
+              <button className="fq-reject" disabled={busy || !auditSel.size}
+                      onClick={async () => {
+                        setBusy(true); setErr(null);
+                        try {
+                          const r = await api.decideFaces([...auditSel], "unaccept");
+                          setNote(`Removed ${r.tags_removed} tag(s); ${r.reverted} back to pending.`);
+                          setAuditSel(new Set());
+                          await Promise.all([loadAudit(), loadQueue(), refreshUndo()]);
+                          onChanged?.();
+                        } catch (e) { setErr(String(e?.message || e)); }
+                        finally { setBusy(false); }
+                      }}>
+                ✕ Remove tag {auditSel.size || ""}
+              </button>
+            </div>
+            <div className="fq-grid">
+              {audit.map((a) => (
+                <Crop key={a.suggestion_id} faceId={a.face_id} score={a.score}
+                      badge={a.person} sourceFile={a.source_file} box={a.box}
+                      onPeek={setPeek} hoverPeek={false}
+                      peeked={peek?.faceId === a.face_id}
+                      selected={auditSel.has(a.suggestion_id)}
+                      onClick={() => setAuditSel((s2) => {
+                        const n = new Set(s2);
+                        n.has(a.suggestion_id) ? n.delete(a.suggestion_id) : n.add(a.suggestion_id);
+                        return n;
+                      })} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {tab === "unknown" && (
               <button className="fq-peek-close" onClick={() => setPeek(null)}
                       aria-label="Close preview">✕</button>
             )}
@@ -457,8 +530,14 @@ Click any face to enlarge it and outline it in its photo.
                      key={c.id} onMouseEnter={() => setActiveCluster(c.id)}>
                   <div className="fq-cluster-head">
                     <b>{c.n_faces} faces</b>
+                    {c.n_faces > (c.samples || []).length && openCluster !== c.id && (
+                      <span className="warn-inline">
+                        only {(c.samples || []).length} shown —
+                        {" "}{c.n_faces - (c.samples || []).length} hidden
+                      </span>
+                    )}
                     <button className="link" onClick={() => openGroup(c.id)}>
-                      {openCluster === c.id ? "collapse" : "split / pick faces"}
+                      {openCluster === c.id ? "collapse" : "see all / split"}
                     </button>
                     <span className="spacer" />
                     <input className="fq-nameinput" list={`ppl-${c.id}`} placeholder="Name as…"
@@ -479,9 +558,14 @@ Click any face to enlarge it and outline it in its photo.
                       {allPeople.map((p) => <option key={p.id} value={p.name} />)}
                     </datalist>
                     {resolvePerson(naming[c.id]) || !(naming[c.id] || "").trim() ? (
-                      <button className="primary" disabled={busy || !resolvePerson(naming[c.id])}
+                      <button className="primary"
+                              disabled={busy || !resolvePerson(naming[c.id])
+                                        || (c.n_faces > (c.samples || []).length && openCluster !== c.id)}
+                              title={c.n_faces > (c.samples || []).length && openCluster !== c.id
+                                ? "See all faces first — this group has more than are shown"
+                                : "Tag every face in this group"}
                               onClick={() => tagCluster(c.id)}>
-                        Tag all <kbd>T</kbd>
+                        Tag all {c.n_faces} <kbd>T</kbd>
                       </button>
                     ) : (
                       <>
