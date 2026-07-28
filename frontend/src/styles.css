@@ -628,3 +628,5 @@ button:disabled kbd { opacity: .3; }
   text-overflow: ellipsis; white-space: nowrap; }
 .fq-cluster.active { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6 inset; }
 .fq-nameinput { min-width: 170px; }
+.fq-fam { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; opacity: .8; }
+.fq-fam input { margin: 0; }

@@ -128,6 +128,31 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
 
+  const slugify = (n) =>
+    (n || "").toLowerCase().trim().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+
+  // Creation is a DISTINCT, labelled action — never a silent side-effect of a typo.
+  // The button says ＋ Create "Dave Wilson" only when the text matches nobody, so a
+  // mistyped "Kat" can't quietly become a new person alongside Kate.
+  async function createAndTag(id, applyTo) {
+    const name = (naming[id] || "").trim();
+    const slug = slugify(name);
+    if (!name || !slug) { setErr("Type a name first."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const p = await api.createPerson({ id: slug, canonical_name: name,
+                                         is_family: newIsFamily });
+      const person = { id: p.id || slug, name };
+      setNewPeople((xs) => [...xs, person]);
+      if (applyTo === "faces") await assignSelected("name", person.id);
+      else await decideCluster({ action: "name", cluster_ids: [id], person_id: person.id });
+      setNote(`Created ${name}${newIsFamily ? " (family)" : ""} and tagged them.`);
+    } catch (e) {
+      setErr(`${e?.message || e}` + (String(e).includes("already exists")
+        ? " — pick them from the list instead." : ""));
+    } finally { setBusy(false); }
+  }
+
   function tagCluster(id) {
     const pid = resolvePerson(naming[id]);
     if (!pid) { setErr("Pick a name from the list first."); return; }
@@ -224,11 +249,17 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   // across 116 people — typing "mae" should find every Maegley. An input + datalist is a
   // real combo box: substring matching, keyboard-driven, native dropdown. It hands back
   // TEXT though, so resolve it to a person id (case-insensitively) on commit.
+  // People created from this panel are merged in locally so the combo box and the
+  // name→id resolution work immediately, without waiting for a parent refetch.
+  const [newPeople, setNewPeople] = useState([]);
+  const allPeople = useMemo(() => [...(people || []), ...newPeople], [people, newPeople]);
+  const [newIsFamily, setNewIsFamily] = useState(false);
+
   const personByName = useMemo(() => {
     const map = new Map();
-    (people || []).forEach((p) => map.set((p.name || "").toLowerCase(), p.id));
+    allPeople.forEach((p) => map.set((p.name || "").toLowerCase(), p.id));
     return map;
-  }, [people]);
+  }, [allPeople]);
   const resolvePerson = (text) => personByName.get((text || "").trim().toLowerCase()) || null;
 
   const totalPending = useMemo(
@@ -415,16 +446,32 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                            onKeyDown={(e) => {
                              // Enter commits from inside the field — the natural gesture,
                              // and it avoids `T` fighting with typing a name containing t.
-                             if (e.key === "Enter") { e.preventDefault(); tagCluster(c.id); }
+                             if (e.key === "Enter") {
+                               e.preventDefault();
+                               resolvePerson(naming[c.id]) ? tagCluster(c.id) : createAndTag(c.id);
+                             }
                              if (e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
                            }} />
                     <datalist id={`ppl-${c.id}`}>
-                      {people.map((p) => <option key={p.id} value={p.name} />)}
+                      {allPeople.map((p) => <option key={p.id} value={p.name} />)}
                     </datalist>
-                    <button className="primary" disabled={busy || !resolvePerson(naming[c.id])}
-                            onClick={() => tagCluster(c.id)}>
-                      Tag all <kbd>T</kbd>
-                    </button>
+                    {resolvePerson(naming[c.id]) || !(naming[c.id] || "").trim() ? (
+                      <button className="primary" disabled={busy || !resolvePerson(naming[c.id])}
+                              onClick={() => tagCluster(c.id)}>
+                        Tag all <kbd>T</kbd>
+                      </button>
+                    ) : (
+                      <>
+                        <label className="fq-fam" title="Family member rather than friend/other">
+                          <input type="checkbox" checked={newIsFamily}
+                                 onChange={(e) => setNewIsFamily(e.target.checked)} /> family
+                        </label>
+                        <button className="primary" disabled={busy}
+                                onClick={() => createAndTag(c.id)}>
+                          ＋ Create “{naming[c.id]}” &amp; tag
+                        </button>
+                      </>
+                    )}
                     <button className="fq-reject" disabled={busy}
                             onClick={() => decideCluster({ action: "ignore", cluster_ids: [c.id] })}>
                       Ignore <kbd>I</kbd>
@@ -454,7 +501,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                                  if (e.key === "Escape") { e.preventDefault(); e.currentTarget.blur(); }
                                }} />
                         <datalist id={`pplx-${c.id}`}>
-                          {people.map((p) => <option key={p.id} value={p.name} />)}
+                          {allPeople.map((p) => <option key={p.id} value={p.name} />)}
                         </datalist>
                         <button className="primary"
                                 disabled={busy || !faceSel.size || !resolvePerson(naming[c.id])}
