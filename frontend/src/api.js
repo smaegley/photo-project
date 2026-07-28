@@ -86,6 +86,8 @@ export const api = {
     get(`/api/admin/face-clusters?min_faces=${minFaces}&limit=${limit}`),
   faceClusterSummary: () => get("/api/admin/face-clusters/summary"),
   decideClusters: (body) => send("POST", "/api/admin/face-clusters/decide", body),
+  clusterFaces: (id, limit = 400) => get(`/api/admin/face-clusters/${id}/faces?limit=${limit}`),
+  assignFaces: (body) => send("POST", "/api/admin/faces/assign", body),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),

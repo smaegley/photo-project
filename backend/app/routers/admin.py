@@ -422,6 +422,98 @@ def decide_suggestions(body: dict, db: Session = Depends(get_db),
             "regions_filled": sum(1 for a in added if not a[2])}
 
 
+@router.get("/face-clusters/{cluster_id}/faces")
+def face_cluster_faces(cluster_id: int, limit: int = 400, db: Session = Depends(get_db),
+                       user: m.User = Depends(require_admin)):
+    """Every face in a cluster, so a mixed group can be split rather than accepted whole.
+
+    Clustering groups by *appearance*, which is not the same as identity — two different
+    dogs land together because an ArcFace model maps anything non-human into a similar
+    out-of-domain corner. Whole-cluster decisions alone would force naming both as one
+    animal or ignoring both."""
+    rows = (db.query(m.Face.id, m.Face.det_score, m.Face.w, m.Face.h,
+                     m.Photo.source_file, m.Photo.date_start)
+            .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(m.Face.cluster_id == cluster_id)
+            .order_by((m.Face.w * m.Face.h).desc()).limit(limit).all())
+    return [{"face_id": fid, "det_score": round(ds or 0, 3),
+             "area": round(w * h, 5), "source_file": sf,
+             "year": dt.year if dt else None}
+            for fid, ds, w, h, sf, dt in rows]
+
+
+@router.post("/faces/assign")
+def assign_faces(body: dict, db: Session = Depends(get_db),
+                 user: m.User = Depends(require_admin)):
+    """Name or ignore a SUBSET of faces, splitting a mixed cluster.
+
+    - **name**: writes ordinary `photo_person` rows with the box and drops the faces out
+      of their cluster. Future `cluster_faces` runs skip them anyway, because a face
+      overlapping a confirmed region is no longer "unidentified".
+    - **ignore**: moves them into a *new* ignored cluster carrying their own centroid —
+      not merely detached — so the §14.7a promise still holds and lookalikes are absorbed
+      silently on later runs rather than re-asked.
+
+    Either way the source cluster's `n_faces` is corrected, so what remains is what is
+    genuinely left to decide."""
+    import numpy as np
+
+    action = (body.get("action") or "").lower()
+    if action not in ("name", "ignore"):
+        raise HTTPException(400, "action must be name or ignore")
+    face_ids = [int(i) for i in body.get("face_ids", [])]
+    if not face_ids:
+        raise HTTPException(400, "no face_ids")
+    person_id = body.get("person_id")
+    if action == "name" and not db.get(m.Person, person_id or ""):
+        raise HTTPException(400, "name requires a valid person_id")
+
+    faces = db.query(m.Face).filter(m.Face.id.in_(face_ids)).all()
+    if not faces:
+        raise HTTPException(404, "no such faces")
+    src_clusters = {f.cluster_id for f in faces if f.cluster_id}
+
+    added, moved = [], []
+    new_cluster_id = None
+    if action == "ignore":
+        vecs = [np.frombuffer(f.embedding, dtype=np.float32) for f in faces if f.embedding]
+        cvec = None
+        if vecs:
+            c = np.mean(vecs, axis=0)
+            n = np.linalg.norm(c)
+            cvec = (c / n if n else c).astype(np.float32).tobytes()
+        cl = m.FaceCluster(status=m.CLUSTER_IGNORED, centroid=cvec, n_faces=len(faces),
+                           decided_by=user.email, decided_at=datetime.now(timezone.utc))
+        db.add(cl)
+        db.flush()
+        new_cluster_id = cl.id
+
+    for f in faces:
+        moved.append([f.id, f.cluster_id])
+        if action == "name":
+            if db.get(m.PhotoPerson, (f.photo_id, person_id)) is None:
+                db.add(m.PhotoPerson(photo_id=f.photo_id, person_id=person_id,
+                                     source=SOURCE_HUMAN, uncertain=False,
+                                     region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
+                added.append([f.photo_id, person_id])
+            f.cluster_id = None
+        else:
+            f.cluster_id = new_cluster_id
+
+    for cid in src_clusters:
+        left = db.query(func.count(m.Face.id)).filter(m.Face.cluster_id == cid).scalar() or 0
+        c = db.get(m.FaceCluster, cid)
+        if c:
+            c.n_faces = left
+    _log(db, user, f"faces:{action}", None,
+         f"{len(faces)} faces" + (f" -> {person_id}" if person_id else ""),
+         inverse={"op": "faces_assign", "moved": moved, "added": added,
+                  "new_cluster_id": new_cluster_id})
+    db.commit()
+    return {"faces": len(faces), "tags_added": len(added),
+            "new_ignored_cluster": new_cluster_id}
+
+
 @router.get("/face-clusters")
 def face_clusters(status: str = "pending", min_faces: int = 2, limit: int = 200,
                   db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
@@ -979,6 +1071,24 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.delete(pp)          # the tag itself came from this decision
             else:
                 pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
+    elif op == "faces_assign":
+        for photo_id, person_id in inv.get("added", []):
+            pp = db.get(m.PhotoPerson, (photo_id, person_id))
+            if pp is not None:
+                db.delete(pp)
+        for face_id, prev_cluster in inv.get("moved", []):
+            f = db.get(m.Face, face_id)
+            if f is not None:
+                f.cluster_id = prev_cluster
+        if inv.get("new_cluster_id"):
+            c = db.get(m.FaceCluster, inv["new_cluster_id"])
+            if c is not None:
+                db.delete(c)
+        for cid in {pc for _f, pc in inv.get("moved", []) if pc}:
+            c = db.get(m.FaceCluster, cid)
+            if c is not None:
+                c.n_faces = db.query(func.count(m.Face.id)).filter(
+                    m.Face.cluster_id == cid).scalar() or 0
     elif op == "face_cluster_decide":
         db.query(m.FaceCluster).filter(
             m.FaceCluster.id.in_(inv["cluster_ids"])).update(

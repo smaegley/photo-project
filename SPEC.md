@@ -1390,9 +1390,19 @@ manifest and can follow.
 one conservative global threshold to start, tuned against held-out confirmed faces, with
 the review queue sorted by confidence so the easy bulk clears first.
 
-**D5 — Pets.** Abby, Toby, Floyd and Muffy are `notes='pet'` persons whose LR regions
-were hand-drawn (LR doesn't detect animal faces). Human face detectors will not find
-them. *Recommended:* explicitly **out of scope** — they stay manual.
+**D5 — Pets. ⚠ THE PREMISE WAS WRONG (corrected 2026-07-27).** I claimed human face
+detectors would not find animals, so pets were out of scope. **SCRFD detects them.** Steve
+found Abby and Toby grouped together in the review queue — cluster 10, 86 faces — and the
+data backs it: 50 detected faces on Abby-tagged photos, 52 on Toby's.
+
+*Why they group:* ArcFace maps anything out-of-domain into a similar corner of embedding
+space, so **all dogs look alike to it**. That also explains the group's low prominence
+(0.0014 vs ~0.008 for human clusters) — weak, low-confidence detections.
+
+*Consequence:* pets are **usable but not separable by the matcher**. Clustering groups by
+appearance, not identity, so it cannot tell Abby from Toby — a human can, in one glance.
+That is exactly what per-face splitting (§14.7a) is for, and it makes pet tagging a
+practical side-benefit rather than the out-of-scope item this decision assumed.
 
 ### 14.5 Model & runtime
 - **InsightFace `buffalo_l`** (SCRFD detector + ArcFace R100 recogniser) on **ONNX
@@ -1460,6 +1470,19 @@ the queue surfaces will be faces with no name at all.
   request. Threshold to be set from the measured distribution once faces are indexed.
 - **Never auto-name a cluster.** Clustering proposes grouping, not identity; a named
   cluster still becomes ordinary `human-confirmed` tags via Steve's click.
+- **Groups must be splittable — ✅ BUILT (2026-07-27, prompted by Steve).** Clustering
+  groups by *appearance*, which is not identity, so a mixed group is inevitable: two
+  different dogs land together (D5). Whole-group decisions alone would force naming both
+  as one animal or discarding both. `GET /face-clusters/{id}/faces` returns the full
+  group and `POST /faces/assign` acts on a **selected subset**:
+  - *name* → ordinary `photo_person` rows + the faces leave the group; later runs skip
+    them anyway, since a face overlapping a confirmed region is no longer unidentified;
+  - *ignore* → moved into a **new ignored cluster carrying their own centroid**, not
+    merely detached, so the persistent-ignore promise above still holds for them.
+
+  The source group's `n_faces` is corrected either way, so what remains is what is
+  genuinely left to decide. Verified: tag 3 of 86 → 83 remain → undo → back to 86 with
+  the tags removed.
 
 ### 14.8 Honest limits — record these before anyone is surprised
 1. **Aging is the hard part.** A face embeds very differently at 5 and at 50, so

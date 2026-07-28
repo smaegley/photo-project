@@ -32,6 +32,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [clusters, setClusters] = useState(null);
   const [summary, setSummary] = useState(null);
   const [naming, setNaming] = useState({});     // cluster id -> person_id being assigned
+  const [openCluster, setOpenCluster] = useState(null);   // expanded cluster id
+  const [clusterFaces, setClusterFaces] = useState([]);   // its full face list
+  const [faceSel, setFaceSel] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
@@ -62,6 +65,29 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
       setSel(new Set());
       await loadQueue();
       if (!rest.length) setPerson(null);
+      onChanged?.();
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  }
+
+  async function openGroup(id) {
+    if (openCluster === id) { setOpenCluster(null); return; }
+    setOpenCluster(id); setFaceSel(new Set()); setClusterFaces([]);
+    try { setClusterFaces(await api.clusterFaces(id)); }
+    catch (e) { setErr(String(e?.message || e)); }
+  }
+
+  // Split a mixed group: act on the selected faces only. Clustering groups by
+  // appearance, not identity — two different dogs land together — so whole-group
+  // decisions alone would force naming both as one animal.
+  async function assignSelected(action, personId) {
+    const ids = [...faceSel];
+    if (!ids.length) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.assignFaces({ face_ids: ids, action, person_id: personId || null });
+      setClusterFaces((f) => f.filter((x) => !faceSel.has(x.face_id)));
+      setFaceSel(new Set());
+      await loadClusters();
       onChanged?.();
     } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
   }
@@ -190,6 +216,9 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                 <div className="fq-cluster" key={c.id}>
                   <div className="fq-cluster-head">
                     <b>{c.n_faces} faces</b>
+                    <button className="link" onClick={() => openGroup(c.id)}>
+                      {openCluster === c.id ? "collapse" : "split / pick faces"}
+                    </button>
                     <span className="spacer" />
                     <select value={naming[c.id] || ""} disabled={busy}
                             onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}>
@@ -206,9 +235,48 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                       Ignore
                     </button>
                   </div>
-                  <div className="fq-grid small">
-                    {c.sample_face_ids.map((fid) => <Crop key={fid} faceId={fid} />)}
-                  </div>
+                  {openCluster === c.id ? (
+                    <>
+                      <div className="fq-actions fq-split">
+                        <span className="muted">
+                          {faceSel.size ? `${faceSel.size} selected` : "Click faces to select"}
+                        </span>
+                        <button onClick={() => setFaceSel(new Set(clusterFaces.map((f) => f.face_id)))}
+                                disabled={busy}>All</button>
+                        <button onClick={() => setFaceSel(new Set())} disabled={busy || !faceSel.size}>
+                          None</button>
+                        <span className="spacer" />
+                        <select value={naming[c.id] || ""} disabled={busy}
+                                onChange={(e) => setNaming((n) => ({ ...n, [c.id]: e.target.value }))}>
+                          <option value="">Tag selected as…</option>
+                          {people.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <button className="primary" disabled={busy || !faceSel.size || !naming[c.id]}
+                                onClick={() => assignSelected("name", naming[c.id])}>
+                          Tag {faceSel.size || ""}
+                        </button>
+                        <button disabled={busy || !faceSel.size}
+                                onClick={() => assignSelected("ignore")}>
+                          Ignore {faceSel.size || ""}
+                        </button>
+                      </div>
+                      <div className="fq-grid small">
+                        {clusterFaces.map((f) => (
+                          <Crop key={f.face_id} faceId={f.face_id}
+                                selected={faceSel.has(f.face_id)}
+                                onClick={() => setFaceSel((s) => {
+                                  const n = new Set(s);
+                                  n.has(f.face_id) ? n.delete(f.face_id) : n.add(f.face_id);
+                                  return n;
+                                })} />
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div className="fq-grid small">
+                      {c.sample_face_ids.map((fid) => <Crop key={fid} faceId={fid} />)}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>

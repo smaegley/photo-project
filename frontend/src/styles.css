@@ -576,3 +576,4 @@ a.menu-item { text-decoration: none; cursor: pointer; }
 .fq-cluster { border: 1px solid var(--line, #ddd); border-radius: 8px; padding: 9px; margin-bottom: 9px; }
 .fq-cluster-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; }
 .fq-cluster-head .spacer { flex: 1; }
+.fq-split { padding: 6px 0; border-top: 1px dashed var(--line, #ddd); }
