@@ -649,3 +649,14 @@ button:disabled kbd { opacity: .3; }
 .fq-tinybody { display: grid; grid-template-columns: 210px 1fr; gap: 12px; }
 @media (max-width: 900px) { .fq-tinybody { grid-template-columns: 1fr; } }
 .fq-tinypeople { max-height: 52vh; }
+
+/* Scrolling inside the modal needs min-height:0 on every flex/grid ancestor. A grid or
+   flex item defaults to min-height:auto — it refuses to shrink below its content — so
+   the child's max-height/overflow never engages and the list renders at full length.
+   That is why the 79-person tiny-faces sidebar ran off the panel. */
+.modal.face-queue { min-height: 0; }
+.modal.face-queue > * { min-height: 0; }
+.fq-tinybody { min-height: 0; align-items: start; }
+.fq-tinybody > * { min-height: 0; }
+.fq-tinypeople { max-height: 52vh; overflow-y: auto; }
+.fq-grid-wrap { min-height: 0; display: flex; flex-direction: column; }
