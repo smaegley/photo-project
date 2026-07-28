@@ -38,6 +38,8 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [clusterFaces, setClusterFaces] = useState([]);   // its full face list
   const [faceSel, setFaceSel] = useState(() => new Set());
   const [peek, setPeek] = useState(null);   // {faceId, sourceFile} under the cursor
+  const [undoInfo, setUndoInfo] = useState(null);
+  const [activeCluster, setActiveCluster] = useState(null);  // what `I` will ignore
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [note, setNote] = useState(null);
