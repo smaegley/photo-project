@@ -14,6 +14,7 @@ import PeopleAdmin from "./components/PeopleAdmin";
 import PlacesAdmin from "./components/PlacesAdmin";
 import UnplacedAdmin from "./components/UnplacedAdmin";
 import FaceQueueAdmin from "./components/FaceQueueAdmin";
+import RotationSweep from "./components/RotationSweep";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
 
@@ -78,6 +79,7 @@ export default function App() {
   const [showPlaces, setShowPlaces] = useState(false);
   const [showUnplaced, setShowUnplaced] = useState(false);
   const [showFaces, setShowFaces] = useState(false);
+  const [showRotation, setShowRotation] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -310,6 +312,7 @@ export default function App() {
         onManagePlaces={() => setShowPlaces(true)}
         onNameLocations={() => setShowUnplaced(true)}
         onReviewFaces={() => setShowFaces(true)}
+        onRotationSweep={() => setShowRotation(true)}
         onManageUsers={() => setShowUsers(true)}
         onShowUsage={() => setShowUsage(true)}
         undoInfo={undoInfo}
@@ -457,6 +460,13 @@ export default function App() {
         <FaceQueueAdmin
           people={allPeople}
           onClose={() => setShowFaces(false)}
+          onChanged={refresh}
+        />
+      )}
+
+      {showRotation && (
+        <RotationSweep
+          onClose={() => setShowRotation(false)}
           onChanged={refresh}
         />
       )}

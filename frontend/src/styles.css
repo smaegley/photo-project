@@ -745,3 +745,25 @@ button:disabled kbd { opacity: .3; }
   padding: 7px 0; border-bottom: 1px solid var(--border); }
 @media (max-width: 900px) { .fq-nf-row { grid-template-columns: 1fr; } }
 .fq-nf-name { font-size: 13px; }
+
+/* ---- Rotation sweep (admin) ---- */
+.rotation-sweep { min-height: 0; }
+.rotation-sweep > * { min-height: 0; }
+.rotation-toolbar { display: flex; align-items: center; gap: 10px; padding: 6px 0 10px;
+  flex-wrap: wrap; }
+.rotation-toolbar .ghost.active { border-color: var(--accent); color: var(--accent); }
+.rotation-apply { margin-left: auto; }
+.rotation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px; overflow-y: auto; max-height: 68vh; padding-bottom: 8px; }
+.rotation-cell { position: relative; border: 2px solid transparent; border-radius: 8px;
+  padding: 0; background: none; cursor: pointer; }
+.rotation-cell.proposed { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.rotation-cell.marked { border-color: var(--accent); }
+/* Square frame so a 90°-turned landscape thumb previews without spilling the cell. */
+.rotation-frame { display: block; aspect-ratio: 1; overflow: hidden; border-radius: 6px;
+  background: var(--card); }
+.rotation-frame img { width: 100%; height: 100%; object-fit: contain;
+  transition: transform 0.15s ease; }
+.rotation-badge { position: absolute; top: 4px; right: 4px; font-size: 12px;
+  background: color-mix(in srgb, var(--bg) 75%, transparent); border-radius: 5px;
+  padding: 1px 5px; min-width: 14px; }

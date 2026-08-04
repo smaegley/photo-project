@@ -21,7 +21,7 @@ function Menu({ label, title, children }) {
 
 export default function Header({ view, total, hasFilters, onView, onReset, mapOpen, onToggleMap,
                                 admin, canEdit, isAdmin, onToggleAdmin,
-                                onManageEvents, onManagePeople, onManagePlaces, onNameLocations, onReviewFaces, onManageUsers, onShowUsage,
+                                onManageEvents, onManagePeople, onManagePlaces, onNameLocations, onReviewFaces, onRotationSweep, onManageUsers, onShowUsage,
                                 undoInfo, onUndo, dark, onToggleTheme,
                                 userEmail, personName, isDev, devUsers }) {
   const undoLabel = undoInfo?.available
@@ -63,6 +63,7 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
             <button className="menu-item" onClick={onManagePlaces}>Manage places</button>
             <button className="menu-item" onClick={onNameLocations}>Name locations…</button>
             <button className="menu-item" onClick={onReviewFaces}>Review faces…</button>
+            <button className="menu-item" onClick={onRotationSweep}>Rotation sweep…</button>
             <div className="menu-sep" />
             <div className="menu-label">Admin</div>
             <button className="menu-item" onClick={onManageUsers}>Manage users</button>

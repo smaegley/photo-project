@@ -22,7 +22,8 @@ from app.auth import require_admin, require_contributor
 from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
-from app.import_photos import _km  # same proximity rule the importer uses (SPEC §12.6)
+from app.import_photos import _km, REVIEW_DIR  # same proximity rule the importer uses (SPEC §12.6)
+from app.queries import thumb_url as _thumb_url, _version as _photo_version
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
@@ -1231,6 +1232,42 @@ def delete_place(place_id: str, db: Session = Depends(get_db),
 
 
 # ---------- per-photo image ops ----------
+@router.get("/rotation/queue")
+def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
+    """The Rotation-sweep worklist: every rotatable photo (slides + scans; digital
+    masters are read-only B2 objects), ordered detector-proposals first, then
+    probed-but-faceless (landscapes the detector can't judge), then everything else
+    in Wendel's canonical mag/slide order. Proposals come from
+    data/review/rotation_proposals.json (app.detect_rotation, dev-side)."""
+    proposals: dict[int, dict] = {}
+    digital_flagged: list[dict] = []
+    ppath = REVIEW_DIR / "rotation_proposals.json"
+    generated_at = None
+    if ppath.exists():
+        data = json.loads(ppath.read_text())
+        generated_at = data.get("generated_at")
+        for r in data.get("results", []):
+            proposals[r["photo_id"]] = r
+            if r["origin"] == "digital" and r.get("proposal"):
+                digital_flagged.append({"id": r["photo_id"],
+                                        "source_file": r["source_file"],
+                                        "proposal": r["proposal"]})
+    face_counts = dict(db.query(m.Face.photo_id, func.count(m.Face.id))
+                       .group_by(m.Face.photo_id).all())
+    rows = (db.query(m.Photo).filter(m.Photo.origin.in_(["slide", "scan"]))
+            .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
+    items = []
+    for p in rows:
+        pr = proposals.get(p.id)
+        items.append({"id": p.id, "source_file": p.source_file, "origin": p.origin,
+                      "caption": p.caption, "faces": face_counts.get(p.id, 0),
+                      "thumb": _thumb_url(p.source_file) + _photo_version(p),
+                      "proposal": (pr or {}).get("proposal"), "probed": pr is not None})
+    items.sort(key=lambda r: 0 if r["proposal"] else (1 if r["probed"] else 2))
+    return {"generated_at": generated_at, "items": items,
+            "digital_flagged": digital_flagged}
+
+
 @router.post("/photos/{photo_id}/rotate")
 def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
                  user: m.User = Depends(require_contributor)):

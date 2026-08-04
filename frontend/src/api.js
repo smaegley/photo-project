@@ -111,6 +111,7 @@ export const api = {
     get(`/api/admin/faces/unnamed?min_area=${minArea}&min_score=${minScore}`
         + `&include_ignored=${includeIgnored}&limit=${limit}&offset=${offset}`),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
+  rotationQueue: () => get("/api/admin/rotation/queue"),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
   createPerson: (body) => send("POST", "/api/admin/people", body),
