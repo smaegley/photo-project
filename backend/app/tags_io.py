@@ -27,6 +27,7 @@ never seen.
 import argparse
 import gzip
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -72,12 +73,24 @@ def export_tags(path: Path) -> None:
                          round(pp.region_w, 5), round(pp.region_h, 5)]
                         if pp.region_w is not None else None),
             })
+        # Places travel too, but ADDITIVE-ONLY on import: both sides name places
+        # independently (Steve named 26 on prod while dev had 14 of its own), so
+        # unlike people there is no "dev wins" — a prod place or assignment is never
+        # overwritten. Keyed by name (place ids are allocated per database).
+        places = [{"name": pl.canonical_name, "region": pl.region,
+                   "precision": pl.precision, "lat": pl.lat, "lon": pl.lon}
+                  for pl in db.query(m.Place).all()]
+        place_names = dict(db.query(m.Place.id, m.Place.canonical_name).all())
+        photo_places = [[sf, place_names[plid]]
+                        for sf, plid in db.query(m.Photo.source_file, m.Photo.place_id)
+                        .filter(m.Photo.place_id.isnot(None)).all()]
     finally:
         db.close()
 
     payload = {"exported_at": datetime.now(timezone.utc).isoformat(),
                "photos": all_source_files,
-               "people": people, "aliases": aliases, "tags": tags}
+               "people": people, "aliases": aliases, "tags": tags,
+               "places": places, "photo_places": photo_places}
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh)
@@ -147,6 +160,40 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
                     db.add(m.PersonAlias(person_id=a["person_id"], alias=a["alias"]))
                 have_alias.add((a["person_id"], a["alias"].lower()))
                 n_alias += 1
+
+        # 1b. places — ADDITIVE ONLY, prod wins. Create places this side has never
+        # heard of (matched by name, case-insensitive) and fill the place on photos
+        # that have none; never move a photo that is already placed, never touch an
+        # existing place's coords or name. Both sides curate places independently.
+        place_by_name = {pl.canonical_name.lower(): pl for pl in db.query(m.Place).all()}
+        used_nums = [int(g.group(1)) for pl in place_by_name.values()
+                     if (g := re.fullmatch(r"plc(\d+)", pl.id))]
+        next_num = (max(used_nums) + 1) if used_nums else 1
+        n_places = 0
+        for p in payload.get("places", []):
+            if p["name"].lower() in place_by_name:
+                continue
+            n_places += 1
+            pl = m.Place(id=f"plc{next_num:03d}", canonical_name=p["name"],
+                         region=p.get("region"), precision=p.get("precision") or "unknown",
+                         lat=p.get("lat"), lon=p.get("lon"))
+            next_num += 1
+            place_by_name[p["name"].lower()] = pl
+            if not dry_run:
+                db.add(pl)
+        if not dry_run and n_places:
+            db.flush()
+        photo_place = dict(db.query(m.Photo.id, m.Photo.place_id).all())
+        n_placed = 0
+        for sf, place_name in payload.get("photo_places", []):
+            pid = photo_by_src.get(sf)
+            pl = place_by_name.get(place_name.lower())
+            if pid is None or pl is None or photo_place.get(pid) is not None:
+                continue
+            n_placed += 1
+            photo_place[pid] = pl.id
+            if not dry_run:
+                db.get(m.Photo, pid).place_id = pl.id
 
         # 2. tags
         existing = {(pp.photo_id, pp.person_id): pp for pp in db.query(m.PhotoPerson).all()}
@@ -235,6 +282,8 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
     print(f"people created:     {len(new_people)}")
     print(f"people updated:     {n_updated} (rename / links / family flag / rep photo)")
     print(f"aliases added:      {n_alias}")
+    print(f"places created:     {n_places}")
+    print(f"photos placed:      {n_placed} (only photos that had no place here)")
     print(f"tags added:         {added}")
     print(f"regions synced:     {boxed}")
     print(f"already correct:    {unchanged}")
