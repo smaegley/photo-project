@@ -2,8 +2,8 @@ import { useState } from "react";
 
 // Must match backend routers/facets.py REL_ORDER — a group missing here is silently
 // dropped from the People rail for linked viewers (§12.7 "Friends & others" bug).
-const REL_ORDER = ["Self", "Parent", "Sibling", "Child", "Grandparent",
-  "Aunt / Uncle", "Cousin", "Spouse", "Extended family", "Friends & others"];
+const REL_ORDER = ["Self", "Spouse", "Parent", "Sibling", "Child", "Grandparent",
+  "Aunt / Uncle", "Cousin", "Extended family", "Friends & others"];
 
 function Section({ title, count, action, children, storageKey, defaultOpen = true }) {
   const [open, setOpen] = useState(() => {

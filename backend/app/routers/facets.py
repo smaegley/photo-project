@@ -86,8 +86,8 @@ def log_usage(body: UsageReq, db: Session = Depends(get_db), user: m.User = Depe
     return {"ok": True}
 
 # Stable display order for relationship groups in the People rail.
-REL_ORDER = ["Self", "Parent", "Sibling", "Child", "Grandparent",
-             "Aunt / Uncle", "Cousin", "Spouse", "Extended family",
+REL_ORDER = ["Self", "Spouse", "Parent", "Sibling", "Child", "Grandparent",
+             "Aunt / Uncle", "Cousin", "Extended family",
              "Friends & others"]
 
 
