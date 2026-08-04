@@ -9,6 +9,13 @@ class PersonTag(BaseModel):
     name: str
     source: str
     uncertain: bool
+    # Face geometry (normalized centre + size), null for tags that carry no box. The
+    # lightbox draws these so an existing region is visible while tagging a new one —
+    # a labelled box sitting on a wall is a mis-tag you can see (SPEC §14).
+    region_x: float | None = None
+    region_y: float | None = None
+    region_w: float | None = None
+    region_h: float | None = None
 
 
 class PhotoOut(BaseModel):
@@ -193,6 +200,10 @@ class PersonLinksUpdate(BaseModel):
     spouse_id: str | None = None
 
 
+class PersonMerge(BaseModel):
+    into_id: str
+
+
 class CaptionReq(BaseModel):
     caption: str | None = None
 
@@ -211,6 +222,10 @@ class FaceRegionReq(BaseModel):
     y: float
     w: float
     h: float
+    # Opt-in, because this endpoint now serves two jobs. Picking someone's thumbnail
+    # (SPEC §4.2) should set it; routinely boxing faces to feed the face index (§14)
+    # must not, or every box drawn would silently reassign the person's thumbnail.
+    set_representative: bool = False
 
 
 class UsageReq(BaseModel):

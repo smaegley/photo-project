@@ -28,7 +28,7 @@ from app.routers.images import photo_file, _safe_key
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq, NotesReq,
     EventCreate, EventMerge, EventOut, EventRename,
-    FaceRegionReq, PersonCreate, PersonLinksUpdate, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
+    FaceRegionReq, PersonCreate, PersonLinksUpdate, PersonMerge, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
     RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
@@ -719,6 +719,165 @@ def face_cluster_faces(cluster_id: int, limit: int = 400, db: Session = Depends(
             for fid, ds, w, h, sf, dt, x, y in rows]
 
 
+@router.get("/faces/unnamed")
+def face_unnamed(min_area: float = 0.004, min_score: float = 0.70,
+                 include_ignored: bool = False, limit: int = 300, offset: int = 0,
+                 db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
+    """Good faces nobody has named — the pile the matcher structurally cannot surface.
+
+    A suggestion needs a person model to match against, so anyone with fewer than
+    `MIN_REFS` references is invisible to it, and so is anyone not in the archive at all.
+    Those faces fall below threshold and vanish into clustering. This asks the
+    origin-independent question instead — *is this a good face with no name on it?* —
+    ranked by area x det_score so the most worthwhile come first.
+
+    Excludes faces already carrying a confirmed region and those queued as a pending
+    suggestion (they belong to that review, not this one). Ignored faces are excluded by
+    default but can be brought back, since a better model may have changed the answer.
+    """
+    regions: dict[int, list] = {}
+    for pid, rx, ry, rw, rh in (
+            db.query(m.PhotoPerson.photo_id, m.PhotoPerson.region_x, m.PhotoPerson.region_y,
+                     m.PhotoPerson.region_w, m.PhotoPerson.region_h)
+            .filter(m.PhotoPerson.region_w.isnot(None)).all()):
+        regions.setdefault(pid, []).append(
+            (rx - rw / 2, ry - rh / 2, rx + rw / 2, ry + rh / 2))
+
+    # Everyone already on each photo, boxed or not. The reviewer needs this to answer
+    # "is she already in here, and where?" before naming a face — otherwise a second,
+    # redundant tag looks like the right move when it isn't.
+    tagged_by_photo: dict[int, list] = {}
+    for pid, person, name, rx, ry, rw, rh in (
+            db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
+                     m.Person.canonical_name, m.PhotoPerson.region_x,
+                     m.PhotoPerson.region_y, m.PhotoPerson.region_w, m.PhotoPerson.region_h)
+            .join(m.Person, m.Person.id == m.PhotoPerson.person_id).all()):
+        tagged_by_photo.setdefault(pid, []).append({
+            "person_id": person, "name": name,
+            "box": ([round(rx, 5), round(ry, 5), round(rw, 5), round(rh, 5)]
+                    if rw is not None else None)})
+
+    pending = {fid for (fid,) in db.query(m.FaceSuggestion.face_id)
+               .filter(m.FaceSuggestion.status == m.FACE_PENDING).all()}
+    ignored = {fid for (fid,) in db.query(m.Face.id)
+               .join(m.FaceCluster, m.Face.cluster_id == m.FaceCluster.id)
+               .filter(m.FaceCluster.status == m.CLUSTER_IGNORED).all()}
+
+    def overlaps(box, gs):
+        for g in gs:
+            ix1, iy1 = max(box[0], g[0]), max(box[1], g[1])
+            ix2, iy2 = min(box[2], g[2]), min(box[3], g[3])
+            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+            ua = ((box[2] - box[0]) * (box[3] - box[1])
+                  + (g[2] - g[0]) * (g[3] - g[1]) - inter)
+            if ua > 0 and inter / ua > 0.3:
+                return True
+        return False
+
+    rows = (db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y, m.Face.w, m.Face.h,
+                     m.Face.det_score, m.Face.detector_version, m.Face.embedding,
+                     m.Photo.source_file, m.Photo.date_start, m.Photo.origin)
+            .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(m.Face.det_score >= min_score,
+                    (m.Face.w * m.Face.h) >= min_area).all())
+
+    out, embs = [], []
+    for fid, pid, x, y, w, h, ds, dv, blob, sf, dt, origin in rows:
+        if fid in pending:
+            continue
+        if fid in ignored and not include_ignored:
+            continue
+        if overlaps((x - w / 2, y - h / 2, x + w / 2, y + h / 2), regions.get(pid, ())):
+            continue
+        # `boxed_here` is the reason most of these are unnamed at all: the matcher drops a
+        # suggestion when its best person already has a box on that photo, so a sibling's
+        # face lands here nameless. It also flags the interesting case — if this really is
+        # that person, their existing box is on the wrong face.
+        out.append({"face_id": fid, "photo_id": pid, "source_file": sf,
+                    "det_score": round(ds or 0, 3), "area": round(w * h, 5),
+                    "year": dt.year if dt else None, "origin": origin,
+                    "hires": bool(dv and "@" in dv),
+                    "ignored": fid in ignored,
+                    "tagged": tagged_by_photo.get(pid, []),
+                    "box": [round(x, 5), round(y, 5), round(w, 5), round(h, 5)]})
+        embs.append(blob)
+
+    _annotate_best_match(db, out, embs)
+    out.sort(key=lambda r: -(r["area"] * r["det_score"]))
+    return {"total": len(out), "items": out[offset:offset + limit]}
+
+
+def _annotate_best_match(db: Session, out: list[dict], embs: list) -> None:
+    """Add 'looks like <person> · <score>' to each unnamed face.
+
+    Same centroids the matcher uses, so the number on the tile is the number that kept
+    the face out of the queue. It is most often a *sibling* — that resemblance is exactly
+    what the model cannot resolve — so it is a hint about which family the face belongs
+    to, never an answer.
+    """
+    import numpy as np
+    from app.match_faces import (EMB_DIM, IOU_LINK, MAX_SUB, MIN_REFS, SUB_PER,
+                                 _box, _iou, _kmeans, _unit)
+
+    faces = db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y,
+                     m.Face.w, m.Face.h, m.Face.embedding).all()
+    if not faces:
+        return
+    emb = np.zeros((len(faces), EMB_DIM), dtype=np.float32)
+    by_photo: dict[int, list] = {}
+    for i, f in enumerate(faces):
+        if f[6]:
+            emb[i] = np.frombuffer(f[6], dtype=np.float32)
+        by_photo.setdefault(f[1], []).append((i, _box(f[2], f[3], f[4], f[5])))
+
+    refs: dict[str, list] = {}
+    for pid, person, rx, ry, rw, rh in (
+            db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
+                     m.PhotoPerson.region_x, m.PhotoPerson.region_y,
+                     m.PhotoPerson.region_w, m.PhotoPerson.region_h)
+            .filter(m.PhotoPerson.region_w.isnot(None)).all()):
+        g = _box(rx, ry, rw, rh)
+        best_i, best = None, IOU_LINK
+        for i, fb in by_photo.get(pid, ()):
+            v = _iou(g, fb)
+            if v > best:
+                best_i, best = i, v
+        if best_i is not None:
+            refs.setdefault(person, []).append(best_i)
+
+    people = [p for p, i in refs.items() if len(i) >= MIN_REFS]
+    if not people:
+        return
+    cent, owner = [], []
+    for j, p in enumerate(people):
+        idxs = refs[p]
+        k = min(MAX_SUB, max(1, len(idxs) // SUB_PER))
+        for c in (_kmeans(emb[idxs], k) if k > 1 else [_unit(emb[idxs].mean(0))]):
+            cent.append(c)
+            owner.append(j)
+    cent = np.stack(cent)
+    owner = np.array(owner)
+
+    names = dict(db.query(m.Person.id, m.Person.canonical_name)
+                 .filter(m.Person.id.in_(people)).all())
+    boxed = {(pid, per) for pid, per in
+             db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id)
+             .filter(m.PhotoPerson.region_w.isnot(None)).all()}
+
+    q = np.zeros((len(out), EMB_DIM), dtype=np.float32)
+    for i, blob in enumerate(embs):
+        if blob:
+            q[i] = np.frombuffer(blob, dtype=np.float32)
+    sims = q @ cent.T
+    top = sims.argmax(1)
+    for i, row in enumerate(out):
+        person = people[owner[top[i]]]
+        row["looks_like"] = names.get(person, person)
+        row["looks_like_id"] = person
+        row["looks_like_score"] = round(float(sims[i, top[i]]), 3)
+        row["boxed_here"] = (row["photo_id"], person) in boxed
+
+
 @router.post("/faces/assign")
 def assign_faces(body: dict, db: Session = Depends(get_db),
                  user: m.User = Depends(require_admin)):
@@ -750,10 +909,17 @@ def assign_faces(body: dict, db: Session = Depends(get_db),
         raise HTTPException(404, "no such faces")
     src_clusters = {f.cluster_id for f in faces if f.cluster_id}
 
-    added, moved = [], []
+    added, moved, blocked, filled = [], [], [], []
     new_cluster_id = None
     if action == "ignore":
-        vecs = [np.frombuffer(f.embedding, dtype=np.float32) for f in faces if f.embedding]
+        # `no_centroid` is for dismissing a SECOND face of someone already tagged on that
+        # photo — collages and photos-of-photos. Ignoring normally would store a centroid
+        # shaped like a real family member, and cluster_faces seeds from ignored centroids
+        # at 0.55 to absorb new faces silently: measured 42 unnamed faces within 0.55 of
+        # Kate, 54 of Cori. That would quietly suppress genuine faces of them forever.
+        # A centroid-less ignored cluster records the decision and absorbs nothing.
+        vecs = ([] if body.get("no_centroid") else
+                [np.frombuffer(f.embedding, dtype=np.float32) for f in faces if f.embedding])
         cvec = None
         if vecs:
             c = np.mean(vecs, axis=0)
@@ -778,6 +944,22 @@ def assign_faces(body: dict, db: Session = Depends(get_db),
                                      source=SOURCE_HUMAN, uncertain=False,
                                      region_x=f.x, region_y=f.y, region_w=f.w, region_h=f.h))
                 added.append([f.photo_id, person_id])
+            else:
+                pp = db.get(m.PhotoPerson, (f.photo_id, person_id))
+                if pp.region_w is None:
+                    # Tagged but with no geometry — extremely common for people carried
+                    # in from Lightroom keywords. Naming this face is not a duplicate,
+                    # it is the missing box, so fill it in. Blocking here was wrong: a
+                    # dog tagged by keyword could never be given a face at all.
+                    pp.region_x, pp.region_y = f.x, f.y
+                    pp.region_w, pp.region_h = f.w, f.h
+                    filled.append([f.photo_id, person_id])
+                else:
+                    # A real box already exists, and one region per (photo, person) means
+                    # this face cannot also be recorded. It used to skip in silence, which
+                    # reads as "the tag didn't work" — and it matters, because if this
+                    # really is that person then their EXISTING box is on the wrong face.
+                    blocked.append([f.photo_id, person_id])
             f.cluster_id = None
         else:
             f.cluster_id = new_cluster_id
@@ -790,9 +972,10 @@ def assign_faces(body: dict, db: Session = Depends(get_db),
     _log(db, user, f"faces:{action}", None,
          f"{len(faces)} faces" + (f" -> {person_id}" if person_id else ""),
          inverse={"op": "faces_assign", "moved": moved, "added": added,
-                  "new_cluster_id": new_cluster_id})
+                  "filled": filled, "new_cluster_id": new_cluster_id})
     db.commit()
     return {"faces": len(faces), "tags_added": len(added),
+            "regions_filled": len(filled), "blocked": blocked,
             "new_ignored_cluster": new_cluster_id}
 
 
@@ -1192,6 +1375,160 @@ def rename_person(person_id: str, body: PersonRename, db: Session = Depends(get_
             "is_family": person.is_family}
 
 
+@router.post("/people/{person_id}/merge")
+def merge_person(person_id: str, body: PersonMerge, db: Session = Depends(get_db),
+                 user: m.User = Depends(require_admin)):
+    """Merge one person into another — for duplicate rows (Layman/Leyman), not curation.
+
+    Everything that points at the source is repointed at the destination: photo tags
+    (when a photo carries *both*, the destination's tag wins and at most inherits the
+    source's face region), aliases, family-tree links, linked viewer accounts, and the
+    dev-side face suggestion/cluster rows. The source's display name survives as an
+    alias of the destination so future imports of the old spelling still resolve.
+
+    Undoable in one step — the inverse carries every moved row, so undo rebuilds the
+    source person exactly rather than approximately.
+    """
+    src = db.get(m.Person, person_id)
+    dst = db.get(m.Person, body.into_id)
+    if src is None or dst is None:
+        raise HTTPException(404, "person not found")
+    if src.id == dst.id:
+        raise HTTPException(400, "cannot merge a person into themselves")
+
+    src_row = {"id": src.id, "canonical_name": src.canonical_name,
+               "is_family": bool(src.is_family), "notes": src.notes,
+               "father_id": src.father_id, "mother_id": src.mother_id,
+               "spouse_id": src.spouse_id,
+               "representative_photo_id": src.representative_photo_id}
+
+    # ---- photo tags. A photo tagged with both people collides on the composite PK:
+    # keep the destination's row, but let it inherit the source's face region if it
+    # has none of its own (the source was often the one with the reviewed box).
+    dst_tags = {pp.photo_id: pp for pp in db.query(m.PhotoPerson)
+                .filter(m.PhotoPerson.person_id == dst.id).all()}
+    moved, dropped, region_fills = [], [], []
+    for pp in db.query(m.PhotoPerson).filter(m.PhotoPerson.person_id == src.id).all():
+        row = [pp.photo_id, pp.source, bool(pp.uncertain),
+               [pp.region_x, pp.region_y, pp.region_w, pp.region_h]]
+        clash = dst_tags.get(pp.photo_id)
+        if clash is None:
+            moved.append(row)
+            db.add(m.PhotoPerson(photo_id=pp.photo_id, person_id=dst.id,
+                                 source=pp.source, uncertain=pp.uncertain,
+                                 region_x=pp.region_x, region_y=pp.region_y,
+                                 region_w=pp.region_w, region_h=pp.region_h))
+        else:
+            dropped.append(row)
+            if clash.region_w is None and pp.region_w is not None:
+                region_fills.append([pp.photo_id, [clash.region_x, clash.region_y,
+                                                   clash.region_w, clash.region_h]])
+                clash.region_x, clash.region_y = pp.region_x, pp.region_y
+                clash.region_w, clash.region_h = pp.region_w, pp.region_h
+        db.delete(pp)
+
+    # ---- aliases (bulk, immediate SQL — keeps the delete-orphan cascade on
+    # src.aliases from seeing anything when the source row goes).
+    dst_aliases = {a.alias for a in db.query(m.PersonAlias)
+                   .filter(m.PersonAlias.person_id == dst.id).all()}
+    alias_moved, dupe_ids = [], []
+    for a in db.query(m.PersonAlias).filter(m.PersonAlias.person_id == src.id).all():
+        if a.alias in dst_aliases:
+            dupe_ids.append(a.id)
+        else:
+            alias_moved.append(a.alias)
+    alias_dupes = [a.alias for a in db.query(m.PersonAlias)
+                   .filter(m.PersonAlias.id.in_(dupe_ids)).all()] if dupe_ids else []
+    if dupe_ids:
+        db.query(m.PersonAlias).filter(m.PersonAlias.id.in_(dupe_ids)).delete(
+            synchronize_session=False)
+    db.query(m.PersonAlias).filter(m.PersonAlias.person_id == src.id).update(
+        {"person_id": dst.id}, synchronize_session=False)
+    name_alias = None
+    if (src.canonical_name != dst.canonical_name
+            and src.canonical_name not in dst_aliases
+            and src.canonical_name not in alias_moved):
+        name_alias = src.canonical_name
+        db.add(m.PersonAlias(person_id=dst.id, alias=name_alias))
+
+    # ---- family-tree links pointing AT the source. Immediate SQL: these FKs carry
+    # no relationship(), so ORM flush ordering vs. the person delete is not guaranteed.
+    # A destination that pointed at its own duplicate would become a self-link — clear
+    # it instead (undo restores the original either way).
+    kin = []
+    for field in ("father_id", "mother_id", "spouse_id"):
+        col = getattr(m.Person, field)
+        for (pid,) in db.query(m.Person.id).filter(col == src.id,
+                                                   m.Person.id != src.id).all():
+            db.query(m.Person).filter(m.Person.id == pid).update(
+                {field: None if pid == dst.id else dst.id}, synchronize_session=False)
+            kin.append([pid, field])
+
+    # ---- the source's own links fill the destination's gaps (never as a self-link)
+    db.refresh(dst)
+    link_fills = []
+    for field in ("father_id", "mother_id", "spouse_id"):
+        sv = src_row[field]
+        if sv and sv != dst.id and getattr(dst, field) is None:
+            setattr(dst, field, sv)
+            link_fills.append(field)
+
+    # ---- linked viewer accounts (FK without ondelete — must move before the delete)
+    user_ids = [uid for (uid,) in db.query(m.User.id)
+                .filter(m.User.person_id == src.id).all()]
+    if user_ids:
+        db.query(m.User).filter(m.User.person_id == src.id).update(
+            {"person_id": dst.id}, synchronize_session=False)
+
+    # ---- face suggestions (dev-side). uq(face_id, person_id): where both people were
+    # suggested for one face, the destination's row wins and the source's is recorded.
+    dst_faces = {fid for (fid,) in db.query(m.FaceSuggestion.face_id)
+                 .filter(m.FaceSuggestion.person_id == dst.id).all()}
+    sugg_moved, sugg_dropped, drop_ids = [], [], []
+    for s in db.query(m.FaceSuggestion).filter(m.FaceSuggestion.person_id == src.id).all():
+        if s.face_id in dst_faces:
+            drop_ids.append(s.id)
+            sugg_dropped.append([s.face_id, s.score, s.status, s.decided_by,
+                                 s.decided_at.isoformat() if s.decided_at else None])
+        else:
+            sugg_moved.append(s.id)
+    for ch in _chunks(drop_ids):
+        db.query(m.FaceSuggestion).filter(m.FaceSuggestion.id.in_(ch)).delete(
+            synchronize_session=False)
+    for ch in _chunks(sugg_moved):
+        db.query(m.FaceSuggestion).filter(m.FaceSuggestion.id.in_(ch)).update(
+            {"person_id": dst.id}, synchronize_session=False)
+
+    # ---- named face clusters
+    cluster_ids = [cid for (cid,) in db.query(m.FaceCluster.id)
+                   .filter(m.FaceCluster.person_id == src.id).all()]
+    if cluster_ids:
+        db.query(m.FaceCluster).filter(m.FaceCluster.person_id == src.id).update(
+            {"person_id": dst.id}, synchronize_session=False)
+
+    # ---- thumbnail: adopt the source's only if the destination has none
+    rep_adopted = False
+    if dst.representative_photo_id is None and src_row["representative_photo_id"] is not None:
+        dst.representative_photo_id = src_row["representative_photo_id"]
+        rep_adopted = True
+
+    db.delete(src)
+    _log(db, user, "person:merge", src.id, dst.id,
+         inverse={"op": "person_unmerge", "row": src_row, "dst_id": dst.id,
+                  "moved": moved, "dropped": dropped, "region_fills": region_fills,
+                  "alias_moved": alias_moved, "alias_dupes": alias_dupes,
+                  "name_alias": name_alias, "kin": kin, "link_fills": link_fills,
+                  "users": user_ids, "sugg_moved": sugg_moved,
+                  "sugg_dropped": sugg_dropped, "clusters": cluster_ids,
+                  "rep_adopted": rep_adopted})
+    db.commit()
+    total = db.query(func.count(m.PhotoPerson.photo_id)).filter(
+        m.PhotoPerson.person_id == dst.id).scalar() or 0
+    return {"merged": src_row["id"], "into": dst.id, "tags_moved": len(moved),
+            "tags_already_there": len(dropped), "aliases_moved": len(alias_moved),
+            "photo_count": total}
+
+
 @router.patch("/people/{person_id}/links")
 def update_person_links(person_id: str, body: PersonLinksUpdate, db: Session = Depends(get_db),
                         user: m.User = Depends(require_admin)):
@@ -1290,26 +1627,36 @@ def set_representative(person_id: str, body: RepresentativeReq, db: Session = De
 @router.post("/people/{person_id}/face-region")
 def set_face_region(person_id: str, body: FaceRegionReq, db: Session = Depends(get_db),
                     user: m.User = Depends(require_admin)):
-    """Manually set a person's face crop box on a photo + make it their representative
-    (SPEC §4.2) — for people ★'d on a photo with no Lightroom face region."""
+    """Manually set a person's face box on a photo, creating the tag if they weren't
+    already on it.
+
+    Two callers: the ★-thumbnail flow (SPEC §4.2) passes `set_representative`, and the
+    §14 face-tagging flow does not — drawn boxes feed the face index and must not keep
+    reassigning someone's thumbnail. Undo restores both the prior region and the prior
+    representative either way."""
     person = db.get(m.Person, person_id)
     if person is None:
         raise HTTPException(404, "person not found")
     if db.get(m.Photo, body.photo_id) is None:
         raise HTTPException(404, "photo not found")
     pp = db.get(m.PhotoPerson, (body.photo_id, person_id))
-    if pp is None:
+    created = pp is None
+    if created:
         pp = m.PhotoPerson(photo_id=body.photo_id, person_id=person_id, source=SOURCE_HUMAN)
         db.add(pp)
-    prior = {"rep": person.representative_photo_id,
+    # `created` so undo can remove the tag outright rather than leaving a region-less
+    # one behind — this path now creates tags routinely, not just backfills regions.
+    prior = {"rep": person.representative_photo_id, "created": created,
              "region": [pp.region_x, pp.region_y, pp.region_w, pp.region_h]}
     pp.region_x, pp.region_y, pp.region_w, pp.region_h = body.x, body.y, body.w, body.h
-    person.representative_photo_id = body.photo_id
+    if body.set_representative:
+        person.representative_photo_id = body.photo_id
     _log(db, user, "person:face", None, person_id,
          inverse={"op": "person_face", "person_id": person_id,
                   "photo_id": body.photo_id, "prior": prior})
     db.commit()
-    return {"person_id": person_id, "representative_photo_id": body.photo_id}
+    return {"person_id": person_id,
+            "representative_photo_id": person.representative_photo_id}
 
 
 @router.get("/usage/stats", response_model=UsageStats)
@@ -1458,7 +1805,10 @@ def _apply_inverse(db: Session, inv: dict) -> None:
             person.representative_photo_id = inv["prior"]["rep"]
         pp = db.get(m.PhotoPerson, (inv["photo_id"], inv["person_id"]))
         if pp:
-            pp.region_x, pp.region_y, pp.region_w, pp.region_h = inv["prior"]["region"]
+            if inv["prior"].get("created"):
+                db.delete(pp)        # the tag itself was ours; take it with us
+            else:
+                pp.region_x, pp.region_y, pp.region_w, pp.region_h = inv["prior"]["region"]
     elif op == "face_decide":
         # Put the suggestions back to pending and remove only what this decision added.
         db.query(m.FaceSuggestion).filter(
@@ -1501,11 +1851,75 @@ def _apply_inverse(db: Session, inv: dict) -> None:
             db.flush()
             for a in inv.get("aliases", []):
                 db.add(m.PersonAlias(person_id=r["id"], alias=a))
+    elif op == "person_unmerge":
+        r = inv["row"]
+        src_id, dst_id = r["id"], inv["dst_id"]
+        if db.get(m.Person, src_id) is None:
+            db.add(m.Person(**r))
+            db.flush()          # the immediate-SQL repoints below need the row to exist
+        # tags: moved rows go back wholesale; collision-dropped rows are recreated
+        # beside the destination's (which stays); inherited regions are cleared.
+        for photo_id, srcv, unc, box in inv.get("moved", []):
+            pp = db.get(m.PhotoPerson, (photo_id, dst_id))
+            if pp is not None:
+                db.delete(pp)
+            if db.get(m.PhotoPerson, (photo_id, src_id)) is None:
+                db.add(m.PhotoPerson(photo_id=photo_id, person_id=src_id, source=srcv,
+                                     uncertain=bool(unc), region_x=box[0], region_y=box[1],
+                                     region_w=box[2], region_h=box[3]))
+        for photo_id, srcv, unc, box in inv.get("dropped", []):
+            if db.get(m.PhotoPerson, (photo_id, src_id)) is None:
+                db.add(m.PhotoPerson(photo_id=photo_id, person_id=src_id, source=srcv,
+                                     uncertain=bool(unc), region_x=box[0], region_y=box[1],
+                                     region_w=box[2], region_h=box[3]))
+        for photo_id, box in inv.get("region_fills", []):
+            pp = db.get(m.PhotoPerson, (photo_id, dst_id))
+            if pp is not None:
+                pp.region_x, pp.region_y, pp.region_w, pp.region_h = box
+        for al in inv.get("alias_moved", []):
+            db.query(m.PersonAlias).filter(m.PersonAlias.person_id == dst_id,
+                                           m.PersonAlias.alias == al).delete(
+                synchronize_session=False)
+        for al in inv.get("alias_moved", []) + inv.get("alias_dupes", []):
+            db.add(m.PersonAlias(person_id=src_id, alias=al))
+        if inv.get("name_alias"):
+            db.query(m.PersonAlias).filter(m.PersonAlias.person_id == dst_id,
+                                           m.PersonAlias.alias == inv["name_alias"]).delete(
+                synchronize_session=False)
+        for pid, field in inv.get("kin", []):
+            db.query(m.Person).filter(m.Person.id == pid).update(
+                {field: src_id}, synchronize_session=False)
+        dstp = db.get(m.Person, dst_id)
+        if dstp is not None:
+            db.refresh(dstp)     # the kin repoints above may have touched its row
+            for field in inv.get("link_fills", []):
+                setattr(dstp, field, None)
+            if inv.get("rep_adopted"):
+                dstp.representative_photo_id = None
+        for ch in _chunks(inv.get("users", [])):
+            db.query(m.User).filter(m.User.id.in_(ch)).update(
+                {"person_id": src_id}, synchronize_session=False)
+        for ch in _chunks(inv.get("sugg_moved", [])):
+            db.query(m.FaceSuggestion).filter(m.FaceSuggestion.id.in_(ch)).update(
+                {"person_id": src_id}, synchronize_session=False)
+        for face_id, score, status, decided_by, decided_at in inv.get("sugg_dropped", []):
+            db.add(m.FaceSuggestion(face_id=face_id, person_id=src_id, score=score,
+                                    status=status, decided_by=decided_by,
+                                    decided_at=datetime.fromisoformat(decided_at)
+                                    if decided_at else None))
+        for ch in _chunks(inv.get("clusters", [])):
+            db.query(m.FaceCluster).filter(m.FaceCluster.id.in_(ch)).update(
+                {"person_id": src_id}, synchronize_session=False)
     elif op == "faces_assign":
         for photo_id, person_id in inv.get("added", []):
             pp = db.get(m.PhotoPerson, (photo_id, person_id))
             if pp is not None:
                 db.delete(pp)
+        # Regions filled on a PRE-EXISTING tag: clear the geometry, keep the tag itself.
+        for photo_id, person_id in inv.get("filled", []):
+            pp = db.get(m.PhotoPerson, (photo_id, person_id))
+            if pp is not None:
+                pp.region_x = pp.region_y = pp.region_w = pp.region_h = None
         for face_id, prev_cluster in inv.get("moved", []):
             f = db.get(m.Face, face_id)
             if f is not None:

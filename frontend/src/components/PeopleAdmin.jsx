@@ -15,6 +15,8 @@ export default function PeopleAdmin({ onClose, onChanged }) {
   const [msg, setMsg] = useState(null);
   const [q, setQ] = useState("");
   const [editingLinks, setEditingLinks] = useState(null); // person id being link-edited
+  const [mergeFrom, setMergeFrom] = useState(null); // person being merged away
+  const [pendingTarget, setPendingTarget] = useState(null); // chosen survivor, awaiting confirm
 
   // link editor state (populated when editingLinks is set)
   const [lFather, setLFather] = useState("");
@@ -88,6 +90,17 @@ export default function PeopleAdmin({ onClose, onChanged }) {
     run(`deleted ${p.name}`, () => api.deletePerson(p.id));
   };
 
+  // Merge = "these two rows are the same human". Tags, aliases, family links and the
+  // old name (as an alias) all move to the survivor; the server refuses self-merge.
+  const startMerge = (p) => { setMergeFrom(p); setPendingTarget(null); setEditingLinks(null); setQ(""); setMsg(null); };
+  const cancelMerge = () => { setMergeFrom(null); setPendingTarget(null); setQ(""); };
+  const confirmMerge = async () => {
+    const into = pendingTarget;
+    const ok = await run(`merged ${mergeFrom.name} → ${into.name}`,
+                         () => api.mergePerson(mergeFrom.id, into.id));
+    if (ok) cancelMerge();
+  };
+
   const toggleFamily = (p) =>
     run(`${p.name} is now ${p.is_family ? "non-family" : "family"}`,
         () => api.renamePerson(p.id, p.name, !p.is_family));
@@ -127,22 +140,44 @@ export default function PeopleAdmin({ onClose, onChanged }) {
           <button className="lb-close" onClick={onClose}>✕</button>
         </div>
 
+        {mergeFrom && (
+          <div className="merge-banner">
+            {pendingTarget ? (
+              <span>
+                Merge <b>{mergeFrom.name}</b> ({mergeFrom.photo_count}) into <b>{pendingTarget.name}</b> ({pendingTarget.photo_count})?
+                Tags, aliases and family links move over; this is undoable.
+                <button className="ghost merge-ok" onClick={confirmMerge} disabled={busy}>Confirm merge</button>
+              </span>
+            ) : (
+              <span>Merge <b>{mergeFrom.name}</b> ({mergeFrom.photo_count}) into which person? Pick one below.</span>
+            )}
+            <button className="link merge-back" onClick={cancelMerge}>← Back to people</button>
+          </div>
+        )}
+
         <div className="modal-search">
-          <input autoFocus value={q} placeholder="Search people…"
+          <input autoFocus value={q}
+                 placeholder={mergeFrom ? "Search for the person to merge into…" : "Search people…"}
                  onChange={(e) => setQ(e.target.value)} />
         </div>
 
         <div className="event-admin-list">
           {list.map((p) => (
             <div key={p.id}>
-              <div className="event-admin-row">
+              <div className={`event-admin-row ${mergeFrom && mergeFrom.id !== p.id ? "merge-target" : ""} ${pendingTarget && pendingTarget.id === p.id ? "pending" : ""}`}
+                   onClick={() => mergeFrom && mergeFrom.id !== p.id && setPendingTarget(p)}>
                 <span className="event-admin-name">
                   {p.name}
                   {!p.is_family && <span className="lb-origin-badge" style={{ marginLeft: 6 }}>friend / other</span>}
                   <span className="modal-sub"> · {p.photo_count} photo{p.photo_count !== 1 ? "s" : ""}</span>
                 </span>
+                {!mergeFrom && (
                 <span className="event-admin-actions">
                   <button className="link" onClick={() => rename(p)} disabled={busy}>rename</button>
+                  <button className="link" onClick={() => startMerge(p)} disabled={busy}
+                          title="This person is a duplicate of someone else — move everything onto that row">
+                    merge
+                  </button>
                   <button className="link" onClick={() => toggleFamily(p)} disabled={busy}
                           title={p.is_family ? "Move to Friends & others" : "Move back into the family tree"}>
                     {p.is_family ? "mark friend" : "mark family"}
@@ -160,8 +195,9 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                       </button>
                     )}
                 </span>
+                )}
               </div>
-              {editingLinks === p.id && (
+              {editingLinks === p.id && !mergeFrom && (
                 <div className="people-link-editor">
                   <div className="people-admin-row">
                     <label>Father</label>
@@ -191,6 +227,7 @@ export default function PeopleAdmin({ onClose, onChanged }) {
           {list.length === 0 && <div className="modal-msg">No people match "{q}".</div>}
         </div>
 
+        {!mergeFrom && (
         <div className="people-admin-new">
           <div className="people-admin-row">
             <input value={newName} placeholder="Full name…"
@@ -226,6 +263,7 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                     disabled={busy || !newName.trim() || !newId.trim()}>Add person</button>
           </div>
         </div>
+        )}
 
         {msg && <div className="modal-msg">{msg}</div>}
       </div>

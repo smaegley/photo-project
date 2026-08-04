@@ -106,11 +106,17 @@ export const api = {
   decideClusters: (body) => send("POST", "/api/admin/face-clusters/decide", body),
   clusterFaces: (id, limit = 400) => get(`/api/admin/face-clusters/${id}/faces?limit=${limit}`),
   assignFaces: (body) => send("POST", "/api/admin/faces/assign", body),
+  facesUnnamed: ({ minArea = 0.004, minScore = 0.7, includeIgnored = false,
+                   limit = 300, offset = 0 } = {}) =>
+    get(`/api/admin/faces/unnamed?min_area=${minArea}&min_score=${minScore}`
+        + `&include_ignored=${includeIgnored}&limit=${limit}&offset=${offset}`),
   rotatePhoto: (id, degrees) => send("POST", `/api/admin/photos/${id}/rotate`, { degrees }),
   editCaption: (id, caption) => send("POST", `/api/admin/photos/${id}/caption`, { caption }),
   editNotes:   (id, notes)   => send("POST", `/api/admin/photos/${id}/notes`,   { notes }),
   createPerson: (body) => send("POST", "/api/admin/people", body),
   deletePerson: (id) => send("DELETE", `/api/admin/people/${encodeURIComponent(id)}`),
+  mergePerson: (id, intoId) =>
+    send("POST", `/api/admin/people/${encodeURIComponent(id)}/merge`, { into_id: intoId }),
   renamePerson: (id, canonical_name, is_family) =>
     send("PATCH", `/api/admin/people/${id}`,
       is_family === undefined ? { canonical_name } : { canonical_name, is_family }),
