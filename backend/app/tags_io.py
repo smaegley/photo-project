@@ -47,11 +47,16 @@ def export_tags(path: Path) -> None:
         # nothing would report a difference. Cost 20 tags in testing.
         all_source_files = sorted(photos.values())
         rows = db.query(m.PhotoPerson).all()
-        # Ship the people too: Steve creates them during review (Veronica, Katie
-        # Kissinger…), and a tag referencing a person prod has never heard of would
-        # otherwise be unresolvable. These are human decisions, not auto-created.
+        # Ship the people too — the WHOLE person, not just existence. Review edits
+        # renames, family links, is_family flips and representative photos on dev
+        # (23 renames + 16 link edits + 2 merges in the §14 pass alone), and an export
+        # that only created missing people silently stranded all of that on dev.
+        # representative_photo_id travels as the photo's source_file (row ids differ
+        # per database, §14.8a).
         people = [{"id": p.id, "name": p.canonical_name, "is_family": bool(p.is_family),
-                   "notes": p.notes}
+                   "notes": p.notes, "father_id": p.father_id, "mother_id": p.mother_id,
+                   "spouse_id": p.spouse_id,
+                   "representative": photos.get(p.representative_photo_id)}
                   for p in db.query(m.Person).all()]
         aliases = [{"person_id": a.person_id, "alias": a.alias}
                    for a in db.query(m.PersonAlias).all()]
@@ -97,7 +102,10 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
         photo_by_src = dict(db.query(m.Photo.source_file, m.Photo.id).all())
         have_people = {p.id for p in db.query(m.Person).all()}
 
-        # 1. people this side has never seen — human-decided on dev, so apply them
+        # 1. people. Dev is the review environment, so dev wins: create the missing,
+        # and update name/is_family/notes/links/representative on those already here.
+        # Links land in a second pass so a link to a person created this run resolves.
+        exported_ids = {p["id"] for p in payload["people"]}
         new_people = [p for p in payload["people"] if p["id"] not in have_people]
         for p in new_people:
             if not dry_run:
@@ -106,6 +114,29 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
             have_people.add(p["id"])
         if not dry_run and new_people:
             db.flush()
+        n_updated = 0
+        created_ids = {np["id"] for np in new_people}
+        by_id = {p.id: p for p in db.query(m.Person).all()}
+        for p in payload["people"]:
+            cur = by_id.get(p["id"])
+            rep_id = photo_by_src.get(p["representative"]) if p.get("representative") else None
+            wanted_fields = {"canonical_name": p["name"], "is_family": p["is_family"],
+                             "notes": p.get("notes"),
+                             "father_id": p.get("father_id") if p.get("father_id") in have_people else None,
+                             "mother_id": p.get("mother_id") if p.get("mother_id") in have_people else None,
+                             "spouse_id": p.get("spouse_id") if p.get("spouse_id") in have_people else None,
+                             "representative_photo_id": rep_id}
+            if cur is None:          # dry run: person doesn't exist yet, nothing to diff
+                continue
+            if p["id"] in created_ids:   # created this run — links/rep still need setting
+                for k, v in wanted_fields.items():
+                    setattr(cur, k, v)
+                continue
+            changed = any(getattr(cur, k) != v for k, v in wanted_fields.items())
+            if changed and not dry_run:
+                for k, v in wanted_fields.items():
+                    setattr(cur, k, v)
+            n_updated += changed
         have_alias = {(a.person_id, a.alias.lower())
                       for a in db.query(m.PersonAlias).all()}
         n_alias = 0
@@ -142,9 +173,17 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
                         region_x=box[0] if box else None, region_y=box[1] if box else None,
                         region_w=box[2] if box else None, region_h=box[3] if box else None))
                 added += 1
-            elif box and pp.region_w is None:
+                continue
+            # Dev's box wins outright — review moves and deletes boxes, not just adds
+            # them (FaceTagEditor edits, the square-crop fix), so "fill only when
+            # empty" would freeze every box prod already had.
+            have_box = ([round(pp.region_x, 5), round(pp.region_y, 5),
+                         round(pp.region_w, 5), round(pp.region_h, 5)]
+                        if pp.region_w is not None else None)
+            if have_box != box:
                 if not dry_run:
-                    pp.region_x, pp.region_y, pp.region_w, pp.region_h = box
+                    pp.region_x, pp.region_y, pp.region_w, pp.region_h = \
+                        box if box else (None, None, None, None)
                 boxed += 1
             else:
                 unchanged += 1
@@ -157,6 +196,35 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
             for _k, pp in stale:
                 db.delete(pp)
 
+        # 4. people dev no longer has — merged-away duplicates (drew_leyman) or deleted
+        # typos. Only under --prune, and only when nothing points at them anymore: any
+        # remaining tag, kin link, user link or alias-of-others reference means this DB
+        # knows something the export doesn't, so leave the row and say so.
+        stale_tag_keys = {k for k, _pp in stale} if prune else set()
+        people_pruned, people_kept = [], []
+        if prune:
+            for pid in sorted(set(by_id) - exported_ids):
+                tags_left = [k for k, _pp in existing.items()
+                             if k[1] == pid and k not in stale_tag_keys]
+                kin = db.query(m.Person).filter(
+                    (m.Person.father_id == pid) | (m.Person.mother_id == pid)
+                    | (m.Person.spouse_id == pid)).count()
+                users = db.query(m.User).filter(m.User.person_id == pid).count()
+                if tags_left or kin or users:
+                    people_kept.append((pid, f"{len(tags_left)} tags, {kin} kin, {users} users"))
+                    continue
+                people_pruned.append(pid)
+                if not dry_run:
+                    db.query(m.PersonAlias).filter(m.PersonAlias.person_id == pid).delete(
+                        synchronize_session=False)
+                    db.query(m.FaceSuggestion).filter(m.FaceSuggestion.person_id == pid).delete(
+                        synchronize_session=False)
+                    db.query(m.FaceCluster).filter(m.FaceCluster.person_id == pid).update(
+                        {"person_id": None}, synchronize_session=False)
+                    p = db.get(m.Person, pid)
+                    if p is not None:
+                        db.delete(p)
+
         if not dry_run:
             db.commit()
     finally:
@@ -165,9 +233,10 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
     tag = " (DRY RUN)" if dry_run else ""
     print(f"\n=== IMPORT TAGS{tag} ===")
     print(f"people created:     {len(new_people)}")
+    print(f"people updated:     {n_updated} (rename / links / family flag / rep photo)")
     print(f"aliases added:      {n_alias}")
     print(f"tags added:         {added}")
-    print(f"regions filled in:  {boxed}")
+    print(f"regions synced:     {boxed}")
     print(f"already correct:    {unchanged}")
     print(f"photos not here:    {len(missing_photos)} (export mentions photos this DB lacks)")
     verb = "pruned" if (prune and not dry_run) else "WOULD prune (pass --prune)"
@@ -175,6 +244,11 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
     if stale and not prune:
         for (pid, per), _pp in stale[:8]:
             print(f"    photo {pid} · {per}")
+    if prune:
+        print(f"people dev removed: {len(people_pruned)} {verb}"
+              + (f" ({', '.join(people_pruned)})" if people_pruned else ""))
+        for pid, why in people_kept:
+            print(f"    KEPT {pid} — still referenced here: {why}")
     if new_people:
         print("\ncreated people: " + ", ".join(sorted(p["name"] for p in new_people)))
 
