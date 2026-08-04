@@ -9,7 +9,9 @@ should tell you where to look and what's already known, so you don't re-derive i
 What lives *only* here: current deployment state, known-and-accepted issues, and the
 gotchas that burn time.
 
-**Last reviewed:** 2026-07-28 (§13 shipped to prod; §14 slices 1–5 built + reviewed on dev).
+**Last reviewed:** 2026-08-04 (release prep: face tooling + person merge committed;
+people/tag sync export staged; ops runbook at
+`/mnt/photos/photo-project/handoff/DEV-2026-08-04-release-and-people-sync.md`).
 
 ---
 
@@ -32,10 +34,10 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | `e2f0e1f` — §14 face matching, slices 1–3 built (2026-07-27) |
+| Repo HEAD (dev) | 2026-08-04 release batch: face audit tooling, undoable person merge, Spouse rail fix, `tags_io` full people sync (see `git log`) |
 | Pushed to origin | yes — dev and `origin/main` in sync |
-| Deployed to prod | **`16bbd26`** — 2026-07-27: all of §13 digital + the unnamed-locations admin |
-| Dev-only, NOT on prod | §14 face tables + 14,245 detected faces + 9,177 imported face regions (by design, §14.8a) |
+| Deployed to prod | **`fb0c589`** — §14 face code + review UI live (empty until the tag import); deploy of the 2026-08-04 batch + `tags_io --import --prune` pending ops (runbook in handoff dir) |
+| Dev-only, NOT on prod | §14 embeddings/suggestions/clusters (by design, §14.8a); Steve's review RESULTS staged in `data/review/tags_export.json.gz` (10,884 tags · 127 people, 2026-08-04); 14 dev-created places + 1 rotated slide (flagged, unsynced) |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
