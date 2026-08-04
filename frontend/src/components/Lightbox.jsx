@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
 import FaceCropEditor from "./FaceCropEditor";
+import FaceTagEditor from "./FaceTagEditor";
 
 export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                                   admin = false, isAdmin = false, events = [], people = [], places = [], magazines = [], onChanged }) {
@@ -11,6 +12,7 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   const [captionDraft, setCaptionDraft] = useState("");
   const [notesDraft, setNotesDraft] = useState("");
   const [cropPerson, setCropPerson] = useState(null);
+  const [tagFace, setTagFace] = useState(false);
   const [busy, setBusy] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -167,6 +169,17 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
               {detail.magazine_id && (
                 <div><label>Roll</label><span>Mag {detail.magazine_id} · slide {detail.slide_in_mag}</span></div>
               )}
+              {/* Filename. `original_filename` is null for all 1,140 slides by design —
+                  they carry a synthesised Mag##_Slide## name instead — so fall back to
+                  source_file, which is meaningful for every origin. Shown so a photo can
+                  be named precisely when reporting a bad tag or a rotation. */}
+              {(detail.original_filename || detail.source_file) && (
+                <div><label>File</label>
+                  <span className="lb-filename" title={detail.source_file}>
+                    {detail.original_filename || detail.source_file.split("/").pop()}
+                  </span>
+                </div>
+              )}
               {detail.origin && detail.origin !== "slide" && (
                 <div><label>Source</label>
                   <span>
@@ -215,10 +228,14 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
                 ))}
                 {detail.people.length === 0 && !admin && <span className="muted-dash">—</span>}
               </div>
+              {isAdmin && (
+                <button className="ghost lb-tagface" disabled={busy}
+                        onClick={() => setTagFace(true)}>⛶ Tag a face…</button>
+              )}
               {admin && (
                 <select value="" disabled={busy}
                         onChange={(e) => { const v = e.target.value; if (v) edit(() => api.bulkPerson([photo.id], v, "add")); e.target.value = ""; }}>
-                  <option value="">+ add person…</option>
+                  <option value="">+ add person (no box)…</option>
                   {[...people].filter((p) => !detail.people.some((dp) => dp.person_id === p.id))
                     .sort((a, b) => a.name.localeCompare(b.name))
                     .map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -293,6 +310,13 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
           </div>
         )}
       </aside>
+
+      {tagFace && (
+        <FaceTagEditor photo={photo} detail={detail} people={people}
+          onClose={() => setTagFace(false)}
+          /* stays open after a save so several faces can be tagged in one pass */
+          onSaved={() => { dirty.current = true; reload(); onChanged?.(); }} />
+      )}
 
       {cropPerson && (
         <FaceCropEditor person={cropPerson} photo={photo}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
+import FaceInspector from "./FaceInspector";
 
 // Face-matching review (SPEC §14.7). Two jobs, deliberately separated because they ask
 // different questions of the reviewer:
@@ -14,11 +15,11 @@ import { api } from "../api";
 // undoable contribution covering the whole batch.
 
 function Crop({ faceId, score, badge, selected, onClick, onPeek, sourceFile, box,
-                peeked, hoverPeek = true, tagRef }) {
+                peeked, hoverPeek = true, tagRef, tagged }) {
   // `tagRef` crops the TAG's own region. A tag's box and a detected face's box are
   // independent, so LR-imported tags usually match no detection — resolving them to a
   // face_id left 254 of 400 rendering as broken squares.
-  const info = { faceId, sourceFile, box, tagRef };
+  const info = { faceId, sourceFile, box, tagRef, tagged };
   const src = tagRef
     ? `/api/tag-crop/${tagRef[0]}/${encodeURIComponent(tagRef[1])}`
     : `/api/face-crop/${faceId}`;
@@ -356,6 +357,152 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [tinyOnly, setTinyOnly] = useState(true);
   const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
   const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
+  const [unnamed, setUnnamed] = useState([]);            // good faces with no name
+  const [unnamedTotal, setUnnamedTotal] = useState(0);
+  const [unnamedSel, setUnnamedSel] = useState(() => new Set());
+  const [unnamedTier, setUnnamedTier] = useState("big"); // big | medium | all
+  const [unnamedIgnored, setUnnamedIgnored] = useState(false);
+  const [unnamedName, setUnnamedName] = useState("");
+  const [inspectIdx, setInspectIdx] = useState(null);  // index into `unnamed`
+
+  const UNNAMED_TIERS = {
+    big:    { minArea: 0.01,  minScore: 0.75, label: "big + confident" },
+    medium: { minArea: 0.004, minScore: 0.70, label: "medium and up" },
+    all:    { minArea: 0,     minScore: 0,    label: "everything" },
+  };
+
+  async function loadUnnamed(opts = {}) {
+    const tier = UNNAMED_TIERS[opts.tier ?? unnamedTier];
+    const includeIgnored = opts.includeIgnored ?? unnamedIgnored;
+    const append = opts.append || false;
+    setBusy(true);
+    try {
+      const r = await api.facesUnnamed({
+        ...tier, includeIgnored, limit: 300,
+        offset: append ? unnamed.length : 0,
+      });
+      setUnnamedTotal(r.total);
+      setUnnamed((xs) => (append ? [...xs, ...r.items] : r.items));
+      if (!append) setUnnamedSel(new Set());
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  // ---- single-face actions, driven by the inspector ----
+  // These operate on one face by id rather than on the selection, because the inspector
+  // is the singular tool and the grid's selection is the bulk one. Keeping them separate
+  // is what stops Move fighting multiselect for the same toolbar.
+  const inspected = inspectIdx == null ? null : unnamed[inspectIdx];
+
+  // Acting on a face removes it from the list, so the index quietly advances to the next
+  // one — which is the behaviour you want mid-pass. At the end of the list it would run
+  // off and the inspector would vanish without explanation, so clamp instead.
+  useEffect(() => {
+    if (inspectIdx == null) return;
+    if (!unnamed.length) setInspectIdx(null);
+    else if (inspectIdx > unnamed.length - 1) setInspectIdx(unnamed.length - 1);
+  }, [unnamed, inspectIdx]);
+
+  async function afterSingleAction(msg) {
+    setNote(msg);
+    await Promise.all([loadUnnamed(), refreshUndo()]);
+    onChanged?.();
+  }
+
+  async function moveBoxTo(personId, personName) {
+    if (!inspected) return;
+    setBusy(true); setErr(null);
+    try {
+      const [x, y, w, h] = inspected.box;
+      // Deliberately no set_representative: relocating a box must not also reassign
+      // whose photo is used for their thumbnail.
+      await api.setFaceRegion(personId, { photo_id: inspected.photo_id, x, y, w, h });
+      await afterSingleAction(`Moved ${personName}'s box onto this face.`);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function tagInspected(personId) {
+    if (!inspected || !personId) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.assignFaces({ action: "name", person_id: personId,
+                                        face_ids: [inspected.face_id] });
+      if ((r.blocked || []).length) {
+        // Only reachable when a real box already exists; a tag with no box gets its
+        // region filled server-side instead of blocking.
+        setErr("They already have a face box on this photo — use Move to put it here.");
+      } else {
+        await afterSingleAction(r.regions_filled ? "Added their face box." : "Tagged.");
+      }
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  // Creating a person is a DISTINCT, labelled action here too — the button only appears
+  // when the typed text matches nobody, so a mistyped "Kat" can't quietly become a new
+  // person alongside Kate. Feeds `newPeople` so the name is pickable immediately after.
+  async function createAndTagInspected(name, isFamily) {
+    const slug = slugify(name);
+    if (!inspected || !name || !slug) { setErr("Type a name first."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const p = await api.createPerson({ id: slug, canonical_name: name,
+                                         is_family: isFamily });
+      const person = { id: p.id || slug, name };
+      setNewPeople((xs) => [...xs, person]);
+      await api.assignFaces({ action: "name", person_id: person.id,
+                              face_ids: [inspected.face_id] });
+      await afterSingleAction(`Created ${name}${isFamily ? " (family)" : ""} and tagged them.`);
+      onChanged?.();
+    } catch (e) {
+      setErr(`${e?.message || e}` + (String(e).includes("already exists")
+        ? " — pick them from the list instead." : ""));
+    } finally { setBusy(false); }
+  }
+
+  async function ignoreInspected(noCentroid = false) {
+    if (!inspected) return;
+    setBusy(true); setErr(null);
+    try {
+      await api.assignFaces({ action: "ignore", face_ids: [inspected.face_id],
+                              no_centroid: noCentroid });
+      await afterSingleAction(noCentroid ? "Dismissed as a duplicate." : "Ignored.");
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  // Naming here writes ordinary tags via the same endpoint the cluster splitter uses,
+  // so these faces become references like any other — which is the whole point: the
+  // people in this list are the ones the matcher could never reach on its own.
+  async function decideUnnamed(action) {
+    const personId = action === "name" ? resolvePerson(unnamedName) : null;
+    if (action === "name" && !personId) { setErr("Pick a name first."); return; }
+    if (!unnamedSel.size) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.assignFaces({ action, person_id: personId,
+                                        face_ids: [...unnamedSel] });
+      // A face whose person is ALREADY boxed on that photo cannot be recorded — one
+      // region per (photo, person). Saying so beats the old silent skip, which looked
+      // like the tag simply hadn't worked.
+      const blockedPhotos = new Set((r?.blocked || []).map(([photoId]) => photoId));
+      if (blockedPhotos.size) {
+        setErr(`${r.tags_added} tagged · ${blockedPhotos.size} could not be: that person `
+             + `already has a face box on those photos. If this really is them, the `
+             + `existing box is on the wrong face — fix it in the lightbox.`);
+      }
+      // Blocked faces stay in the list; nothing was written for them.
+      setUnnamed((xs) => xs.filter((f) => !unnamedSel.has(f.face_id)
+                                          || blockedPhotos.has(f.photo_id)));
+      setUnnamedTotal((n) => Math.max(0, n - (r?.tags_added ?? unnamedSel.size)));
+      setUnnamedSel(new Set());
+      setUnnamedName("");
+      await refreshUndo();
+      onChanged?.();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
 
   const personByName = useMemo(() => {
     const map = new Map();
@@ -363,6 +510,12 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     return map;
   }, [allPeople]);
   const resolvePerson = (text) => personByName.get((text || "").trim().toLowerCase()) || null;
+
+  // When the person you are naming already has a box on this photo, a second tag cannot
+  // be stored (one region per photo+person) and adding one would be junk. Almost always
+  // the truth is that their existing box is on the WRONG face — so move it here instead
+  // of creating anything. Same undoable endpoint the lightbox uses; the prior region is
+  // restored on undo, and the thumbnail is deliberately left alone.
 
   const auditTotal = useMemo(() => {
     if (!tinyPeople) return audit.length;
@@ -394,6 +547,10 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           <button className={tab === "audit" ? "on" : ""}
                   onClick={() => { setTab("audit"); reloadAudit(); }}>
             Check accepted
+          </button>
+          <button className={tab === "unnamed" ? "on" : ""}
+                  onClick={() => { setTab("unnamed"); loadUnnamed(); }}>
+            Unnamed faces{unnamedTotal ? ` (${unnamedTotal.toLocaleString()})` : ""}
           </button>
           <button className={tab === "faces" ? "on" : ""}
                   onClick={() => { setTab("faces"); loadNoFace(); }}>
@@ -500,14 +657,28 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
           </div>
         )}
 
+        {inspected && (
+          <FaceInspector
+            item={inspected} index={inspectIdx} total={unnamed.length} busy={busy}
+            allPeople={allPeople} resolvePerson={resolvePerson}
+            onPrev={() => setInspectIdx((i) => Math.max(0, i - 1))}
+            onNext={() => setInspectIdx((i) => Math.min(unnamed.length - 1, i + 1))}
+            onClose={() => setInspectIdx(null)}
+            onMove={moveBoxTo} onTag={tagInspected} onIgnore={ignoreInspected}
+            onCreateAndTag={createAndTagInspected}
+            /* The panel's own error line sits BEHIND this modal, so a failure in here
+               was completely invisible — "I click Tag and nothing happens". */
+            error={err} onDismissError={() => setErr(null)} />
+        )}
+
         {peek && (
           // Grid crops are ~96px, which is not enough to tell two dogs or two siblings
           // apart. Hovering shows a much larger crop AND the whole photo — context often
           // settles it faster than resolution does (who else is in frame, where it is).
-          <div className={`fq-peek ${tab === "unknown" ? "sticky" : ""}`}
-               onMouseLeave={() => { if (tab !== "unknown") setPeek(null); }}>
+          <div className={`fq-peek ${tab === "unknown" || tab === "unnamed" ? "sticky" : ""}`}
+               onMouseLeave={() => { if (tab !== "unknown" && tab !== "unnamed") setPeek(null); }}>
 
-        {tab === "unknown" && (
+        {(tab === "unknown" || tab === "unnamed") && (
               <button className="fq-peek-close" onClick={() => setPeek(null)}
                       aria-label="Close preview">✕</button>
             )}
@@ -520,6 +691,14 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                 <code className="fq-peek-name" title={peek.sourceFile}>
                   {peek.sourceFile.split("/").pop()}
                 </code>
+              )}
+              {peek.tagged && (
+                <div className="fq-peek-tags">
+                  {peek.tagged.length
+                    ? <>already tagged: {peek.tagged.map((t) => t.name
+                        + (t.box ? "" : " (no box)")).join(" · ")}</>
+                    : <>nobody tagged on this photo yet</>}
+                </div>
               )}
             </div>
             {peek.sourceFile && (
@@ -538,8 +717,118 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                     height: `${peek.box[3] * 100}%`,
                   }} />
                 )}
+                {/* Who is ALREADY tagged here, drawn where they sit. Without this you
+                    cannot tell whether the person you are about to name is in the photo
+                    twice, or once with their box on the wrong face. */}
+                {(peek.tagged || []).filter((t) => t.box).map((t) => (
+                  <span key={t.person_id} className="fq-peek-tagbox" style={{
+                    left: `${(t.box[0] - t.box[2] / 2) * 100}%`,
+                    top: `${(t.box[1] - t.box[3] / 2) * 100}%`,
+                    width: `${t.box[2] * 100}%`,
+                    height: `${t.box[3] * 100}%`,
+                  }}><i>{t.name}</i></span>
+                ))}
               </span>
             )}
+          </div>
+        )}
+
+        {tab === "unnamed" && (
+          <div className="fq-grid-wrap">
+            <p className="hint">
+              Good faces carrying no name. A suggestion needs a person model to match
+              against, so anyone with fewer than three reference faces — or who isn't in
+              the archive at all — can never be suggested. This asks the question the
+              other way round: <b>is this a good face with nobody on it?</b> Biggest and
+              sharpest first. <b>Click a face</b> to open the whole photo — name it there,
+              or move a wrongly-placed box onto it. <b>⌘/Ctrl-click</b> to multi-select for
+              bulk Tag or Ignore.
+            </p>
+            <div className="fq-actions">
+              <label className="muted">show{" "}
+                <select value={unnamedTier} disabled={busy}
+                        onChange={(e) => { setUnnamedTier(e.target.value);
+                                           loadUnnamed({ tier: e.target.value }); }}>
+                  {Object.entries(UNNAMED_TIERS).map(([k, v]) =>
+                    <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </label>
+              <label className="fq-fam">
+                <input type="checkbox" checked={unnamedIgnored} disabled={busy}
+                       onChange={(e) => { setUnnamedIgnored(e.target.checked);
+                                          loadUnnamed({ includeIgnored: e.target.checked }); }} />
+                include ones you ignored
+              </label>
+              <span className="muted">
+                {unnamed.length.toLocaleString()} of {unnamedTotal.toLocaleString()}
+              </span>
+              <span className="spacer" />
+              <button onClick={() => setUnnamedSel(new Set(unnamed.map((f) => f.face_id)))}
+                      disabled={busy || !unnamed.length}>Select all {unnamed.length}</button>
+              <button onClick={() => setUnnamedSel(new Set())}
+                      disabled={busy || !unnamedSel.size}>Clear</button>
+              {unnamed.length < unnamedTotal && (
+                <button disabled={busy} onClick={() => loadUnnamed({ append: true })}>
+                  Load {Math.min(300, unnamedTotal - unnamed.length).toLocaleString()} more
+                </button>
+              )}
+            </div>
+            <div className="fq-actions">
+              <input className="fq-nameinput" list="pplx-unnamed" value={unnamedName}
+                     disabled={busy || !unnamedSel.size}
+                     placeholder={unnamedSel.size ? "Who are these?" : "select faces first"}
+                     onChange={(e) => setUnnamedName(e.target.value)}
+                     onKeyDown={(e) => { if (e.key === "Enter" && resolvePerson(unnamedName))
+                                           decideUnnamed("name"); }} />
+              <datalist id="pplx-unnamed">
+                {allPeople.map((p) => <option key={p.id} value={p.name} />)}
+              </datalist>
+              <button className="primary"
+                      disabled={busy || !unnamedSel.size || !resolvePerson(unnamedName)}
+                      onClick={() => decideUnnamed("name")}>
+                Tag {unnamedSel.size || ""}
+              </button>
+              <button disabled={busy || !unnamedSel.size}
+                      onClick={() => decideUnnamed("ignore")}>
+                Ignore {unnamedSel.size || ""}
+              </button>
+              <span className="muted fq-bulk">
+                Naming here also fixes the enrolment gap — 24 people have only 1–2
+                reference faces and stay invisible to matching until they have 3.
+              </span>
+            </div>
+            <div className="fq-grid" onMouseLeave={() => setPeek(null)}>
+              {unnamed.map((f, i) => (
+                <Crop key={f.face_id} faceId={f.face_id} sourceFile={f.source_file}
+                      box={f.box} onPeek={setPeek} hoverPeek={false}
+                      tagged={f.tagged} score={f.looks_like_score}
+                      /* First name only — the tile is 104px. The ⚠ means that person is
+                         already boxed on this photo, so either this is a sibling the
+                         model can't separate, or their existing box is on the wrong face. */
+                      badge={f.ignored ? "ignored"
+                             : `${(f.looks_like || "?").split(" ")[0]}${f.boxed_here ? " ⚠" : ""}`}
+                      peeked={peek?.faceId === f.face_id}
+                      selected={unnamedSel.has(f.face_id)}
+                      /* Plain click opens the photo — judging one face needs the whole
+                         frame. ⌘/Ctrl/Shift-click toggles selection for the bulk verbs,
+                         the same convention the gallery already uses. */
+                      onClick={(e) => {
+                        if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                          setUnnamedSel((s) => {
+                            const n = new Set(s);
+                            n.has(f.face_id) ? n.delete(f.face_id) : n.add(f.face_id);
+                            return n;
+                          });
+                        } else {
+                          setPeek(null);
+                          setInspectIdx(i);
+                        }
+                      }} />
+              ))}
+              {!unnamed.length && !busy && (
+                <p className="muted">Nothing left at this quality level.</p>
+              )}
+            </div>
           </div>
         )}
 
@@ -786,7 +1075,7 @@ Click any face to enlarge it and outline it in its photo.
                           Ignore {faceSel.size || ""}
                         </button>
                       </div>
-                      <div className="fq-grid small">
+                      <div className="fq-grid expanded">
                         {clusterFaces.map((f) => (
                           <Crop key={f.face_id} faceId={f.face_id}
                                 sourceFile={f.source_file} box={f.box} onPeek={setPeek}

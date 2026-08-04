@@ -193,7 +193,7 @@ def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
     # tell similar subjects apart (two dogs, siblings). Cached per size; clamped so the
     # parameter can't be used to generate unbounded work.
     edge = max(120, min(int(size or derivatives.FACE_MAX), 640))
-    cache = settings.faces_dir / f"face{face_id}_{edge}.jpg"
+    cache = settings.faces_dir / f"face{face_id}_{edge}_{derivatives.FACE_CROP_V}.jpg"
     if not cache.exists():
         derivatives.face_thumb(src, cache, region, max_edge=edge)
     return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
@@ -223,7 +223,7 @@ def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_u
     if not src.exists():
         raise HTTPException(404, "no display derivative — run prewarm")
     edge = max(120, min(int(size or derivatives.FACE_MAX), 640))
-    key = derivatives.safe_key(f"{photo_id}_{person_id}_{edge}")
+    key = derivatives.safe_key(f"{photo_id}_{person_id}_{edge}_{derivatives.FACE_CROP_V}")
     cache = settings.faces_dir / f"tag_{key}.jpg"
     if not cache.exists():
         derivatives.face_thumb(src, cache, region, max_edge=edge)

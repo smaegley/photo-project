@@ -37,6 +37,12 @@ DEFAULT_THRESHOLD = 0.45   # P-F3: keeps 93.6% of genuine matches, admits 4.6% o
 MIN_REFS = 3               # a centroid from 1–2 examples is noise, not a person
 IOU_LINK = 0.3             # same overlap rule P-F3/P-F4 validated at 100% recall
 EMB_DIM = 512
+SUB_PER = 25               # one sub-centroid per ~25 references (0 disables splitting)
+MAX_SUB = 5                # cap: past this it fits noise, not appearance eras
+# Faces in clusters you bulk-ignored are re-asked only well above threshold. Ignoring a
+# cluster is a real decision, so the bar to reopen it is "the better model is confident",
+# not "the better model changed its mind slightly".
+IGNORED_THRESHOLD = 0.55
 
 
 def _iou(a, b):
@@ -51,8 +57,31 @@ def _box(x, y, w, h):
     return (x - w / 2, y - h / 2, x + w / 2, y + h / 2)
 
 
+def _unit(v):
+    n = np.linalg.norm(v)
+    return v / n if n else v
+
+
+def _kmeans(X, k, iters=25, seed=0):
+    """Spherical k-means over unit embeddings — cosine, so the 'mean' is renormalised.
+
+    Deterministic on `seed` so two runs produce the same sub-centroids and therefore the
+    same suggestions; a queue that reshuffles itself between runs is unreviewable.
+    """
+    rng = np.random.default_rng(seed)
+    C = X[rng.choice(len(X), size=min(k, len(X)), replace=False)].copy()
+    for _ in range(iters):
+        assign = (X @ C.T).argmax(1)
+        for j in range(len(C)):
+            members = X[assign == j]
+            if len(members):
+                C[j] = _unit(members.mean(0))
+    return C
+
+
 def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
-        dry_run: bool = False) -> None:
+        dry_run: bool = False, sub_per: int = SUB_PER, max_sub: int = MAX_SUB,
+        ignored_threshold: float = IGNORED_THRESHOLD) -> None:
     db = SessionLocal()
     try:
         faces = db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y,
@@ -76,6 +105,11 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
                    db.query(m.FaceSuggestion.face_id, m.FaceSuggestion.person_id,
                             m.FaceSuggestion.status).all()
                    if st != m.FACE_PENDING}
+        # Faces sitting in a cluster that was bulk-ignored — held to a higher bar below.
+        ignored_faces = {fid for (fid,) in
+                         db.query(m.Face.id)
+                         .join(m.FaceCluster, m.Face.cluster_id == m.FaceCluster.id)
+                         .filter(m.FaceCluster.status == "ignored").all()}
     finally:
         db.close()
 
@@ -106,19 +140,31 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
     if not people:
         print(f"no person has >= {min_refs} linked reference faces — nothing to match against")
         return
-    cent = np.zeros((len(people), EMB_DIM), dtype=np.float32)
+
+    # ---- build the person models ----
+    # One mean per person is wrong for an archive spanning 1962–2026: it averages a
+    # person's childhood and adulthood into a vector resembling neither. Measured on
+    # Steve's 1,086 confirmed faces: mean 0.633 to his own centroid but p10 = 0.306, and
+    # the low tail is almost all Mag* slides — child Steve, outvoted by adult digital.
+    # Splitting each person's references into a few sub-centroids fixes that; the extra
+    # cost is one more matmul against ~150 rows instead of ~90.
+    cent, owner = [], []
     for j, p in enumerate(people):
-        c = emb[refs[p]].mean(0)
-        n = np.linalg.norm(c)
-        cent[j] = c / n if n else c
+        idxs = refs[p]
+        k = 1 if sub_per < 1 else min(max_sub, max(1, len(idxs) // sub_per))
+        for c in (_kmeans(emb[idxs], k) if k > 1 else [_unit(emb[idxs].mean(0))]):
+            cent.append(c)
+            owner.append(j)
+    cent = np.stack(cent)
+    owner = np.array(owner)
 
     # ---- score every unidentified face ----
     cand = np.array([i for i in range(len(faces)) if i not in identified], dtype=np.int64)
     sims = emb[cand] @ cent.T
-    best = sims.argmax(1)
+    best = owner[sims.argmax(1)]        # sub-centroid -> the person that owns it
     score = sims.max(1)
 
-    n_new = n_backfill = n_below = n_noop = 0
+    n_new = n_backfill = n_below = n_noop = n_ignored = 0
     rows = []
     for k, ci in enumerate(cand):
         if score[k] < threshold:
@@ -128,6 +174,9 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
         fid = int(face_ids[ci])
         if (fid, person) in decided:
             continue                          # human already ruled on this pair
+        if fid in ignored_faces and score[k] < ignored_threshold:
+            n_ignored += 1
+            continue                          # dismissed cluster, not confident enough
         photo_id = faces[ci][1]
         # Skip no-ops: `photo_person` holds ONE region per (photo, person), so if that
         # person already has a box here, accepting would change nothing. Measured at 323
@@ -159,12 +208,15 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
     print(f"faces total:        {len(faces)}")
     print(f"already identified: {len(identified)}  (linked to a confirmed region — the reference set)")
     print(f"people enrolled:    {len(people)} of {len(refs)} with any reference")
+    print(f"person models:      {len(cent)} sub-centroids "
+          f"({'one per person' if sub_per < 1 else f'~1 per {sub_per} refs, max {max_sub}'})")
     print(f"unidentified:       {len(cand)}")
     print(f"  suggestions:      {len(rows)}")
     print(f"    genuinely new:  {n_new}  (person not yet tagged on that photo)")
     print(f"    region backfill:{n_backfill}  (person already tagged; adds geometry only)")
     print(f"  below threshold:  {n_below}  -> unknown-face clustering (§14.7a)")
     print(f"  skipped as no-op: {n_noop}  (person already has a box on that photo)")
+    print(f"  held back:        {n_ignored}  (in a cluster you ignored, under {ignored_threshold})")
     if not dry_run and rows:
         print("\nNext: slice 5 — the by-person confirm queue")
 
@@ -174,5 +226,12 @@ if __name__ == "__main__":
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD)
     ap.add_argument("--min-refs", type=int, default=MIN_REFS)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--sub-per", type=int, default=SUB_PER,
+                    help="references per sub-centroid; 0 = one centroid per person (old behaviour)")
+    ap.add_argument("--max-sub", type=int, default=MAX_SUB)
+    ap.add_argument("--ignored-threshold", type=float, default=IGNORED_THRESHOLD,
+                    help="score needed to re-ask a face in a cluster you ignored")
     args = ap.parse_args()
-    run(threshold=args.threshold, min_refs=args.min_refs, dry_run=args.dry_run)
+    run(threshold=args.threshold, min_refs=args.min_refs, dry_run=args.dry_run,
+        sub_per=args.sub_per, max_sub=args.max_sub,
+        ignored_threshold=args.ignored_threshold)

@@ -32,6 +32,9 @@ export default function FaceCropEditor({ person, photo, onClose, onSaved }) {
     try {
       await api.setFaceRegion(person.person_id, {
         photo_id: photo.id, x: box.x + box.w / 2, y: box.y + box.h / 2, w: box.w, h: box.h,
+        // This flow's whole purpose is choosing the thumbnail (SPEC §4.2), so it opts in.
+        // FaceTagEditor does not — see the note on FaceRegionReq.
+        set_representative: true,
       });
       onSaved();
     } catch (e) { alert(e.message); }

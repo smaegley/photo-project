@@ -84,12 +84,17 @@ def ensure(src: Path, cache: Path, max_edge: int, transpose: bool = False) -> bo
     return True
 
 
+# Bump when face_thumb's geometry changes, so already-cached crops are abandoned rather
+# than served forever. v2: square crops near frame edges (were clipped to rectangles).
+FACE_CROP_V = "v2"
+
+
 def face_version(rep_id, region) -> str:
     """Cache/URL key for a person's face crop — changes when the rep photo OR the
     crop box changes, so both the disk cache and the browser refetch."""
     if region and region[2] is not None:  # region = (x, y, w, h)
-        return f"{rep_id}-" + "-".join(str(int((v or 0) * 1000)) for v in region)
-    return str(rep_id)
+        return f"{FACE_CROP_V}-{rep_id}-" + "-".join(str(int((v or 0) * 1000)) for v in region)
+    return f"{FACE_CROP_V}-{rep_id}"
 
 
 def face_thumb(src: Path, cache: Path, region, max_edge: int = FACE_MAX) -> None:
@@ -103,11 +108,15 @@ def face_thumb(src: Path, cache: Path, region, max_edge: int = FACE_MAX) -> None
             cx, cy, w, h = region
             side = max(min(w * 1.6, 1.0) * W, min(h * 1.9, 1.0) * H)  # pad + squarify
             x, y = cx * W, cy * H
-            box = (x - side / 2, y - side / 2, x + side / 2, y + side / 2)
         else:
-            s = min(W, H)
-            box = ((W - s) / 2, (H - s) / 2, (W + s) / 2, (H + s) / 2)
-        crop = im.crop((max(0, int(box[0])), max(0, int(box[1])),
-                        min(W, int(box[2])), min(H, int(box[3]))))
+            side, x, y = min(W, H), W / 2, H / 2
+        # SLIDE the square inside the frame instead of clipping it. Clamping each edge
+        # independently silently returned a rectangle whenever a face sat near a border —
+        # 37% of crops, ratios 0.51 to 1.92 — and a grid of ragged thumbnails is unusable
+        # for the one job it has: comparing faces side by side.
+        side = int(round(min(side, W, H)))
+        left = max(0, min(int(round(x - side / 2)), W - side))
+        top = max(0, min(int(round(y - side / 2)), H - side))
+        crop = im.crop((left, top, left + side, top + side))
         crop.thumbnail((max_edge, max_edge))
         crop.save(cache, "JPEG", quality=85)

@@ -159,11 +159,14 @@ def run_query(db: Session, f: PhotoFilter, page: int, page_size: int):
 
 def photo_people(db: Session, photo_id: int) -> list[PersonTag]:
     rows = (db.query(m.Person.id, m.Person.canonical_name,
-                     m.PhotoPerson.source, m.PhotoPerson.uncertain)
+                     m.PhotoPerson.source, m.PhotoPerson.uncertain,
+                     m.PhotoPerson.region_x, m.PhotoPerson.region_y,
+                     m.PhotoPerson.region_w, m.PhotoPerson.region_h)
             .join(m.PhotoPerson, m.Person.id == m.PhotoPerson.person_id)
             .filter(m.PhotoPerson.photo_id == photo_id).all())
-    return [PersonTag(person_id=pid, name=name, source=src, uncertain=bool(unc))
-            for pid, name, src, unc in rows]
+    return [PersonTag(person_id=pid, name=name, source=src, uncertain=bool(unc),
+                      region_x=rx, region_y=ry, region_w=rw, region_h=rh)
+            for pid, name, src, unc, rx, ry, rw, rh in rows]
 
 
 def photo_events(db: Session, photo_id: int) -> list[str]:
