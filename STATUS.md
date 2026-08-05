@@ -57,10 +57,11 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 > `people_seed.csv` → `seed_people` → `import_photos --people-csv` → `prewarm`. All
 > idempotent + additive; **never** `import_data.py`.
 >
-> **Dev leftovers (harmless, wiped by next `load-prod-snapshot.sh`):** the 806 sorted
-> files under `/mnt/photos/library/photos/`, the seeded scan people, ~8 older probe
-> rows + `deirdre_carlile`, the 933 MB `Lightroom Database-v13-3.lrcat` in
-> `/mnt/photos/lrcat-drop/`, and a dev backend on :8077.
+> **Dev leftovers:** the 806 sorted files under `/mnt/photos/library/photos/`, the
+> seeded scan people, the 933 MB `Lightroom Database-v13-3.lrcat` in
+> `/mnt/photos/lrcat-drop/`, and a dev backend on :8077. (The 8 probe photo rows and
+> `deirdre_carlile` were **deleted 2026-08-05** — dev's photo set now matches prod's
+> 6,590 exactly; backup in `data/backups/photos-20260805-160833.db.gz`.)
 
 > **✅ §13 DIGITAL PHOTOS — SHIPPED TO PROD (2026-07-27).** All six slices built and
 > deployed. Prod holds **6,590 photos** (1,140 slides + 770 scans + **4,680 digital**),
