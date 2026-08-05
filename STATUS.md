@@ -37,7 +37,8 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 | Repo HEAD (dev) | 2026-08-04 release batch: face audit tooling, undoable person merge, Spouse rail fix, `tags_io` full people sync (see `git log`) |
 | Pushed to origin | yes — dev and `origin/main` in sync |
 | Deployed to prod | **`fb0c589`** — §14 face code + review UI live (empty until the tag import); deploy of the 2026-08-04 batch + `tags_io --import --prune` pending ops (runbook in handoff dir) |
-| Dev-only, NOT on prod | §14 embeddings/suggestions/clusters (by design, §14.8a); Steve's review RESULTS staged in `data/review/tags_export.json.gz` (10,884 tags · 127 people, 2026-08-04); 14 dev-created places + 1 rotated slide (flagged, unsynced) |
+| Dev-only, NOT on prod | §14 embeddings/suggestions/clusters (by design, §14.8a); Steve's review RESULTS staged in `data/review/tags_export.json.gz` (10,875 tags · 127 people · 189 places · rotations, 2026-08-05); 7 rotated slide/scan masters (rsync list in the handoff runbook) |
+| ⚠ After the import lands | **Steve sweeps rotations ON PROD → prod becomes ahead of dev for rotations/boxes.** Do NOT re-import a stale dev export after that; refresh dev from a prod snapshot (+ rebuild the dev-only face index) before the next enrichment/export cycle. |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
