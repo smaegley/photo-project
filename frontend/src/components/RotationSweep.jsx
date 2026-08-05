@@ -22,9 +22,11 @@ export default function RotationSweep({ onClose, onChanged }) {
     setItems(q.items);
     setDigitalFlagged(q.digital_flagged ?? []);
     setGeneratedAt(q.generated_at);
-    // detector proposals arrive pre-marked
+    // Detector proposals arrive pre-marked — EXCEPT on pet-only photos, where the
+    // face-angle signal is known-unreliable (dogs detect at random angles); those
+    // show the suggestion as a badge hint and wait for a human click.
     const pre = {};
-    for (const it of q.items) if (it.proposal) pre[it.id] = it.proposal;
+    for (const it of q.items) if (it.proposal && !it.pet_only) pre[it.id] = it.proposal;
     setPending(pre);
   }
   useEffect(() => { load(); }, []);
@@ -116,7 +118,9 @@ export default function RotationSweep({ onClose, onChanged }) {
                        style={deg ? { transform: `rotate(${deg}deg)` } : undefined} />
                 </span>
                 <span className="rotation-badge">
-                  {deg ? `${deg}°` : (it.probed && it.faces === 0 && !it.proposal ? "?" : "")}
+                  {deg ? `${deg}°`
+                       : it.proposal && it.pet_only ? `🐾${it.proposal}°?`
+                       : (it.probed && it.faces === 0 && !it.proposal ? "?" : "")}
                 </span>
               </button>
             );

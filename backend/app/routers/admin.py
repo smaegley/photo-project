@@ -1267,15 +1267,25 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
                                  m.Contribution.photo_id.isnot(None)).all()}
     face_counts = dict(db.query(m.Face.photo_id, func.count(m.Face.id))
                        .group_by(m.Face.photo_id).all())
+    # Photos whose only tagged subjects are pets: the detector's angle signal is
+    # meaningless there (it "found" dog faces at three different angles on 2026-08-05
+    # and the resulting proposals were wrong on all three photos). Their proposals
+    # ship as hints, flagged pet_only so the UI never pre-marks them.
+    pets = {pid for (pid,) in db.query(m.Person.id).filter(m.Person.notes == "pet")}
+    tagged = defaultdict(set)
+    for photo_id, person_id in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id):
+        tagged[photo_id].add(person_id)
     rows = (db.query(m.Photo).filter(m.Photo.origin.in_(["slide", "scan"]))
             .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
     items = []
     for p in rows:
         pr = None if p.id in rotated_since else proposals.get(p.id)
+        subjects = tagged.get(p.id, set())
         items.append({"id": p.id, "source_file": p.source_file, "origin": p.origin,
                       "caption": p.caption, "faces": face_counts.get(p.id, 0),
                       "thumb": _thumb_url(p.source_file) + _photo_version(p),
-                      "proposal": (pr or {}).get("proposal"), "probed": pr is not None})
+                      "proposal": (pr or {}).get("proposal"), "probed": pr is not None,
+                      "pet_only": bool(subjects) and subjects <= pets})
     items.sort(key=lambda r: 0 if r["proposal"] else (1 if r["probed"] else 2))
     return {"generated_at": generated_at, "items": items,
             "digital_flagged": digital_flagged}
