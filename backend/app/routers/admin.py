@@ -1252,13 +1252,26 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
                 digital_flagged.append({"id": r["photo_id"],
                                         "source_file": r["source_file"],
                                         "proposal": r["proposal"]})
+    # A proposal (and the probe verdict itself) describes the file AS IT WAS when the
+    # detector ran. Once a photo is rotated, that data is stale — re-offering it
+    # pre-marks an already-fixed photo and a second Apply would wreck it (that is not
+    # hypothetical: it triple-rotated 6 photos on 2026-08-05). The contribution log
+    # is the authority on what was rotated after the probe.
+    rotated_since = set()
+    if generated_at is not None:
+        cutoff = datetime.fromisoformat(generated_at).astimezone(
+            timezone.utc).replace(tzinfo=None)
+        rotated_since = {pid for (pid,) in db.query(m.Contribution.photo_id)
+                         .filter(m.Contribution.field == "photo:rotate",
+                                 m.Contribution.created_at > cutoff,
+                                 m.Contribution.photo_id.isnot(None)).all()}
     face_counts = dict(db.query(m.Face.photo_id, func.count(m.Face.id))
                        .group_by(m.Face.photo_id).all())
     rows = (db.query(m.Photo).filter(m.Photo.origin.in_(["slide", "scan"]))
             .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
     items = []
     for p in rows:
-        pr = proposals.get(p.id)
+        pr = None if p.id in rotated_since else proposals.get(p.id)
         items.append({"id": p.id, "source_file": p.source_file, "origin": p.origin,
                       "caption": p.caption, "faces": face_counts.get(p.id, 0),
                       "thumb": _thumb_url(p.source_file) + _photo_version(p),
