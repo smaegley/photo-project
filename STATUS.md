@@ -38,7 +38,7 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 | Deployed to prod | **`7dd7a72`** — 2026-08-05: the whole 2026-08 release (face tooling, person merge, Spouse fix, rotation override, migration `f2a3b4c5d6e7`) **plus the full data import** — verified exact match: 10,875 tags · 10,546 regions · 127 people · 13 rotations · 6,590 photos. See `OPS-2026-08-05-release-and-people-sync-done.md`. |
 | ⚠ PROD IS AUTHORITATIVE | Steve is finishing the rotation sweep **on prod**. Prod is now ahead of dev for rotations/boxes (and everything else). **Never run `tags_io --import` on prod from the old dev export.** Next dev enrichment cycle: `load-prod-snapshot.sh` first, rebuild the dev-only face index, then export. |
 | Dev-only leftovers | §14 embeddings/suggestions/clusters (by design, §14.8a — rebuilt per cycle, not synced) |
-| Known damaged master | `Photo Album/2004/December/2004-12-12-006.JPG` truncated **in B2** (ops, 2026-08-05) — displays fine from salvaged decode; fix at the source (re-upload from Steve's Mac/LR) when convenient |
+| Removed photo | `Photo Album/2004/December/2004-12-12-006.JPG` was corrupt at the source (LR) — Steve deleted it from B2 2026-08-05; prod row removal is with ops (`DEV-2026-08-05-remove-corrupt-photo-row.md`). **Prod count becomes 6,589**; dev says 6,590 until its next snapshot refresh |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
