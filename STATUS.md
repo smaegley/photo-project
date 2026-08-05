@@ -34,11 +34,11 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 
 | | |
 |---|---|
-| Repo HEAD (dev) | 2026-08-04 release batch: face audit tooling, undoable person merge, Spouse rail fix, `tags_io` full people sync (see `git log`) |
-| Pushed to origin | yes — dev and `origin/main` in sync |
-| Deployed to prod | **`fb0c589`** — §14 face code + review UI live (empty until the tag import); deploy of the 2026-08-04 batch + `tags_io --import --prune` pending ops (runbook in handoff dir) |
-| Dev-only, NOT on prod | §14 embeddings/suggestions/clusters (by design, §14.8a); Steve's review RESULTS staged in `data/review/tags_export.json.gz` (10,875 tags · 127 people · 189 places · rotations, 2026-08-05); 7 rotated slide/scan masters (rsync list in the handoff runbook) |
-| ⚠ After the import lands | **Steve sweeps rotations ON PROD → prod becomes ahead of dev for rotations/boxes.** Do NOT re-import a stale dev export after that; refresh dev from a prod snapshot (+ rebuild the dev-only face index) before the next enrichment/export cycle. |
+| Repo HEAD (dev) | in sync with origin (docs may run ahead of prod by doc-only commits) |
+| Deployed to prod | **`7dd7a72`** — 2026-08-05: the whole 2026-08 release (face tooling, person merge, Spouse fix, rotation override, migration `f2a3b4c5d6e7`) **plus the full data import** — verified exact match: 10,875 tags · 10,546 regions · 127 people · 13 rotations · 6,590 photos. See `OPS-2026-08-05-release-and-people-sync-done.md`. |
+| ⚠ PROD IS AUTHORITATIVE | Steve is finishing the rotation sweep **on prod**. Prod is now ahead of dev for rotations/boxes (and everything else). **Never run `tags_io --import` on prod from the old dev export.** Next dev enrichment cycle: `load-prod-snapshot.sh` first, rebuild the dev-only face index, then export. |
+| Dev-only leftovers | §14 embeddings/suggestions/clusters (by design, §14.8a — rebuilt per cycle, not synced) |
+| Known damaged master | `Photo Album/2004/December/2004-12-12-006.JPG` truncated **in B2** (ops, 2026-08-05) — displays fine from salvaged decode; fix at the source (re-upload from Steve's Mac/LR) when convenient |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
 | Last deploy before that | `d0d8ade` — 2026-07-14, §10.15 + §10.16 |
 
