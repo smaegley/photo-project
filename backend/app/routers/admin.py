@@ -124,6 +124,56 @@ def _rotate_file(p: m.Photo, deg: int) -> None:
     derivatives.generate(path, settings.display_dir / key, derivatives.DISPLAY_MAX)
 
 
+def _rotate_override(p: m.Photo, deg: int) -> None:
+    """Rotate a B2-backed photo by bumping its display-time override (clockwise).
+
+    The read-only master is never touched: `photo.rotation` moves, which lands the
+    derivatives (and every URL) on a fresh version token. The new derivatives come
+    from rotating the existing cached display file — no B2 round trip — falling back
+    to one master fetch only if the cache was never prewarmed. Old-key cache files
+    are deleted rather than left to orphan."""
+    old_disp = settings.display_dir / derivatives.cache_key(
+        p.source_file, derivatives.version_token(p), versioned=True)
+    old_thumb = settings.thumbnails_dir / derivatives.cache_key(
+        p.source_file, derivatives.version_token(p), versioned=True)
+    p.rotation = ((p.rotation or 0) + deg) % 360
+    new_token = derivatives.version_token(p)
+    new_disp = settings.display_dir / derivatives.cache_key(
+        p.source_file, new_token, versioned=True)
+    new_thumb = settings.thumbnails_dir / derivatives.cache_key(
+        p.source_file, new_token, versioned=True)
+    if old_disp.exists():
+        with Image.open(old_disp) as im:
+            im.load()
+            rot = im.rotate(-deg, expand=True)          # PIL is CCW-positive
+    else:
+        buf = storage.open_master(p)                    # single fetch, admin-rare
+        with Image.open(buf) as im:
+            im.load()
+            rot = im.convert("RGB").rotate(-(p.rotation), expand=True)
+            rot.thumbnail((derivatives.DISPLAY_MAX, derivatives.DISPLAY_MAX))
+    new_disp.parent.mkdir(parents=True, exist_ok=True)
+    rot.convert("RGB").save(new_disp, "JPEG", quality=85)
+    thumb = rot.copy()
+    thumb.thumbnail((derivatives.THUMB_MAX, derivatives.THUMB_MAX))
+    new_thumb.parent.mkdir(parents=True, exist_ok=True)
+    thumb.convert("RGB").save(new_thumb, "JPEG", quality=82)
+    for stale in (old_disp, old_thumb):
+        if stale not in (new_disp, new_thumb):
+            stale.unlink(missing_ok=True)
+
+
+def _apply_photo_rotation(db: Session, p: m.Photo, deg: int) -> None:
+    """One entry point for endpoint + undo: local masters rotate pixels in place,
+    B2 masters move their display-time override — and the geometry (photo_person
+    regions + face boxes) rotates with the pixels either way."""
+    if storage.backend_of(p) == "local":
+        _rotate_file(p, deg)
+    else:
+        _rotate_override(p, deg)
+    _rotate_regions(db, p, deg)
+
+
 # ---------- event vocabulary ----------
 @router.post("/events", response_model=EventOut)
 def create_event(body: EventCreate, db: Session = Depends(get_db),
@@ -1234,13 +1284,12 @@ def delete_place(place_id: str, db: Session = Depends(get_db),
 # ---------- per-photo image ops ----------
 @router.get("/rotation/queue")
 def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
-    """The Rotation-sweep worklist: every rotatable photo (slides + scans; digital
-    masters are read-only B2 objects), ordered detector-proposals first, then
-    probed-but-faceless (landscapes the detector can't judge), then everything else
-    in Wendel's canonical mag/slide order. Proposals come from
+    """The Rotation-sweep worklist: every photo — slides/scans rotate their pixels,
+    B2-backed digital rotates via the photo.rotation display override — ordered
+    detector-proposals first, then probed-but-faceless (landscapes the detector
+    can't judge), then everything else in canonical order. Proposals come from
     data/review/rotation_proposals.json (app.detect_rotation, dev-side)."""
     proposals: dict[int, dict] = {}
-    digital_flagged: list[dict] = []
     ppath = REVIEW_DIR / "rotation_proposals.json"
     generated_at = None
     if ppath.exists():
@@ -1248,10 +1297,6 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
         generated_at = data.get("generated_at")
         for r in data.get("results", []):
             proposals[r["photo_id"]] = r
-            if r["origin"] == "digital" and r.get("proposal"):
-                digital_flagged.append({"id": r["photo_id"],
-                                        "source_file": r["source_file"],
-                                        "proposal": r["proposal"]})
     # A proposal (and the probe verdict itself) describes the file AS IT WAS when the
     # detector ran. Once a photo is rotated, that data is stale — re-offering it
     # pre-marks an already-fixed photo and a second Apply would wreck it (that is not
@@ -1275,7 +1320,7 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
     tagged = defaultdict(set)
     for photo_id, person_id in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id):
         tagged[photo_id].add(person_id)
-    rows = (db.query(m.Photo).filter(m.Photo.origin.in_(["slide", "scan"]))
+    rows = (db.query(m.Photo)
             .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
     items = []
     for p in rows:
@@ -1287,8 +1332,7 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
                       "proposal": (pr or {}).get("proposal"), "probed": pr is not None,
                       "pet_only": bool(subjects) and subjects <= pets})
     items.sort(key=lambda r: 0 if r["proposal"] else (1 if r["probed"] else 2))
-    return {"generated_at": generated_at, "items": items,
-            "digital_flagged": digital_flagged}
+    return {"generated_at": generated_at, "items": items}
 
 
 @router.post("/photos/{photo_id}/rotate")
@@ -1302,18 +1346,16 @@ def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
     deg = body.degrees % 360
     if deg not in (90, 180, 270):
         raise HTTPException(400, "degrees must be 90, 180 or 270 (clockwise)")
-    if storage.backend_of(p) != "local":
-        # B2 masters are read-only and there is no local file to rewrite. Rotating only
-        # the cached derivative would diverge from the master and be undone by the next
-        # prewarm, so refuse rather than appear to work (SPEC §13.3).
-        raise HTTPException(400, "digital photos are stored in B2 and cannot be rotated "
-                                 "here — rotate in Lightroom and re-sync")
-    _rotate_file(p, deg)
-    _rotate_regions(db, p, deg)
+    # Local masters (slides/scans) rotate pixels in place. B2 masters are read-only,
+    # so they get a display-time override instead (photo.rotation) — non-destructive,
+    # survives prewarm (which applies it), and clears automatically if a re-exported
+    # master ever arrives with the rotation baked in (import_digital resets it).
+    _apply_photo_rotation(db, p, deg)
     _log(db, user, "photo:rotate", None, f"{deg}cw", photo_id=p.id,
          inverse={"op": "photo_rotate", "photo_id": p.id, "degrees": (360 - deg) % 360})
     db.commit()
-    return {"rotated": deg, "source_file": p.source_file}
+    return {"rotated": deg, "source_file": p.source_file,
+            "override": storage.backend_of(p) != "local"}
 
 
 @router.post("/photos/{photo_id}/caption")
@@ -1835,8 +1877,7 @@ def _apply_inverse(db: Session, inv: dict) -> None:
     elif op == "photo_rotate":
         p = db.get(m.Photo, inv["photo_id"])
         if p and inv["degrees"] in (90, 180, 270):
-            _rotate_file(p, inv["degrees"])
-            _rotate_regions(db, p, inv["degrees"])
+            _apply_photo_rotation(db, p, inv["degrees"])
     elif op == "photo_caption":
         p = db.get(m.Photo, inv["photo_id"])
         if p:

@@ -62,7 +62,8 @@ def _lookup(source_file: str) -> SimpleNamespace:
             raise HTTPException(404, "image not found")
         return SimpleNamespace(storage_path=p.storage_path,
                                storage_backend=storage.backend_of(p),
-                               file_version=p.file_version)
+                               file_version=p.file_version,
+                               rotation=p.rotation)
 
 
 def _derivative(source_file: str, out_dir: Path, max_edge: int, *, stale_ok: bool = False):
@@ -77,7 +78,8 @@ def _derivative(source_file: str, out_dir: Path, max_edge: int, *, stale_ok: boo
     """
     p = _lookup(source_file)
     remote = p.storage_backend != "local"
-    cache = out_dir / derivatives.cache_key(source_file, p.file_version, versioned=remote)
+    cache = out_dir / derivatives.cache_key(source_file, derivatives.version_token(p),
+                                            versioned=remote)
     if remote:
         if not derivatives.needs_regen(None, cache):
             return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
@@ -154,7 +156,7 @@ def face(person_id: str, _user=Depends(image_user)):
             raise HTTPException(404, "representative photo missing")
         pp = db.get(m.PhotoPerson, (rep.id, person_id))
         region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
-        rep_id, src_file, fv = rep.id, rep.source_file, rep.file_version
+        rep_id, src_file, fv = rep.id, rep.source_file, derivatives.version_token(rep)
         backend = storage.backend_of(rep)
     # Crop the DISPLAY DERIVATIVE, not the master. The master is only local for slides
     # and scans; a B2-backed digital photo has none, so reading it 404'd the thumbnail
@@ -184,7 +186,7 @@ def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
             raise HTTPException(404, "face not found")
         p = db.get(m.Photo, f.photo_id)
         region = (f.x, f.y, f.w, f.h)
-        src_file, fv, backend = p.source_file, p.file_version, storage.backend_of(p)
+        src_file, fv, backend = p.source_file, derivatives.version_token(p), storage.backend_of(p)
     src = settings.display_dir / derivatives.cache_key(
         src_file, fv, versioned=(backend == "b2"))
     if not src.exists():
@@ -217,7 +219,8 @@ def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_u
         if photo is None:
             raise HTTPException(404, "photo not found")
         region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h)
-        src_file, fv, backend = photo.source_file, photo.file_version, storage.backend_of(photo)
+        src_file, fv, backend = (photo.source_file, derivatives.version_token(photo),
+                                 storage.backend_of(photo))
     src = settings.display_dir / derivatives.cache_key(
         src_file, fv, versioned=(backend == "b2"))
     if not src.exists():

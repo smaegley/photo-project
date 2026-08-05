@@ -44,7 +44,7 @@ def run(limit: int | None = None, min_score: float = 0.60) -> None:
     db = SessionLocal()
     try:
         rows = (db.query(m.Photo.id, m.Photo.source_file, m.Photo.file_version,
-                         m.Photo.storage_backend, m.Photo.origin)
+                         m.Photo.storage_backend, m.Photo.origin, m.Photo.rotation)
                 .filter(~m.Photo.id.in_(db.query(m.Face.photo_id).distinct()))
                 .order_by(m.Photo.id).all())
     finally:
@@ -56,8 +56,8 @@ def run(limit: int | None = None, min_score: float = 0.60) -> None:
     fa = _load_detector()
     results, proposals = [], 0
     t0 = time.time()
-    for i, (pid, sf, fv, backend, origin) in enumerate(rows, 1):
-        path = display_path(sf, fv, backend)
+    for i, (pid, sf, fv, backend, origin, rot) in enumerate(rows, 1):
+        path = display_path(sf, fv, backend, rot)
         if not path.exists():
             print(f"  MISSING derivative for photo {pid}: {path}", flush=True)
             continue

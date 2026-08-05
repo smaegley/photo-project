@@ -9,10 +9,9 @@ import { api } from "../api";
 // eyes can judge), then everything else in mag/slide order.
 export default function RotationSweep({ onClose, onChanged }) {
   const [items, setItems] = useState([]);
-  const [digitalFlagged, setDigitalFlagged] = useState([]);
   const [generatedAt, setGeneratedAt] = useState(null);
   const [pending, setPending] = useState({});   // photo_id -> 90|180|270
-  const [flaggedOnly, setFlaggedOnly] = useState(true);
+  const [tab, setTab] = useState("flagged");    // flagged | local | digital
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(null);
   const [msg, setMsg] = useState(null);
@@ -20,7 +19,6 @@ export default function RotationSweep({ onClose, onChanged }) {
   async function load() {
     const q = await api.rotationQueue();
     setItems(q.items);
-    setDigitalFlagged(q.digital_flagged ?? []);
     setGeneratedAt(q.generated_at);
     // Detector proposals arrive pre-marked — EXCEPT on pet-only photos, where the
     // face-angle signal is known-unreliable (dogs detect at random angles); those
@@ -31,11 +29,15 @@ export default function RotationSweep({ onClose, onChanged }) {
   }
   useEffect(() => { load(); }, []);
 
-  const flaggedCount = useMemo(() => items.filter((i) => i.proposal || (i.probed && i.faces === 0)).length, [items]);
-  const shown = useMemo(
-    () => flaggedOnly ? items.filter((i) => i.proposal || (i.probed && i.faces === 0)) : items,
-    [items, flaggedOnly]
-  );
+  const isFlagged = (i) => i.proposal || (i.probed && i.faces === 0);
+  const flaggedCount = useMemo(() => items.filter(isFlagged).length, [items]);
+  const localCount = useMemo(() => items.filter((i) => i.origin !== "digital").length, [items]);
+  const digitalCount = useMemo(() => items.filter((i) => i.origin === "digital").length, [items]);
+  const shown = useMemo(() => {
+    if (tab === "flagged") return items.filter(isFlagged);
+    if (tab === "local") return items.filter((i) => i.origin !== "digital");
+    return items.filter((i) => i.origin === "digital");
+  }, [items, tab]);
   const markedCount = Object.keys(pending).length;
 
   const cycle = (id) => {
@@ -83,11 +85,14 @@ export default function RotationSweep({ onClose, onChanged }) {
         </div>
 
         <div className="rotation-toolbar">
-          <button className={`ghost ${flaggedOnly ? "active" : ""}`} onClick={() => setFlaggedOnly(true)} disabled={busy}>
+          <button className={`ghost ${tab === "flagged" ? "active" : ""}`} onClick={() => setTab("flagged")} disabled={busy}>
             Flagged ({flaggedCount})
           </button>
-          <button className={`ghost ${!flaggedOnly ? "active" : ""}`} onClick={() => setFlaggedOnly(false)} disabled={busy}>
-            All slides &amp; scans ({items.length})
+          <button className={`ghost ${tab === "local" ? "active" : ""}`} onClick={() => setTab("local")} disabled={busy}>
+            Slides &amp; scans ({localCount})
+          </button>
+          <button className={`ghost ${tab === "digital" ? "active" : ""}`} onClick={() => setTab("digital")} disabled={busy}>
+            Digital ({digitalCount})
           </button>
           <span className="modal-sub">
             Click a photo to turn it; Apply makes it real.
@@ -97,14 +102,6 @@ export default function RotationSweep({ onClose, onChanged }) {
             {busy ? `Rotating ${progress}…` : `Apply ${markedCount || ""}`}
           </button>
         </div>
-
-        {digitalFlagged.length > 0 && (
-          <div className="modal-msg">
-            ⚠ {digitalFlagged.length} digital photo{digitalFlagged.length !== 1 ? "s" : ""} also look rotated
-            ({digitalFlagged.map((d) => `#${d.id}`).join(", ")}) — B2 masters can't be rotated; needs the
-            derivative-rotation design if it matters.
-          </div>
-        )}
 
         <div className="rotation-grid">
           {shown.map((it) => {

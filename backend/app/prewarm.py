@@ -141,7 +141,7 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
     ]
     with SessionLocal() as db:
         rows = (db.query(m.Photo.id, m.Photo.source_file, m.Photo.storage_path,
-                         m.Photo.file_version, m.Photo.width)
+                         m.Photo.file_version, m.Photo.width, m.Photo.rotation)
                 .filter(m.Photo.storage_backend == "b2",
                         m.Photo.storage_path.isnot(None))
                 .order_by(m.Photo.id).all())
@@ -155,8 +155,13 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
     truncated: list[str] = []
     dims: dict[int, tuple[int, int]] = {}
     t0 = time.time()
-    for i, (pid, source_file, storage_path, file_version, width) in enumerate(rows, 1):
-        targets = [(out_dir / derivatives.cache_key(source_file, file_version, versioned=True),
+    for i, (pid, source_file, storage_path, file_version, width, rotation) in enumerate(rows, 1):
+        # The key carries the rotation override too (version_token), so setting or
+        # clearing photo.rotation lands derivatives on a fresh key here exactly as it
+        # does on the serving path.
+        token = derivatives.version_token(
+            type("P", (), {"file_version": file_version, "rotation": rotation})())
+        targets = [(out_dir / derivatives.cache_key(source_file, token, versioned=True),
                     max_edge) for out_dir, max_edge in kinds]
         if not force and all(not derivatives.needs_regen(None, c) for c, _ in targets) \
                 and width:
@@ -177,6 +182,8 @@ def prewarm_b2(force: bool = False, limit: int | None = None) -> tuple[int, int,
                 for cache, max_edge in targets:
                     cache.parent.mkdir(parents=True, exist_ok=True)
                     out = im.convert("RGB").copy()
+                    if rotation:
+                        out = out.rotate(-rotation, expand=True)  # PIL is CCW-positive
                     out.thumbnail((max_edge, max_edge))
                     out.save(cache, "JPEG",
                              quality=82 if max_edge <= derivatives.THUMB_MAX else 85)

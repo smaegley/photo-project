@@ -84,13 +84,21 @@ def export_tags(path: Path) -> None:
         photo_places = [[sf, place_names[plid]]
                         for sf, plid in db.query(m.Photo.source_file, m.Photo.place_id)
                         .filter(m.Photo.place_id.isnot(None)).all()]
+        # Display-time rotation overrides for B2-backed photos (non-zero only; the
+        # import zeroes anything it doesn't list, so a cleared override clears there
+        # too). Regions were rotated together with the override on this side, so tags
+        # and rotations in one export are always mutually consistent.
+        rotations = [[sf, rot] for sf, rot in
+                     db.query(m.Photo.source_file, m.Photo.rotation)
+                     .filter(m.Photo.rotation != 0).all()]
     finally:
         db.close()
 
     payload = {"exported_at": datetime.now(timezone.utc).isoformat(),
                "photos": all_source_files,
                "people": people, "aliases": aliases, "tags": tags,
-               "places": places, "photo_places": photo_places}
+               "places": places, "photo_places": photo_places,
+               "rotations": rotations}
     path.parent.mkdir(parents=True, exist_ok=True)
     with gzip.open(path, "wt", encoding="utf-8") as fh:
         json.dump(payload, fh)
@@ -195,6 +203,27 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
             if not dry_run:
                 db.get(m.Photo, pid).place_id = pl.id
 
+        # 1c. rotation overrides — dev wins, including zeroing overrides dev cleared.
+        # ⚠ Every change here re-keys that photo's derivative cache: run prewarm after
+        # importing, or the affected photos 404 their thumbnails until someone does.
+        n_rot = 0
+        if "rotations" in payload:
+            rot_map = {sf: rot for sf, rot in payload["rotations"]}
+            src_by_photo = {v: k for k, v in photo_by_src.items()}
+            current = {src_by_photo[ph.id]: ph for ph in
+                       db.query(m.Photo).filter(m.Photo.rotation != 0).all()
+                       if ph.id in src_by_photo}
+            for sf in set(rot_map) | set(current):
+                pid = photo_by_src.get(sf)
+                if pid is None:
+                    continue
+                want = rot_map.get(sf, 0)
+                ph = db.get(m.Photo, pid)
+                if (ph.rotation or 0) != want:
+                    n_rot += 1
+                    if not dry_run:
+                        ph.rotation = want
+
         # 2. tags
         existing = {(pp.photo_id, pp.person_id): pp for pp in db.query(m.PhotoPerson).all()}
         wanted: set[tuple[int, str]] = set()
@@ -284,6 +313,7 @@ def import_tags(path: Path, dry_run: bool = False, prune: bool = False) -> None:
     print(f"aliases added:      {n_alias}")
     print(f"places created:     {n_places}")
     print(f"photos placed:      {n_placed} (only photos that had no place here)")
+    print(f"rotations synced:   {n_rot} (run prewarm after import if nonzero)")
     print(f"tags added:         {added}")
     print(f"regions synced:     {boxed}")
     print(f"already correct:    {unchanged}")

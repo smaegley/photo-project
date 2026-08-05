@@ -250,6 +250,12 @@ def run(sidecar: Path, dry_run: bool = False, prune: bool = False,
             photo.origin = ORIGIN
             photo.storage_backend = "b2"
             photo.storage_path = found_key
+            if photo.file_version and etag != photo.file_version and photo.rotation:
+                # A replaced master presumably arrives correctly oriented (the usual
+                # reason to re-export is baking a rotation in LR) — keeping the
+                # display-time override would double-rotate it.
+                print(f"  resetting rotation override on changed master: {found_key}")
+                photo.rotation = 0
             photo.file_version = etag
             photo.original_filename = found_key.rsplit("/", 1)[-1]
 

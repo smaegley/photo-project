@@ -48,18 +48,22 @@ def _load_app():
     return fa
 
 
-def display_path(source_file: str, file_version: str | None, backend: str):
+def display_path(source_file: str, file_version: str | None, backend: str,
+                 rotation: int = 0):
     """The local display derivative for any origin — slides, scans and B2-backed digital
-    all resolve through one rule (remote masters version their cache key, §13.4)."""
+    all resolve through one rule (remote masters version their cache key, §13.4; a
+    rotation override folds into that key, so pass photo.rotation for b2 rows)."""
+    token = derivatives.version_token(
+        type("P", (), {"file_version": file_version, "rotation": rotation})())
     return settings.display_dir / derivatives.cache_key(
-        source_file, file_version, versioned=(backend == "b2"))
+        source_file, token, versioned=(backend == "b2"))
 
 
 def run(limit: int | None = None, origin: str | None = None, force: bool = False) -> None:
     db = SessionLocal()
     try:
         q = db.query(m.Photo.id, m.Photo.source_file, m.Photo.file_version,
-                     m.Photo.storage_backend)
+                     m.Photo.storage_backend, m.Photo.rotation)
         if origin:
             q = q.filter(m.Photo.origin == origin)
         rows = q.order_by(m.Photo.id).all()
@@ -87,8 +91,8 @@ def run(limit: int | None = None, origin: str | None = None, force: bool = False
     batch: list[m.Face] = []
     db = SessionLocal()
     try:
-        for i, (pid, sf, fv, backend) in enumerate(todo, 1):
-            p = display_path(sf, fv, backend)
+        for i, (pid, sf, fv, backend, rot) in enumerate(todo, 1):
+            p = display_path(sf, fv, backend, rot)
             if not p.exists():
                 n_missing += 1
                 continue

@@ -132,6 +132,11 @@ class Photo(Base):
     # contain no face, so "has face rows" is not the same as "has been scanned" — without
     # this, every faceless photo is re-scanned on every run.
     faces_scanned_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Display-time rotation override, clockwise 0/90/180/270 — for B2-backed photos
+    # whose read-only masters are sideways (early digicams wrote Orientation=1 no
+    # matter what). Applied when derivatives are generated; local masters rotate
+    # their pixels instead and keep this 0.
+    rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject

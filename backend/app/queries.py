@@ -28,6 +28,11 @@ def _version(p: m.Photo) -> str:
     if not p.storage_path:
         return ""
     token = storage.master_version(p)
+    # Rotation override rides in the URL token too, so setting/clearing it busts
+    # every browser's immutable-cached copy (same rule as the derivative cache key).
+    rot = getattr(p, "rotation", 0) or 0
+    if rot:
+        token = f"{token or 'unstamped'}-r{rot}"
     return f"?v={token}" if token else ""
 
 

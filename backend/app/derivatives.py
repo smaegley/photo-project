@@ -44,6 +44,22 @@ def cache_key(source_file: str, file_version: str | None = None,
     return f"{key}.{safe_key(file_version)}" if versioned and file_version else key
 
 
+def version_token(photo) -> str | None:
+    """The change-token to key remote derivatives (and ?v= URLs) on.
+
+    Folds the display-time `rotation` override into the stored `file_version`, so
+    setting/clearing a rotation lands on a fresh cache key and a fresh URL without
+    touching `file_version` itself — that column keeps meaning "the MASTER's content
+    token" (import diffing depends on it). Accepts any object with `file_version`
+    and `rotation` attributes.
+    """
+    fv = getattr(photo, "file_version", None)
+    rot = getattr(photo, "rotation", 0) or 0
+    if not rot:
+        return fv
+    return f"{fv or 'unstamped'}-r{rot}"
+
+
 def needs_regen(src: Path | None, cache: Path) -> bool:
     """True if the cached derivative is missing, empty, or stale vs. the source.
 
@@ -59,19 +75,25 @@ def needs_regen(src: Path | None, cache: Path) -> bool:
     return src is not None and st.st_mtime < src.stat().st_mtime
 
 
-def generate(src: Path, cache: Path, max_edge: int, transpose: bool = False) -> None:
+def generate(src: Path, cache: Path, max_edge: int, transpose: bool = False,
+             rotate: int = 0) -> None:
     """Write a downscaled JPEG (longest edge <= max_edge).
 
     `transpose` applies the EXIF orientation to the pixels — needed for raw scans
     that skip Lightroom (back-of-photo _b images), which carry a live orientation
     flag. It is a no-op when there's no flag, so it's safe but off by default to
-    keep slide/LR derivatives (rotation already baked, orientation=1) untouched."""
+    keep slide/LR derivatives (rotation already baked, orientation=1) untouched.
+
+    `rotate` applies a clockwise display-time override (photo.rotation) — for
+    B2-backed masters that are sideways but can't be rewritten."""
     cache.parent.mkdir(parents=True, exist_ok=True)
     with Image.open(src) as im:
-        if not transpose:
+        if not (transpose or rotate):
             im.draft("RGB", (max_edge, max_edge))  # fast downscale on decode
         if transpose:
             im = ImageOps.exif_transpose(im)
+        if rotate:
+            im = im.rotate(-rotate, expand=True)   # PIL is CCW-positive
         im.thumbnail((max_edge, max_edge))
         im.convert("RGB").save(cache, "JPEG", quality=82 if max_edge <= THUMB_MAX else 85)
 

@@ -70,7 +70,8 @@ def run(sizes=DEFAULT_SIZES, dry_run: bool = False, limit: int | None = None) ->
     try:
         target_ids, by_photo = _targets(db)
         ids = sorted(target_ids)[:limit] if limit else sorted(target_ids)
-        photos = {p.id: (p.source_file, p.file_version, p.storage_backend, p.origin)
+        photos = {p.id: (p.source_file, p.file_version, p.storage_backend, p.origin,
+                         p.rotation)
                   for p in db.query(m.Photo).filter(m.Photo.id.in_(ids)).all()}
     finally:
         db.close()
@@ -94,8 +95,8 @@ def run(sizes=DEFAULT_SIZES, dry_run: bool = False, limit: int | None = None) ->
         fa.prepare(ctx_id=-1, det_size=(size, size))
         rows = []
         for n, pid in enumerate(ids, 1):
-            src, fv, backend, _origin = photos[pid]
-            path = display_path(src, fv, backend)
+            src, fv, backend, _origin, rot = photos[pid]
+            path = display_path(src, fv, backend, rot)
             if not path.exists():
                 missing += 1
                 continue
