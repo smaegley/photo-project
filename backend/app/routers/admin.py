@@ -1289,14 +1289,17 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
     detector-proposals first, then probed-but-faceless (landscapes the detector
     can't judge), then everything else in canonical order. Proposals come from
     data/review/rotation_proposals.json (app.detect_rotation, dev-side)."""
-    proposals: dict[int, dict] = {}
+    # Keyed by source_file, NOT photo_id — row ids differ per database (dev deleted
+    # its probe rows, shifting every later id by 8), and the proposals file travels
+    # to prod so Steve can sweep there. Same rule as tags_io (§14.8a).
+    proposals: dict[str, dict] = {}
     ppath = REVIEW_DIR / "rotation_proposals.json"
     generated_at = None
     if ppath.exists():
         data = json.loads(ppath.read_text())
         generated_at = data.get("generated_at")
         for r in data.get("results", []):
-            proposals[r["photo_id"]] = r
+            proposals[r["source_file"]] = r
     # A proposal (and the probe verdict itself) describes the file AS IT WAS when the
     # detector ran. Once a photo is rotated, that data is stale — re-offering it
     # pre-marks an already-fixed photo and a second Apply would wreck it (that is not
@@ -1324,7 +1327,7 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
             .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
     items = []
     for p in rows:
-        pr = None if p.id in rotated_since else proposals.get(p.id)
+        pr = None if p.id in rotated_since else proposals.get(p.source_file)
         subjects = tagged.get(p.id, set())
         items.append({"id": p.id, "source_file": p.source_file, "origin": p.origin,
                       "caption": p.caption, "faces": face_counts.get(p.id, 0),
