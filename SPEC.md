@@ -2225,6 +2225,13 @@ up, disposable). Nothing was written to any database.
 - **Also found:** `Photo Album/2004/2004-12/2004-12-12/2004-12-12-006.JPG` is in the
   bucket and truncated — the corrupt file removed in August is back under a new path.
   Ingest must record an undecodable master in the run report and skip it, not fail.
+  Ops confirmed (2026-11-13) the original `Photo Album/2004/December/…` key was never
+  deleted either — two byte-identical truncated copies exist. A known-bad key counts
+  under `errors` with run `state: ok`; only a run-level fault is `failed`, or the
+  alert would fire every night.
+- **Cutover filter verified on prod by ops:** 3,912 candidates since 2026-07-27, of
+  which 3,461 are `FastFoto/` + `PreProcess_Slides/` re-uploads; after the tree
+  exclusions exactly the same 451 remain. The exclusions are a hard filter.
 
 ### 15.18 Open questions
 For Steve: (1) accept 0.65 / ~1% error for auto-tagging, or keep everything as
