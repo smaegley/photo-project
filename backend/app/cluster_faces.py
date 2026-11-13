@@ -45,8 +45,11 @@ def run(threshold: float = DEFAULT_THRESHOLD, dry_run: bool = False) -> None:
         ).filter(m.PhotoPerson.region_w.isnot(None)).all():
             regioned[pid].append((rx, ry, rw, rh))
 
-        faces = db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y, m.Face.w,
-                         m.Face.h, m.Face.det_score, m.Face.embedding).all()
+        from app import queries
+        faces = (db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y, m.Face.w,
+                          m.Face.h, m.Face.det_score, m.Face.embedding)
+                 .join(m.Photo, m.Photo.id == m.Face.photo_id)
+                 .filter(queries.not_culled()).all())
 
         # Preserve decisions: a face already in a named/ignored cluster stays put, and
         # those centroids are what new faces get tested against first.

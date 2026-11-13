@@ -30,7 +30,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from app import models as m
+from app import models as m, queries
 from app.database import SessionLocal
 
 DEFAULT_THRESHOLD = 0.45   # P-F3: keeps 93.6% of genuine matches, admits 4.6% of strangers
@@ -84,15 +84,19 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
         ignored_threshold: float = IGNORED_THRESHOLD) -> None:
     db = SessionLocal()
     try:
-        faces = db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y,
-                         m.Face.w, m.Face.h, m.Face.embedding).all()
+        # Culled photos neither receive suggestions nor serve as references (§15.9).
+        faces = (db.query(m.Face.id, m.Face.photo_id, m.Face.x, m.Face.y,
+                          m.Face.w, m.Face.h, m.Face.embedding)
+                 .join(m.Photo, m.Photo.id == m.Face.photo_id)
+                 .filter(queries.not_culled()).all())
         if not faces:
             print("no faces — run: python -m app.detect_faces")
             return
         regions = (db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,
                             m.PhotoPerson.region_x, m.PhotoPerson.region_y,
                             m.PhotoPerson.region_w, m.PhotoPerson.region_h)
-                   .filter(m.PhotoPerson.region_w.isnot(None)).all())
+                   .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+                   .filter(m.PhotoPerson.region_w.isnot(None), queries.not_culled()).all())
         tagged = defaultdict(set)      # photo_id -> {person_id} tagged but with NO box
         boxed = set()                  # (photo_id, person_id) already carrying a box
         for pid, person, rw in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,

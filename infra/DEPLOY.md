@@ -240,3 +240,44 @@ first `app.prewarm` run regenerates everything up front — do it before announc
 update so browsing stays fast. The server still self-heals anything missed (a slide
 re-exported under the same name refreshes automatically), so this is an optimization,
 not a correctness requirement.
+
+---
+
+## Ingest image and face matching on prod (SPEC §15.12, §15.13 — added 2026-11-13)
+
+Face detection and matching run **on prod** in a separate one-shot image, never in the
+`api` container. `docker compose up -d` does not build or start it (it sits behind the
+`ingest` profile), so ordinary deploys are unchanged.
+
+**One-time setup**
+
+```bash
+# 1. model weights — installed on the host, mounted read-only, never downloaded at run time
+mkdir -p /opt/photo-project/models
+rsync -a aiuser@10.0.1.121:/home/aiuser/.insightface/models/buffalo_l /opt/photo-project/models/
+ls /opt/photo-project/models/buffalo_l        # expect det_10g.onnx and w600k_r50.onnx (+3 unused), ~326 MB
+
+# 2. build the image (BuildKit off, as always on this host) — about 790 MB
+cd /opt/photo-project
+DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose --profile ingest build ingest
+```
+
+**Running a job** — the image's entrypoint is `python -m`, so the argument is a module:
+
+```bash
+docker compose --profile ingest run --rm ingest app.detect_faces --limit 20   # smoke test
+docker compose --profile ingest run --rm ingest app.detect_faces              # resumable; skips photos already scanned
+docker compose --profile ingest run --rm ingest app.match_faces               # writes suggestions for Review faces
+docker compose --profile ingest run --rm ingest app.cluster_faces             # groups unknown faces
+```
+
+- Limits are in `docker-compose.yml`: 2.6 GB memory (= swap limit, so it is killed
+  cleanly instead of swapping), 2 CPUs at low priority. Measured on dev under those
+  limits: **about 2 s per photo**, so a full pass over ~7k photos is 3–4 hours. For a
+  one-off daytime pass add `--cpus 4` after `run` if the box has 4 cores.
+- `detect_faces` reads the local display derivatives, not B2, and commits per photo:
+  if it is interrupted (including by the 02:00 Mountain backup) just run it again.
+- Take a DB snapshot first (`bash infra/db-snapshot.sh`). Nothing here deletes data,
+  but `match_faces` replaces all *pending* suggestions each run.
+- **Never import face or tag state from dev** (`tags_io --import`, `faces_io --import`).
+  Prod's own tags are the reference set (Steve, 2026-11-13).

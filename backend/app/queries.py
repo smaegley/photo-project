@@ -45,6 +45,14 @@ def visible():
     return m.Photo.visibility == m.VIS_PUBLISHED
 
 
+def not_culled():
+    """For admin review tools and the face pipeline: everything except culled photos.
+    Pending (inbox) photos stay IN — they must be detected, matched and reviewable
+    before anyone publishes them. A culled photo's tags also stop teaching the matcher
+    (SPEC §15.9)."""
+    return m.Photo.visibility != m.VIS_CULLED
+
+
 def can_see(photo, role: str | None) -> bool:
     """Single-photo form of the rule, for detail and image routes: a hidden photo is
     reachable by id/URL only for admins (who need it for the Inbox and Culled views)."""

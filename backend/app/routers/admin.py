@@ -23,7 +23,7 @@ from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
 from app.import_photos import _km, REVIEW_DIR  # same proximity rule the importer uses (SPEC §12.6)
-from app.queries import thumb_url as _thumb_url, _version as _photo_version
+from app.queries import thumb_url as _thumb_url, _version as _photo_version, not_culled
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
@@ -464,6 +464,7 @@ def _face_tag_query(db, person_id=None, max_score=None, max_area=None):
                   sub.c.score, area.label("area"))
          .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
          .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+         .filter(not_culled())
          .outerjoin(sub, (sub.c.pid == m.PhotoPerson.person_id)
                     & (sub.c.ph == m.PhotoPerson.photo_id))
          .filter(m.PhotoPerson.region_w.isnot(None)))
@@ -543,6 +544,7 @@ def tiny_tags(max_area: float = 0.003, limit: int = 400, person_id: str | None =
                      m.Person.canonical_name, m.Photo.source_file, m.Photo.date_start)
             .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
             .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+            .filter(not_culled())
             .filter(m.PhotoPerson.region_w.isnot(None),
                     (m.PhotoPerson.region_w * m.PhotoPerson.region_h) <= max_area)
             .order_by((m.PhotoPerson.region_w * m.PhotoPerson.region_h).asc()))
@@ -616,6 +618,7 @@ def accepted_faces(person_id: str | None = None, max_score: float = 1.0,
                   m.Photo.source_file, m.Photo.date_start)
          .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
          .join(m.Photo, m.Photo.id == m.Face.photo_id)
+         .filter(not_culled())
          .join(m.Person, m.Person.id == m.FaceSuggestion.person_id)
          .filter(m.FaceSuggestion.status == m.FACE_ACCEPTED,
                  m.FaceSuggestion.score <= max_score))
@@ -649,6 +652,7 @@ def face_queue_person(person_id: str, limit: int = 300, db: Session = Depends(ge
                      m.Face.x, m.Face.y, m.Face.w, m.Face.h)
             .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
             .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(not_culled())
             .filter(m.FaceSuggestion.person_id == person_id,
                     m.FaceSuggestion.status == m.FACE_PENDING)
             .order_by(m.FaceSuggestion.score.desc()).limit(limit).all())
@@ -761,6 +765,7 @@ def face_cluster_faces(cluster_id: int, limit: int = 400, db: Session = Depends(
     rows = (db.query(m.Face.id, m.Face.det_score, m.Face.w, m.Face.h,
                      m.Photo.source_file, m.Photo.date_start, m.Face.x, m.Face.y)
             .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(not_culled())
             .filter(m.Face.cluster_id == cluster_id)
             .order_by((m.Face.w * m.Face.h).desc()).limit(limit).all())
     return [{"face_id": fid, "det_score": round(ds or 0, 3),
@@ -829,6 +834,7 @@ def face_unnamed(min_area: float = 0.004, min_score: float = 0.70,
                      m.Face.det_score, m.Face.detector_version, m.Face.embedding,
                      m.Photo.source_file, m.Photo.date_start, m.Photo.origin)
             .join(m.Photo, m.Photo.id == m.Face.photo_id)
+            .filter(not_culled())
             .filter(m.Face.det_score >= min_score,
                     (m.Face.w * m.Face.h) >= min_area).all())
 
@@ -1048,6 +1054,7 @@ def face_clusters(status: str = "pending", min_faces: int = 2, limit: int = 200,
         rows = (db.query(m.Face.id, m.Face.x, m.Face.y, m.Face.w, m.Face.h,
                          m.Photo.source_file)
                 .join(m.Photo, m.Photo.id == m.Face.photo_id)
+                .filter(not_culled())
                 .filter(m.Face.cluster_id == c.id)
                 .order_by((m.Face.w * m.Face.h).desc()).limit(8).all())
         out.append({"id": c.id, "n_faces": c.n_faces,
@@ -1136,7 +1143,7 @@ def unresolved_locations(radius_km: float = 15.0, db: Session = Depends(get_db),
     """
     rows = (db.query(m.Photo.id, m.Photo.lat, m.Photo.lon, m.Photo.source_file,
                      m.Photo.date_start)
-            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None))
+            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None), not_culled())
             .all())
     clusters: list[dict] = []
     for pid, lat, lon, src, dt in rows:
@@ -1180,7 +1187,7 @@ def claim_nearby(place_id: str, radius_km: float = 15.0, db: Session = Depends(g
     if pl.lat is None or pl.lon is None:
         raise HTTPException(400, "place has no coordinates")
     rows = (db.query(m.Photo)
-            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None)).all())
+            .filter(m.Photo.lat.isnot(None), m.Photo.place_id.is_(None), not_culled()).all())
     claimed = [p for p in rows if _km(p.lat, p.lon, pl.lat, pl.lon) < radius_km]
     for p in claimed:
         p.place_id = pl.id
@@ -1323,7 +1330,7 @@ def rotation_queue(db: Session = Depends(get_db), user: m.User = Depends(require
     tagged = defaultdict(set)
     for photo_id, person_id in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id):
         tagged[photo_id].add(person_id)
-    rows = (db.query(m.Photo)
+    rows = (db.query(m.Photo).filter(not_culled())
             .order_by(m.Photo.magazine_id, m.Photo.slide_in_mag, m.Photo.id).all())
     items = []
     for p in rows:
@@ -1736,6 +1743,7 @@ def people_without_face(limit: int = 200, candidates: int = 6,
         rows = (db.query(m.PhotoPerson.photo_id, area.label("a"),
                          m.Photo.source_file, m.Photo.date_start)
                 .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+                .filter(not_culled())
                 .filter(m.PhotoPerson.person_id == pid,
                         m.PhotoPerson.region_w.isnot(None))
                 .order_by(area.desc()).limit(candidates).all())
