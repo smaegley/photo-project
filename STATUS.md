@@ -9,7 +9,7 @@ should tell you where to look and what's already known, so you don't re-derive i
 What lives *only* here: current deployment state, known-and-accepted issues, and the
 gotchas that burn time.
 
-**Last reviewed:** 2026-08-04 (release prep: face tooling + person merge committed;
+**Last reviewed:** 2026-11-13 (§15 slice 1 deployed; see Current state). Previously 2026-08-04 (release prep: face tooling + person merge committed;
 people/tag sync export staged; ops runbook at
 `/mnt/photos/photo-project/handoff/DEV-2026-08-04-release-and-people-sync.md`).
 
@@ -35,9 +35,9 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 | | |
 |---|---|
 | Repo HEAD (dev) | in sync with origin (docs may run ahead of prod by doc-only commits) |
-| Deployed to prod | **`7dd7a72`** — 2026-08-05: the whole 2026-08 release (face tooling, person merge, Spouse fix, rotation override, migration `f2a3b4c5d6e7`) **plus the full data import** — verified exact match: 10,875 tags · 10,546 regions · 127 people · 13 rotations · 6,590 photos. See `OPS-2026-08-05-release-and-people-sync-done.md`. |
+| Deployed to prod | **`b4b5b9b`** — 2026-11-13: §15 slice 1 (photo visibility + cull tool, migration `a3b4c5d6e7f8`); verified by `devread state`, 6,944 photos all `published`, leak check passed on prod (`OPS-2026-11-13-03`). Rollback: snapshot `photos-20261113-174015.db.gz`, images tagged `rollback-7dd7a72`. Before that: `7dd7a72` — 2026-08-05: the whole 2026-08 release (face tooling, person merge, Spouse fix, rotation override, migration `f2a3b4c5d6e7`) **plus the full data import** — verified exact match: 10,875 tags · 10,546 regions · 127 people · 13 rotations · 6,590 photos. See `OPS-2026-08-05-release-and-people-sync-done.md`. |
 | ⚠ PROD IS AUTHORITATIVE | Steve is finishing the rotation sweep **on prod**. Prod is now ahead of dev for rotations/boxes (and everything else). **Never run `tags_io --import` on prod from the old dev export.** Next dev enrichment cycle: `load-prod-snapshot.sh` first, rebuild the dev-only face index, then export. |
-| **§15 direct-to-prod ingest** | Designed + probed 2026-11-13 (SPEC §15). **Slice 1 (visibility + cull) BUILT ON DEV, not deployed**: migration `a3b4c5d6e7f8`, `queries.visible()`, Cull in the admin bar + lightbox, Manage ▾ → Culled photos. Run `cd backend && ../.venv/bin/python -m tests.check_visibility` after touching any photo-returning route. Slices 2–8 not started; LXC resize is requested from ops with slice 2. **Dev is code-only from here on** — no new ingest/enrichment cycles on dev. |
+| **§15 direct-to-prod ingest** | Designed + probed 2026-11-13 (SPEC §15). **Slice 1 (visibility + cull) LIVE ON PROD 2026-11-13**: migration `a3b4c5d6e7f8`, `queries.visible()`, Cull in the admin bar + lightbox, Manage ▾ → Culled photos. Run `cd backend && ../.venv/bin/python -m tests.check_visibility` after touching any photo-returning route. Slices 2–8 not started; LXC resize is requested from ops with slice 2. **Dev is code-only from here on** — no new ingest/enrichment cycles on dev. |
 | ⚠ Time zones | Proxmox host = America/Denver, **LXC 209 = UTC**. vzdump is 02:00 Mountain; the "03:30" DB snapshot is 03:30 **UTC** (20:30 Mountain the evening before). Write timers with an explicit zone. |
 | Dev-only leftovers | §14 embeddings/suggestions/clusters (by design, §14.8a — rebuilt per cycle, not synced) |
 | Removed photo | `Photo Album/2004/December/2004-12-12-006.JPG` was corrupt at the source (LR). **⚠ Correction 2026-11-13 (ops, verified by listing): it is NOT gone from B2** — the original key is still there and a byte-identical copy was uploaded 2026-08-06 at `Photo Album/2004/2004-12/2004-12-12/2004-12-12-006.JPG`. Steve to fix or delete at the source. Earlier note said: Steve deleted it from B2 2026-08-05; prod row removal is with ops (`DEV-2026-08-05-remove-corrupt-photo-row.md`). **Prod count becomes 6,589**; dev says 6,590 until its next snapshot refresh |

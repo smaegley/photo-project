@@ -2170,7 +2170,8 @@ All eight can run on dev against the real batch without touching prod.
 Slices 3–7 are developed on dev against a prod snapshot and a dev copy of the batch;
 dev remains a place to *build* ingest, not to run it for real.
 
-**Slice 1 — ✅ BUILT ON DEV (2026-11-13), not deployed.** Migration `a3b4c5d6e7f8`
+**Slice 1 — ✅ BUILT AND DEPLOYED TO PROD (2026-11-13, `b4b5b9b`).** Steve tried it on dev
+first; ops ran the leak check on prod after the deploy and it passed. Migration `a3b4c5d6e7f8`
 (`photo.visibility` default `published`, `culled_from`, `culled_at`, `culled_by`; purely
 additive, every existing row stays published). The rule lives in `queries.visible()` /
 `queries.can_see()`: applied unconditionally in `_apply` (gallery, ids, all facet
