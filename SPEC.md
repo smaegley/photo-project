@@ -1870,3 +1870,294 @@ confirmed `photo_person` tags only, no embeddings, since prod never matches.
 **Out of scope for Phase 3:** open-world identification (strangers stay unnamed), scene
 and activity hints (§5's other half), auto-apply without confirmation, pets, and any
 cloud inference whatsoever.
+
+---
+
+## 15. Phase 4 feature request — Direct-to-prod ingest: inbox, outings, cull (2026-11-13)
+
+> **Status: DRAFT from an interview with Steve on 2026-11-13; all interview questions
+> answered. Awaiting Steve's go-ahead to start. Not built.**
+> Supersedes §13.14's catalog-driven selection and "weekly sync" for new photos, and
+> reverses §14.8a ("enrichment runs on dev and exports to prod"). Everything else in
+> §13 (B2 as master, derivatives cached locally, one B2 read per photo) and §14 (model,
+> 0.45 match threshold, review UI) stands.
+
+### 15.1 Problem
+New photos reach B2 through Lightroom, mostly as periodic zip downloads from the family's
+shared Google Photos album plus some DSLR imports. The app only learns about them through
+a Lightroom-catalog step (§13.14) that selects photos **tagged with a family member in
+Lightroom** — and Steve stopped tagging people in Lightroom on 2026-07-29. So the current
+procedure selects nothing new. Three further gaps:
+
+- **Face-less photos that belong to a trip are lost.** Example: the US National
+  Whitewater Center trip (North Carolina) — most shots are too distant for faces but are
+  the memory of the trip.
+- **Phone batches carry junk** (package labels, receipts, everyday-life snaps) that
+  Steve tries to delete before import and sometimes misses. The app has no cull tool.
+- **Ingest depends on dev.** Detection runs on VM 201 and results are exported to prod
+  through ops. Steve's call (2026-11-13): **dev is for software development only; photos
+  go straight to prod to be evaluated, added or culled.**
+
+Baseline on 2026-11-13: about 450 viewable photos (326 HEIC, 124 JPG) uploaded to
+`Photo Album/2026/2026-07` … `2026-11` that day, none in the app. They are the first batch.
+
+### 15.2 Decisions (Steve, 2026-11-13)
+| # | Decision |
+|---|---|
+| 1 | **Prod ingests from B2 automatically every night.** No Lightroom catalog copy, no dev step, no ops round-trip per batch. |
+| 2 | **Approve first.** New photos land in an admin-only inbox on prod; the family sees nothing until an admin publishes. |
+| 3 | **Scope: new arrivals only.** The ~60k older digital photos never selected under §13.14 are not swept (§15.13). |
+| 4 | **Selection = recognised face + its outing.** A photo is selected if it has a face matching **anyone known to the app** (family or friend), or it belongs to the same outing as such a photo. |
+| 5 | **Outing = close in time and, where GPS exists, in place.** Not "same calendar day", not multi-day trip chaining. |
+| 6 | **Unselected photos are not hidden from admins:** a "Not selected" tab, grouped by outing, with one-click rescue. |
+| 7 | **Likely junk goes to its own tab**, pre-marked for culling, confirmed in one click. A photo with a recognised face is never classed as junk. |
+| 8 | **Near-duplicates are stacked; the admin picks.** A suggested best is offered; nothing is auto-culled. |
+| 9 | **Cull = reversible hide, on any photo** (digital, scan, slide; inbox or already published). Remembered so ingest never brings it back. Nothing is deleted from B2 or the library. |
+| 10 | **Strong face matches are auto-tagged**; weaker ones stay suggestions. This reverses §14's "suggest, never auto-apply" for the strong band only. |
+| 11 | **Events:** name the outing in the inbox (publishing tags the group), **and** read keywords embedded in the files when present. |
+| 12 | **Permissions:** all admins can work the inbox and cull. |
+| 13 | **Notification:** count badge in the app; Telegram only on failure (including "never ran"). |
+| 14 | **File types:** JPG, JPEG, HEIC only — "this should just be a photo app". PNG, RAW-only shots and videos are skipped and logged. Video may come later as its own feature. |
+| 15 | **Capacity:** grow LXC 209 (target about 6 GB RAM / 4 cores) and run ingest as a separate, memory-limited, low-priority container in the same Compose stack. |
+
+Follow-up answers (Steve, 2026-11-13, second pass):
+
+| # | Decision |
+|---|---|
+| 16 | **Deleted from B2 → culled automatically.** If a master disappears from the bucket (Steve deleted it in Lightroom), the app culls the photo and lists it in the run report. It stays restorable from the Culled view using its cached derivatives. |
+| 17 | **Replaced in B2 → refreshed in place.** A changed ETag regenerates the derivatives and keeps tags, event and visibility; faces are re-detected. |
+| 18 | **Inbox items never expire.** |
+| 19 | **Prod's faces are the gold copy; nothing face-related moves from dev.** All face review is finished on prod. The 378 suggestions pending on dev stay on dev and are not carried over. |
+
+### 15.3 What Steve does, end to end
+1. Import into Lightroom as today (Google Photos zip or DSLR card). Lightroom → NAS → B2
+   sync is unchanged. Optional: add keywords in Lightroom.
+2. Do nothing. Overnight, prod finds the new objects and analyses them.
+3. Next visit to photos.maegley.org, the ⚙ Admin menu shows a badge ("37 new").
+4. Open **Inbox**. Photos are grouped by outing. For each group: glance, cull strays, pick
+   from stacks, optionally type an event name, press **Publish**.
+5. Glance at **Likely junk** and confirm; skim **Not selected** for anything worth rescuing.
+6. Weaker face suggestions for the published photos appear in Review faces as today.
+
+### 15.4 Nightly pipeline (runs on prod)
+Each stage is idempotent and resumable; an interrupted run costs only the photo it was on.
+
+1. **Discover.** List `Photo Album/` in bucket `PhotoAlbum1`. A key is new if it is not
+   already a photo row (any state) and its `LastModified` is on or after the cutover date
+   (2026-07-27 — the last catalog sync; this is what keeps the 60k backlog out). Skip
+   non-digital trees (`FastFoto/`, `PreProcess_Slides/`, `_gsdata_/`) and sync artefacts
+   (`.bzEmpty`, `.log`, `._*`). Only `.jpg` / `.jpeg` / `.heic` are candidates. RAW+JPG pairs collapse to the JPG as in §13.6. Skipped
+   types are logged per run.
+2. **Fetch once.** One GET per new photo; from the in-memory bytes produce thumbnail +
+   display derivative, read EXIF (capture time, GPS, orientation) and embedded keywords
+   (XMP `dc:subject` / IPTC), and store the ETag as `file_version`. Master discarded (§13.7).
+3. **Faces.** Detect + embed on the display derivative (§14.5 model, unchanged), then
+   match against the enrolled index.
+4. **Junk score.** Local zero-shot image classifier (no cloud inference, as §14).
+5. **Near-duplicates.** Perceptual hash within a short time window → stacks, with a
+   suggested best (sharpness; fewest closed eyes where faces exist).
+6. **Outings.** Cluster by capture-time gap and GPS distance (§15.5).
+7. **Verdict.** Assign each photo a triage class and write it as a `pending` row.
+8. **Reconcile.** A digital row whose key is no longer in the listing is culled
+   (decision 16), guarded: if a run would cull more than a small number at once it culls
+   none and alerts instead, so a failed or partial listing cannot empty the gallery. A
+   row whose ETag changed is refreshed in place (decision 17).
+9. **Report.** Record the run (counts, skips, errors, duration); alert on failure.
+
+Late arrivals: a photo that lands in an outing whose other photos were already published
+arrives in the inbox attached to that outing, pre-filled with its event.
+
+### 15.5 Selection and grouping rules
+- **Outing:** consecutive photos (by capture time) with a gap under **2 hours**, split
+  when GPS is present on both sides and the distance exceeds **5 km**. Both numbers are
+  starting points to tune on the first real batch (P-I3). Photos with no usable capture
+  time fall back to the date in their B2 folder (`…/2026-07/2026-07-25/`) and form a
+  per-folder group.
+- **Trigger:** a face matching any person in the app at or above the §14 threshold (0.45).
+- **Triage class, first match wins:**
+  1. `selected` — has a trigger face.
+  2. `junk` — junk score over threshold (and no trigger face).
+  3. `related` — same outing as a `selected` photo.
+  4. `unselected` — everything else.
+- Inbox tab = `selected` + `related`. Likely junk tab = `junk`. Not selected tab =
+  `unselected`. A junk-flagged photo inside a selected outing still goes to Likely junk,
+  shown with its outing so a misjudged trip photo is easy to spot.
+- Outings containing only **unknown** faces land in Not selected, flagged "has faces", so
+  a new friend can be named in Review faces and the group rescued.
+
+### 15.6 Data model (one additive migration)
+- `photo.visibility`: `published` | `pending` | `culled`. Default and backfill `published`
+  for all existing rows.
+- `photo.triage`: `selected` | `related` | `junk` | `unselected` | null (null for anything
+  not ingested by this pipeline). Records what the pipeline thought, kept after publish
+  so its accuracy can be measured.
+- `photo.outing_id`, `photo.stack_id`, `photo.phash`, `photo.junk_score`,
+  `photo.culled_at` / `culled_by`.
+- `outing`: id, start/end time, centroid lat/lon, `event_id` (set when named).
+- `ingest_run`: started/finished, counts by class, skipped keys, errors.
+- `photo_person.source` gains a distinct value **`auto-face`** with the match score.
+  Lesson from §14: Lightroom-imported tags were written with the same source as
+  hand-made ones and can never be told apart or bulk-reversed. Auto tags must be.
+- The culled row **is** the "do not re-import" ledger — discovery skips any key that has
+  a row in any state. No separate tombstone table.
+- The `face` / `face_suggestion` / `face_cluster` tables already exist on prod (schema
+  deployed 2026-07-28, empty); they become live there (§15.11).
+
+### 15.7 Visibility enforcement — the part that must not leak
+Today "in the database" means "visible to the family". After this, most new rows start
+hidden, so every read path has to filter:
+
+- Non-admins see `published` only — in the gallery, facet counts, map pins, timeline,
+  Rolls, person thumbnails, search, **and** the image endpoints (a guessed URL for a
+  pending or culled photo returns 404 to a non-admin).
+- Admins see `published` in normal browsing too; `pending` and `culled` appear only in
+  the Inbox and Culled views, so admin browsing matches what the family sees.
+- Implement as one shared query predicate, not per-route conditions, with a test that
+  walks every photo-returning and image-serving route as a viewer and asserts no
+  non-published id is reachable.
+
+### 15.8 Inbox UI (⚙ Admin → Inbox, badge = pending selected + related count)
+- **Tabs:** Inbox · Likely junk · Not selected · Culled.
+- **Outing groups:** header with date range, place (from GPS, if resolvable), photo
+  count, and an **event field** (autocomplete over existing events; typing a new name
+  creates it on publish). Embedded-keyword matches pre-fill it.
+- **Grid** in the Rotation-sweep style: click toggles keep/cull; stacks show a count and
+  expand to choose which to keep (suggested best pre-selected; unchosen ones are culled).
+- **People chips** on each photo: auto-tagged names shown solid, suggestions outlined;
+  either can be removed before publishing.
+- **Actions:** Publish group · Cull group · Publish all selected · Confirm junk (culls
+  the tab) · Rescue (Not selected / Likely junk → Inbox) · Restore (Culled → where it
+  came from).
+- Every action is undoable and recorded in the contribution log like other admin edits.
+
+### 15.9 Cull on published photos
+- **Cull** button in the lightbox (admin), and a multi-select mode in the gallery for
+  bulk culling. Works for all three origins.
+- Culled photos leave every family-facing view at once, keep their tags, faces and
+  derivatives, and can be restored from the Culled tab.
+- A culled photo's face tags stop counting toward person photo counts and are excluded
+  from the match index while culled.
+
+### 15.10 People tagging
+- **Strong band → auto-tag** with `source='auto-face'` at ingest time; the tag becomes
+  visible when the photo is published. Threshold is **not** chosen yet: set it from the
+  existing review history (1,029 accepted / 48 rejected suggestions, with scores) so that
+  auto-tagging would have been wrong well under 1% of the time (P-I1). §14 measured that
+  about 4.6% of strangers clear 0.45, so the strong band must sit clearly above it.
+- **Between 0.45 and the strong threshold → suggestion**, reviewed as today. Still
+  enough to *select* the photo.
+- **Pets** remain unseparable by the model (§14.8); never auto-tagged.
+- An "Auto-tagged" filter in Review faces → Check accepted lets Steve audit and bulk-undo.
+- Auto tags are excluded from enrolment until a human confirms them, so a wrong auto tag
+  cannot teach the index to repeat itself.
+
+### 15.11 Events
+- Naming an outing in the inbox tags every published photo in it with that event.
+- Embedded keywords are matched against the event vocabulary (existing union-add rules,
+  never auto-create). Unmatched keywords are shown on the outing header as one-click
+  "use as event name" suggestions instead of going to a CSV report.
+- Whether keywords actually reach B2 inside the files is unverified (P-I5): Lightroom
+  only writes them if "write metadata to files" is used, HEIC support is uncertain, and
+  XMP sidecars may not sync. If the probe fails, decision 11 reduces to outing naming.
+
+### 15.12 Infrastructure (ops-owned; to be agreed with ops before build)
+- **LXC 209 resize** to about 6 GB RAM / 4 cores. Actual need to be measured (P-I4);
+  detection peaked near 650 MB on dev, plus the classifier.
+- **`ingest` service** in the Compose stack: same image as `api` plus the model
+  dependencies, hard memory limit, low CPU priority, one-shot, started by a systemd
+  timer. It writes to the same SQLite DB (WAL + `busy_timeout` already in place) in
+  short transactions so the site stays responsive.
+- **Schedule** clear of the 02:00 vzdump (mode Stop takes the container down) and the
+  03:30 DB snapshot, and after the NAS → B2 sync has finished. Proposed 04:30; ops to
+  confirm sync timing.
+- **Image build:** the model libraries enlarge the image and prod builds without
+  BuildKit on a small box; the resize eases the known build-OOM risk (STATUS #5).
+- **Alerting** through the existing Telegram path: on failure, and a dead-man check for
+  "did not run" — the gap already noted in STATUS #4.
+- **B2:** prod already holds the read-only key. Egress is one GET per new photo
+  (hundreds per batch), far below the cap. Listing ~110k objects nightly is ~110 list
+  calls.
+- **Derivatives for junk and unselected photos** are generated too (the tabs need
+  thumbnails). Culled photos' display derivatives may be dropped after a retention
+  period to reclaim space; thumbnails kept.
+- **Backups:** the DB now also carries triage and cull decisions; existing snapshot +
+  B2 off-site cover it. The face index (~26 MB of embeddings) becomes prod data and is
+  covered by the same snapshots.
+
+### 15.13 Cutover and what is retired
+1. **Build the match index on prod, from prod's own data (decision 19).** Prod holds
+   the confirmed people tags and face boxes but, as far as dev's records show, no
+   embeddings (the `face` table was deployed empty — **verify with ops first**). So the
+   one-time step is a full detection pass *on prod* over the existing library (about an
+   hour at dev's measured speed; needs the LXC resize first), enrolled against prod's
+   confirmed tags. Nothing is imported from dev: not faces, not suggestions, not clusters.
+2. **Review faces becomes a prod feature.** Any dev-only gating is removed.
+3. **Dev refresh simplifies:** a prod snapshot now contains the faces, so the
+   `faces_io` preserve/restore ritual and the `tags_io` dev → prod export cycle are no
+   longer part of normal operation. **`tags_io --import` must never be run on prod
+   again** — dev's face state is now strictly a development copy. Kept in the repo as tools, removed from the runbooks.
+4. **Retired for new photos:** `read_lrcat --digital`, `digital_sidecar.csv`,
+   `import_digital`, and **`--prune` in particular** — with no sidecar, a prune would
+   read "everything is unselected". The 4,679 existing digital rows stay `published`
+   and are never pruned; removal is by cull only.
+5. **First run** covers the ~450 photos from July–November 2026.
+6. STATUS.md, CLAUDE.md and `infra/DEPLOY.md` updated to say dev is code-only.
+
+**Out of scope:** backfilling the ~60k older digital photos (can later reuse this
+pipeline by moving the cutover date back a year at a time); video; RAW-only decoding;
+multi-day trip chaining; auto-culling of any kind; telling pets apart; any cloud
+inference; a "check now" button (a manual run is an ops command until proven needed).
+
+### 15.14 Probes to close before building
+- **P-I1 auto-tag threshold** — from the accepted/rejected suggestion scores already in
+  the DB. Output: a threshold and the measured error rate at it.
+- **P-I2 junk classifier** — pick a CPU-sized zero-shot model; label the ~450-photo
+  batch by hand once (keep / junk) and measure precision and recall. Target: almost no
+  real photos flagged; missed junk is acceptable because the inbox catches it.
+- **P-I3 outing parameters** — run 2 h / 5 km over the batch and check the groups
+  against what Steve considers one outing (the Whitewater Center trip is the test case).
+- **P-I4 footprint on prod** — peak memory and wall time for a 450-photo run inside the
+  limited container; sets the LXC size and memory limit.
+- **P-I5 embedded keywords** — do Lightroom keywords exist inside the B2 objects, for
+  JPG and for HEIC?
+- **P-I6 capture time on Google Photos downloads** — confirm EXIF `DateTimeOriginal`
+  and GPS survive the zip download, and how many files have neither.
+- **P-I7 near-duplicate method** — hash distance + time window that stacks bursts
+  without stacking distinct shots of the same scene.
+- **P-I8 selection yield** — on the batch: how many photos have a recognised face, how
+  many more the outing rule adds, and how many keepers end up in Not selected.
+
+All eight can run on dev against the real batch without touching prod.
+
+### 15.15 Build order (slices)
+1. **Visibility + cull** — migration, shared predicate, leak test, Cull button, bulk
+   cull, Culled view. Useful on its own and ships first.
+2. **Faces to prod** — index transfer, Review faces enabled on prod, dev-refresh runbook
+   simplified.
+3. **Ingest core** — discover, fetch, derivatives, EXIF, faces, match; photos arrive as
+   `pending`; minimal Inbox (flat grid, publish / cull).
+4. **Outings + selection** — grouping, triage classes, Inbox / Not selected tabs,
+   rescue, event naming.
+5. **Junk tab** — classifier, Likely junk tab, confirm-all.
+6. **Stacks** — near-duplicate grouping and pick-from-stack UI.
+7. **Auto-tag** — strong-band tagging, people chips in the inbox, audit filter.
+8. **Automation** — ingest container, timer, alerting, dead-man check, badge; LXC resize.
+   Until this slice, runs are started by hand.
+
+Slices 3–7 are developed on dev against a prod snapshot and a dev copy of the batch;
+dev remains a place to *build* ingest, not to run it for real.
+
+### 15.16 Acceptance
+- A photo synced to B2 appears in the prod inbox by the next morning with no human step.
+- A signed-in viewer can reach no pending or culled photo by any route or image URL.
+- The Whitewater Center photos arrive as one outing, face-less shots included, and
+  publish with one click and one event name.
+- A package-label photo lands in Likely junk; culling it survives later ingests.
+- A culled published photo disappears for the family immediately and restores intact.
+- Auto-tagged names are listable and reversible as a set.
+- A failed or missed nightly run produces a Telegram alert.
+- The website stays responsive while ingest runs.
+
+### 15.17 Open questions
+None outstanding with Steve — the five raised on 2026-11-13 are answered in decisions
+14 and 16–19. Remaining unknowns are the probes in §15.14 and the ops agreement in §15.12.
