@@ -41,6 +41,8 @@ DET_SIZE = (640, 640)
 
 def _load_app():
     warnings.filterwarnings("ignore")
+    from app import ort_threads
+    ort_threads.pin()
     from insightface.app import FaceAnalysis
     fa = FaceAnalysis(name="buffalo_l", allowed_modules=["detection", "recognition"],
                       providers=["CPUExecutionProvider"])

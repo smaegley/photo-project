@@ -33,6 +33,8 @@ OUT_PATH = REVIEW_DIR / "rotation_proposals.json"
 
 def _load_detector():
     warnings.filterwarnings("ignore")
+    from app import ort_threads
+    ort_threads.pin()
     from insightface.app import FaceAnalysis
     fa = FaceAnalysis(name="buffalo_l", allowed_modules=["detection"],
                       providers=["CPUExecutionProvider"])

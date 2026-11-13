@@ -80,6 +80,10 @@ def run(sizes=DEFAULT_SIZES, dry_run: bool = False, limit: int | None = None) ->
     if dry_run:
         print("(dry run — nothing will be written)")
 
+    from app import ort_threads
+
+    ort_threads.pin()
+
     from insightface.app import FaceAnalysis
 
     # Existing geometry per photo, extended as we go so two det_sizes can't both write
