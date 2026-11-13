@@ -1875,8 +1875,8 @@ cloud inference whatsoever.
 
 ## 15. Phase 4 feature request — Direct-to-prod ingest: inbox, outings, cull (2026-11-13)
 
-> **Status: DRAFT from an interview with Steve on 2026-11-13; all interview questions
-> answered. Awaiting Steve's go-ahead to start. Not built.**
+> **Status: design agreed with Steve 2026-11-13; probes run and ops review merged the
+> same day (§15.12, §15.17). Not built. Two questions open in §15.18.**
 > Supersedes §13.14's catalog-driven selection and "weekly sync" for new photos, and
 > reverses §14.8a ("enrichment runs on dev and exports to prod"). Everything else in
 > §13 (B2 as master, derivatives cached locally, one B2 read per photo) and §14 (model,
@@ -1927,6 +1927,7 @@ Follow-up answers (Steve, 2026-11-13, second pass):
 | 16 | **Deleted from B2 → culled automatically.** If a master disappears from the bucket (Steve deleted it in Lightroom), the app culls the photo and lists it in the run report. It stays restorable from the Culled view using its cached derivatives. |
 | 17 | **Replaced in B2 → refreshed in place.** A changed ETag regenerates the derivatives and keeps tags, event and visibility; faces are re-detected. |
 | 18 | **Inbox items never expire.** |
+| 20 | **Moved or renamed in Lightroom → re-pointed, not culled** (gap found by ops, 2026-11-13). The sync turns a move into delete-old-key + upload-new-key. Before culling a vanished key, reconcile matches it to a new key by size + capture time (or ETag) and re-points `storage_path`, keeping tags, faces and visibility. |
 | 19 | **Prod's faces are the gold copy; nothing face-related moves from dev.** All face review is finished on prod. The 378 suggestions pending on dev stay on dev and are not carried over. |
 
 ### 15.3 What Steve does, end to end
@@ -1976,7 +1977,9 @@ arrives in the inbox attached to that outing, pre-filled with its event.
 - **Trigger:** a face matching any person in the app at or above the §14 threshold (0.45).
 - **Triage class, first match wins:**
   1. `selected` — has a trigger face.
-  2. `junk` — junk score over threshold (and no trigger face).
+  2. `junk` — junk score over threshold **and no detected face at all** (known or
+     unknown). Tightened after P-I2: every flagged photo that contained a face was a
+     false positive.
   3. `related` — same outing as a `selected` photo.
   4. `unselected` — everything else.
 - Inbox tab = `selected` + `related`. Likely junk tab = `junk`. Not selected tab =
@@ -2061,22 +2064,41 @@ hidden, so every read path has to filter:
   XMP sidecars may not sync. If the probe fails, decision 11 reduces to outing naming.
 
 ### 15.12 Infrastructure (ops-owned; to be agreed with ops before build)
-- **LXC 209 resize** to about 6 GB RAM / 4 cores. Actual need to be measured (P-I4);
-  detection peaked near 650 MB on dev, plus the classifier.
-- **`ingest` service** in the Compose stack: same image as `api` plus the model
-  dependencies, hard memory limit, low CPU priority, one-shot, started by a systemd
-  timer. It writes to the same SQLite DB (WAL + `busy_timeout` already in place) in
-  short transactions so the site stays responsive.
-- **Schedule** clear of the 02:00 vzdump (mode Stop takes the container down) and the
-  03:30 DB snapshot, and after the NAS → B2 sync has finished. Proposed 04:30; ops to
-  confirm sync timing.
+- **LXC 209 resize** from its actual 4 GB / 2 cores (not 2 GB as older notes say) to
+  **6 GB / 4 cores**; ops can go to 8 GB without further discussion. Online `pct set`,
+  no downtime. **Needed before slice 2** (the one-time detection pass), not slice 8.
+- **`ingest` service** — a one-shot Compose service built as a **separate image target
+  on top of `api`**, so the site image and its rollback tags stay small. `mem_limit` =
+  `memswap_limit` (clean OOM, never thrashes the swap shared with the site) set from
+  measured peak + 30% — **2.6 GB** on the P-I4 figures; `cpus: 2`, low `cpu_shares`.
+  Writes to the same SQLite DB in short transactions.
+- **Host-side `photo-ingest.service` + `.timer`** (tracked in `infra/`), running
+  `docker compose run --rm ingest`, with `ExecStartPre=infra/db-snapshot.sh` (a restore
+  point before every run; snapshot `KEEP` rises 14 → 28) and `TimeoutStartSec=4h` so a
+  hung run can never reach the next vzdump.
+- **Schedule: `OnCalendar=*-*-* 07:30:00 America/Denver`.** ⚠ Time zones: the Proxmox
+  host is America/Denver, **LXC 209 runs UTC**. The vzdump is 02:00 Mountain; the
+  "03:30" DB snapshot is 03:30 **UTC** (20:30 Mountain the evening before). The NAS → B2
+  sync starts at 00:00 Mountain, lands `Photo Album/` in the first hour, and finishes
+  05:00–07:00. Every timer is written with an explicit zone. A very large upload can
+  outlast 07:30, so a batch may split across two nights — the late-arrivals rule
+  (§15.4) covers it and must be tested.
+- **Model weights are installed once at deploy** into a host directory mounted
+  read-only (`/opt/photo-project/models`); nothing is downloaded at run time. ONNX
+  only, no torch.
 - **Image build:** the model libraries enlarge the image and prod builds without
   BuildKit on a small box; the resize eases the known build-OOM risk (STATUS #5).
-- **Alerting** through the existing Telegram path: on failure, and a dead-man check for
-  "did not run" — the gap already noted in STATUS #4.
+- **Alerting.** No alert path exists on LXC 209 today (backup failures are silent too).
+  An `ExecStopPost=` wrapper publishes a retained MQTT message to the Home Assistant
+  broker on `photo-album/ingest/status` —
+  `{"state":"ok|failed","finished_at":"<ISO8601>","new":N,"errors":N}` — driven by
+  `$SERVICE_RESULT`, so OOM kills and timeouts are reported as well as app errors. Ops
+  builds the HA side: Telegram on `failed`, and a dead-man alert at 09:00 Mountain if
+  `finished_at` is over 26 h old. Dev supplies the wrapper and this payload contract.
 - **B2:** prod already holds the read-only key. Egress is one GET per new photo
-  (hundreds per batch), far below the cap. Listing ~110k objects nightly is ~110 list
-  calls.
+  (hundreds per batch), far below the cap. Discovery **must** list with
+  `Prefix="Photo Album/"` (109k objects, 110 calls); the bucket as a whole is 240k
+  because `Lightroom/` syncs into it too.
 - **Derivatives for junk and unselected photos** are generated too (the tabs need
   thumbnails). Culled photos' display derivatives may be dropped after a retention
   period to reclaim space; thumbnails kept.
@@ -2132,8 +2154,9 @@ All eight can run on dev against the real batch without touching prod.
 ### 15.15 Build order (slices)
 1. **Visibility + cull** — migration, shared predicate, leak test, Cull button, bulk
    cull, Culled view. Useful on its own and ships first.
-2. **Faces to prod** — index transfer, Review faces enabled on prod, dev-refresh runbook
-   simplified.
+2. **Faces to prod** — LXC resize (prerequisite), one-time detection pass on prod run
+   by ops in daytime after a snapshot, Review faces enabled on prod, dev-refresh
+   runbook simplified.
 3. **Ingest core** — discover, fetch, derivatives, EXIF, faces, match; photos arrive as
    `pending`; minimal Inbox (flat grid, publish / cull).
 4. **Outings + selection** — grouping, triage classes, Inbox / Not selected tabs,
@@ -2141,7 +2164,7 @@ All eight can run on dev against the real batch without touching prod.
 5. **Junk tab** — classifier, Likely junk tab, confirm-all.
 6. **Stacks** — near-duplicate grouping and pick-from-stack UI.
 7. **Auto-tag** — strong-band tagging, people chips in the inbox, audit filter.
-8. **Automation** — ingest container, timer, alerting, dead-man check, badge; LXC resize.
+8. **Automation** — ingest container, timer, alerting, dead-man check, badge.
    Until this slice, runs are started by hand.
 
 Slices 3–7 are developed on dev against a prod snapshot and a dev copy of the batch;
@@ -2158,6 +2181,51 @@ dev remains a place to *build* ingest, not to run it for real.
 - A failed or missed nightly run produces a Telegram alert.
 - The website stays responsive while ingest runs.
 
-### 15.17 Open questions
-None outstanding with Steve — the five raised on 2026-11-13 are answered in decisions
-14 and 16–19. Remaining unknowns are the probes in §15.14 and the ops agreement in §15.12.
+### 15.17 Probe results (dev, 2026-11-13, on the real batch)
+Batch: every `.jpg/.jpeg/.heic` under `Photo Album/` uploaded since 2026-07-27, outside
+the scan/slide trees — **451 objects, 450 usable** (324 HEIC, 126 JPEG; mostly iPhone 15
+Pro and two Pixels, 6 Sony). Working copies in `/mnt/photos/ingest-probe/` (not backed
+up, disposable). Nothing was written to any database.
+
+- **P-I1 auto-tag threshold — "well under 1%" is not reachable.** Re-scoring the 1,998
+  decided suggestions with each face held out of its own reference set: score ≥ 0.65,
+  pets excluded → **1.0% wrong, covers 44%** of accepted matches; ≥ 0.70 → 0.9% / 31%;
+  ≥ 0.60 → 1.3% / 58%. Requiring a margin over the runner-up person does not help.
+  **Proposed: 0.65, never pets — needs Steve's OK on a ~1-in-100 error rate.**
+- **P-I2 junk classifier — usable only as a pre-sort.** CLIP ViT-B/32 (ONNX, 84 s for
+  450 photos, 670 MB) zero-shot, 21 "keep" vs 18 "junk" prompts. At score ≥ 0.5 it
+  flagged 20 photos: a serial-number plate, a product in hand, hotel rooms, a pool
+  skimmer — and a dog asleep in a cardboard box, three times. Before the any-face
+  exemption it also flagged conference panels and a child's costume. This batch was
+  pre-cleaned and has little true junk, so **recall is unmeasured**; needs a hand-labelled
+  set. Ship the tab, never auto-cull, exempt any photo with a face.
+- **P-I3 outings — 2 h / 5 km works.** 80 outings (26 singletons). The US National
+  Whitewater Center visit is **one outing: 95 photos, 2026-07-30 10:52–12:21, 9 with a
+  recognised face, 86 pulled in as related** — the motivating case, handled.
+- **P-I4 footprint.** Fetch + decode + detect peaked at **1.53 GB** (full-size HEIC
+  decode, more than double the 650 MB measured on the old library), ~1–2 s per photo
+  on 4 cores including download; the classifier adds ~0.5 GB if loaded in the same
+  process → **~2.0 GB peak, 2.6 GB limit**. Batch download: 1.5 GB.
+- **P-I5 embedded keywords — none.** 440 of 450 files carry XMP, **0 carry keywords**,
+  and there are no `.xmp` sidecars in the bucket. Decision 11's "also read embedded
+  keywords" has nothing to read today; events come from outing naming. Keep the reader
+  cheap and dormant, or drop it.
+- **P-I6 capture time — good.** 439/450 have `DateTimeOriginal`, 427 have GPS, and the
+  folder date agreed with EXIF on every dated photo. The 11 without a date are saved or
+  received images (collages, `1995.jpg`), all in one import folder: they fall back to
+  the **import** date and form one no-GPS group.
+- **P-I7 near-duplicates.** Difference-hash ≤ 10 bits within 30 s: 51 stacks covering
+  116 photos (max 5). Counts only — the stacks have not been checked by eye; tune in
+  slice 6.
+- **P-I8 yield.** 158 selected · 177 related · 20 likely junk · 95 not selected.
+  1,186 faces detected, 345 matched to 15 known people, 841 unknown. Not selected is
+  **not** mostly junk: it holds two group dinners full of unrecognised faces, a child
+  with a fish, the dog, sunsets and aerial shots. The "has faces" flag and outing
+  rescue in that tab are doing real work, and dog-only photos never trigger selection.
+- **Also found:** `Photo Album/2004/2004-12/2004-12-12/2004-12-12-006.JPG` is in the
+  bucket and truncated — the corrupt file removed in August is back under a new path.
+  Ingest must record an undecodable master in the run report and skip it, not fail.
+
+### 15.18 Open questions
+For Steve: (1) accept 0.65 / ~1% error for auto-tagging, or keep everything as
+suggestions? (2) drop the embedded-keyword reader given P-I5?
