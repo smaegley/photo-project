@@ -768,3 +768,12 @@ button:disabled kbd { opacity: .3; }
   background: color-mix(in srgb, var(--bg) 75%, transparent); border-radius: 5px;
   padding: 1px 5px; min-width: 14px; }
 .lb-toolbar .lb-tool-cull { width: auto; padding: 0 10px; font-size: 13px; color: #ff9b8f; }
+
+/* Inbox (SPEC §15.8) */
+.inbox-admin .inbox-days { overflow-y: auto; min-height: 0; padding-bottom: 12px; }
+.inbox-day { margin-bottom: 14px; }
+.inbox-day-head { display: flex; align-items: baseline; gap: 12px; padding: 8px 0 6px;
+  position: sticky; top: 0; background: var(--panel, var(--bg)); z-index: 1; }
+.inbox-day .rotation-grid { overflow: visible; }
+.inbox-names { display: block; font-size: 11px; line-height: 1.25; color: var(--muted);
+  min-height: 14px; padding: 2px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

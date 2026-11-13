@@ -82,6 +82,8 @@ def snapshot(c):
 
 
 before = snapshot(viewer)
+# photos already hidden in the source DB (e.g. a real inbox) are not this test's business
+hidden_at_start = db.execute("select count(*) from photo where visibility!='published' or culled_from is not null or culled_at is not null").fetchone()[0]
 n_people = {r[0]: r[1] for r in db.execute(
     f"select person_id,count(distinct photo_id) from photo_person where photo_id in ({','.join('?'*len(ids))}) group by 1", ids)}
 n_events = {r[0]: r[1] for r in db.execute(
@@ -178,7 +180,31 @@ for t in targets:
     for u in img_urls[t["id"]][:1]:
         check(viewer.get(u).status_code == 200, f"viewer image back after restore ({u[:50]})")
 left = db.execute("select count(*) from photo where visibility!='published' or culled_from is not null or culled_at is not null").fetchone()[0]
-check(left == 0, "no leftover cull state after restore")
+check(left == hidden_at_start, "no leftover cull state after restore")
+
+print("pending (inbox) photos — same rule, different state")
+db.execute(f"update photo set visibility='pending' where id in ({','.join('?'*len(ids))})", ids)
+db.commit()
+pend = snapshot(viewer)
+check(not (pend["ids"] & set(ids)) and pend["total"] == before["total"] - len(ids), "pending photos absent from viewer listings")
+for t in targets:
+    check(viewer.get(f"/api/photos/{t['id']}").status_code == 404, f"viewer detail 404 for pending {t['id']}")
+    for u in img_urls[t["id"]][:2]:
+        check(viewer.get(u).status_code == 404, f"viewer 404 pending {u[:60]}")
+check(viewer.get("/api/admin/inbox").status_code == 403 and viewer.get("/api/admin/inbox/summary").status_code == 403, "viewer cannot open the inbox")
+check(viewer.post("/api/admin/photos/publish", json={"photo_ids": ids}).status_code == 403, "viewer cannot publish")
+box = admin.get("/api/admin/inbox").json()
+check({p["id"] for p in box["photos"]} >= set(ids), "admin inbox lists them")
+check(admin.get("/api/admin/inbox/summary").json()["pending"] >= len(ids), "badge count includes them")
+r = admin.post("/api/admin/photos/cull", json={"photo_ids": ids[:1]})
+r2 = admin.post("/api/admin/photos/restore", json={"photo_ids": ids[:1]})
+back = db.execute("select visibility from photo where id=?", (ids[0],)).fetchone()[0]
+check(r.json()["changed"] == 1 and r2.json()["changed"] == 1 and back == "pending", "culling a pending photo and restoring returns it to the inbox, not to published")
+r = admin.post("/api/admin/photos/publish", json={"photo_ids": ids})
+check(r.json()["changed"] == len(ids) and snapshot(viewer) == before, "publish makes them visible, counts back to baseline")
+admin.post("/api/admin/undo")
+check(not (snapshot(viewer)["ids"] & set(ids)), "undo of publish hides them again")
+admin.post("/api/admin/photos/publish", json={"photo_ids": ids})
 
 print(f"\n{'FAILED: ' + str(len(fails)) if fails else 'ALL CHECKS PASSED'}")
 sys.exit(1 if fails else 0)

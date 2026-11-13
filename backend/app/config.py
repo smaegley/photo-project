@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     b2_bucket: str = ""
     b2_endpoint: str = ""      # e.g. s3.us-west-001.backblazeb2.com
 
+    # Nightly ingest (SPEC §15.4). Only objects under the prefix, uploaded on/after the
+    # cutover, are candidates — the cutover is what keeps the ~60k older photos that
+    # were never selected out of the inbox. Move it back deliberately to backfill.
+    ingest_prefix: str = "Photo Album/"
+    ingest_cutover: str = "2026-07-27"
+
     @property
     def cf_access_enabled(self) -> bool:
         return bool(self.cf_access_team_domain and self.cf_access_aud)

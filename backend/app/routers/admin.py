@@ -23,7 +23,8 @@ from app.config import settings
 from app.database import get_db
 from app.geocoding import geocode
 from app.import_photos import _km, REVIEW_DIR  # same proximity rule the importer uses (SPEC §12.6)
-from app.queries import thumb_url as _thumb_url, _version as _photo_version, not_culled
+from app.queries import (thumb_url as _thumb_url, display_url as _display_url,
+                         _version as _photo_version, not_culled)
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
 from app.schemas import (
@@ -1407,6 +1408,82 @@ def restore_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
                    user: m.User = Depends(require_admin)):
     """Return culled photos to the state they were culled from."""
     return _set_visibility(db, user, body.photo_ids, cull=False)
+
+
+# ---- inbox (SPEC §15.8) ------------------------------------------------------------
+# Photos the nightly ingest staged as `pending`. Nothing here is visible to the family
+# until it is published; Cull works on pending photos too and Restore returns them here.
+def _last_run(db: Session) -> dict | None:
+    r = db.query(m.IngestRun).order_by(m.IngestRun.id.desc()).first()
+    if r is None:
+        return None
+    return {"id": r.id, "state": r.state, "new": r.new, "errors": r.errors,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None}
+
+
+@router.get("/inbox/summary")
+def inbox_summary(db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
+    """Cheap count for the menu badge."""
+    n = db.query(func.count(m.Photo.id)).filter(m.Photo.visibility == m.VIS_PENDING).scalar() or 0
+    return {"pending": n, "last_run": _last_run(db)}
+
+
+@router.get("/inbox")
+def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
+          limit: int = 600, offset: int = 0):
+    """Pending photos in capture order, each with its detected-face count and the
+    names the matcher suggests for it."""
+    q = db.query(m.Photo).filter(m.Photo.visibility == m.VIS_PENDING)
+    rows = (q.order_by(m.Photo.sort_date.is_(None), m.Photo.sort_date, m.Photo.date_raw,
+                       m.Photo.id)
+            .offset(max(0, offset)).limit(max(1, min(limit, 1000))).all())
+    ids = [p.id for p in rows]
+    n_faces: dict[int, int] = defaultdict(int)
+    names: dict[int, list[str]] = defaultdict(list)
+    for ch in _chunks(ids):
+        for pid, n in (db.query(m.Face.photo_id, func.count(m.Face.id))
+                       .filter(m.Face.photo_id.in_(ch)).group_by(m.Face.photo_id).all()):
+            n_faces[pid] = n
+        for pid, name in (db.query(m.Face.photo_id, m.Person.canonical_name)
+                          .join(m.FaceSuggestion, m.FaceSuggestion.face_id == m.Face.id)
+                          .join(m.Person, m.Person.id == m.FaceSuggestion.person_id)
+                          .filter(m.Face.photo_id.in_(ch),
+                                  m.FaceSuggestion.status == m.FACE_PENDING)
+                          .order_by(m.FaceSuggestion.score.desc()).all()):
+            if name not in names[pid]:
+                names[pid].append(name)
+    places = {pl.id: pl.canonical_name for pl in db.query(m.Place).all()}
+    return {"total": q.count(), "last_run": _last_run(db),
+            "photos": [{"id": p.id, "source_file": p.source_file,
+                        "filename": p.original_filename, "date_raw": p.date_raw,
+                        "date": p.date_start.isoformat() if p.date_start else None,
+                        "place": places.get(p.place_id), "has_gps": p.lat is not None,
+                        "faces": n_faces.get(p.id, 0), "suggested": names.get(p.id, []),
+                        "keywords": (p.keywords_raw or "").split("|") if p.keywords_raw else [],
+                        "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
+                        "display_url": _display_url(p.source_file) + _photo_version(p)}
+                       for p in rows]}
+
+
+@router.post("/photos/publish")
+def publish_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
+                   user: m.User = Depends(require_admin)):
+    """Make pending photos visible to the family. Admin-only, undoable. Only pending
+    photos move — a culled photo must be restored first, so nothing is published by
+    accident."""
+    _check_photo_ids(db, body.photo_ids)
+    prev: dict[str, str] = {}
+    for ch in _chunks(body.photo_ids):
+        for p in db.query(m.Photo).filter(m.Photo.id.in_(ch),
+                                          m.Photo.visibility == m.VIS_PENDING).all():
+            prev[str(p.id)] = m.VIS_PENDING
+            p.visibility = m.VIS_PUBLISHED
+    if prev:
+        _log(db, user, "photo:publish", None, f"{len(prev)} photo(s)",
+             inverse={"op": "photo_visibility", "prev": prev})
+    db.commit()
+    return {"changed": len(prev)}
 
 
 @router.get("/culled")

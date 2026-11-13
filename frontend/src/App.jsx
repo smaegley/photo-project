@@ -16,6 +16,7 @@ import UnplacedAdmin from "./components/UnplacedAdmin";
 import FaceQueueAdmin from "./components/FaceQueueAdmin";
 import RotationSweep from "./components/RotationSweep";
 import CulledAdmin from "./components/CulledAdmin";
+import InboxAdmin from "./components/InboxAdmin";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
 
@@ -82,6 +83,13 @@ export default function App() {
   const [showFaces, setShowFaces] = useState(false);
   const [showRotation, setShowRotation] = useState(false);
   const [showCulled, setShowCulled] = useState(false);
+  const [showInbox, setShowInbox] = useState(false);
+  const [inboxCount, setInboxCount] = useState(0);
+  // Badge for photos the nightly ingest staged (admins only; SPEC §15.8).
+  const refreshInbox = useCallback(() => {
+    if (isAdmin) api.inboxSummary().then((s) => setInboxCount(s.pending)).catch(() => {});
+  }, [isAdmin]);
+  useEffect(() => { refreshInbox(); }, [refreshInbox]);
   const [showUsers, setShowUsers] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -316,6 +324,8 @@ export default function App() {
         onReviewFaces={() => setShowFaces(true)}
         onRotationSweep={() => setShowRotation(true)}
         onCulled={() => setShowCulled(true)}
+        onInbox={() => setShowInbox(true)}
+        inboxCount={inboxCount}
         onManageUsers={() => setShowUsers(true)}
         onShowUsage={() => setShowUsage(true)}
         undoInfo={undoInfo}
@@ -472,6 +482,13 @@ export default function App() {
         <RotationSweep
           onClose={() => setShowRotation(false)}
           onChanged={refresh}
+        />
+      )}
+
+      {showInbox && (
+        <InboxAdmin
+          onClose={() => { setShowInbox(false); refreshInbox(); }}
+          onChanged={() => { refreshInbox(); return refresh(); }}
         />
       )}
 

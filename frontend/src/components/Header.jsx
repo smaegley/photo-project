@@ -21,7 +21,7 @@ function Menu({ label, title, children }) {
 
 export default function Header({ view, total, hasFilters, onView, onReset, mapOpen, onToggleMap,
                                 admin, canEdit, isAdmin, onToggleAdmin,
-                                onManageEvents, onManagePeople, onManagePlaces, onNameLocations, onReviewFaces, onRotationSweep, onCulled, onManageUsers, onShowUsage,
+                                onManageEvents, onManagePeople, onManagePlaces, onNameLocations, onReviewFaces, onRotationSweep, onCulled, onInbox, inboxCount = 0, onManageUsers, onShowUsage,
                                 undoInfo, onUndo, dark, onToggleTheme,
                                 userEmail, personName, isDev, devUsers }) {
   const undoLabel = undoInfo?.available
@@ -56,7 +56,11 @@ export default function Header({ view, total, hasFilters, onView, onReset, mapOp
         {/* Vocabulary/users/usage/undo cascade across many photos (SPEC §10.5) —
             admin-only, grouped in one menu to keep the header uncluttered. */}
         {admin && isAdmin && (
-          <Menu label="Manage ▾" title="Vocabulary, users, usage, undo">
+          <Menu label={inboxCount ? `Manage ▾ (${inboxCount} new)` : "Manage ▾"} title="Inbox, vocabulary, users, usage, undo">
+            <button className="menu-item" onClick={onInbox}>
+              Inbox{inboxCount ? ` — ${inboxCount} new photo${inboxCount !== 1 ? "s" : ""}` : ""}…
+            </button>
+            <div className="menu-sep" />
             <div className="menu-label">Vocabulary</div>
             <button className="menu-item" onClick={onManageEvents}>Manage events</button>
             <button className="menu-item" onClick={onManagePeople}>Manage people</button>

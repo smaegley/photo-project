@@ -149,6 +149,10 @@ class Photo(Base):
     culled_from: Mapped[str | None] = mapped_column(String, nullable=True)
     culled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     culled_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    # SPEC §15.4: which ingest run brought this photo in, and any keywords found
+    # embedded in the file ("|"-joined) for the inbox to offer as event names.
+    ingest_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    keywords_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject
@@ -234,6 +238,23 @@ class UsageEvent(Base):
     event_type: Mapped[str] = mapped_column(String, nullable=False)  # view|download|search
     target: Mapped[str | None] = mapped_column(String, nullable=True)  # photo source_file, filter summary, …
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+class IngestRun(Base):
+    """One nightly B2 ingest (SPEC §15.4). `state` is ok|failed|running: a photo that
+    can't be decoded counts under `errors` with state ok — only a run-level fault is
+    `failed`, or one known-bad file would raise the alarm every night."""
+    __tablename__ = "ingest_run"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    state: Mapped[str] = mapped_column(String, default="running")
+    listed: Mapped[int] = mapped_column(Integer, default=0)
+    candidates: Mapped[int] = mapped_column(Integer, default=0)
+    new: Mapped[int] = mapped_column(Integer, default=0)
+    errors: Mapped[int] = mapped_column(Integer, default=0)
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON: skips, error keys
 
 
 class Contribution(Base):
