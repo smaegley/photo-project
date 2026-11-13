@@ -199,6 +199,8 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
         db = SessionLocal()
         try:
             # Refresh pending suggestions only; accepted/rejected are never reopened.
+            # One short write transaction: everything slow (scoring) is already done, so
+            # the single SQLite write lock is held only for this delete + bulk insert.
             db.query(m.FaceSuggestion).filter(
                 m.FaceSuggestion.status == m.FACE_PENDING).delete(synchronize_session=False)
             db.add_all([m.FaceSuggestion(face_id=f, person_id=p, score=s) for f, p, s in rows])

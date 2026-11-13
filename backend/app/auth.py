@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 
 import jwt
 from fastapi import Cookie, Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -83,7 +84,23 @@ def _load_user(db: Session, ident: tuple[str, bool, str | None, bool], *, touch:
                       person_id=settings.dev_user_person_id if dev else None,
                       invited_at=now, last_login=now)
         db.add(user)
-        db.commit()
+        try:
+            db.commit()
+        except OperationalError:
+            # Database busy (see below): serve this request as an unsaved viewer; the
+            # row gets created on a later request once the lock clears.
+            db.rollback()
+            logger.warning("could not register %s yet: database busy", email)
+            return m.User(email=email, role=role or "viewer",
+                          person_id=settings.dev_user_person_id if dev else None)
+        except IntegrityError:
+            # A first visit fires several requests at once and they race to create the
+            # same row; the losers used to 500. Someone else won — use their row.
+            db.rollback()
+            user = db.query(m.User).filter(m.User.email == email).first()
+            if user is None:
+                raise
+            return user
         db.refresh(user)
         return user
 
@@ -103,7 +120,15 @@ def _load_user(db: Session, ident: tuple[str, bool, str | None, bool], *, touch:
             user.last_login = now
             dirty = True
     if dirty:
-        db.commit()
+        try:
+            db.commit()
+        except OperationalError:
+            # "database is locked": a batch job holds SQLite's single write lock. This
+            # write is bookkeeping (a coarse "last seen"), so drop it and serve the
+            # request — a busy database must never turn a page view into a 500.
+            db.rollback()
+            logger.warning("skipped user bookkeeping write for %s: database busy", email)
+            user = db.query(m.User).filter(m.User.email == email).first()
     return user
 
 

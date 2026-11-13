@@ -88,7 +88,6 @@ def run(limit: int | None = None, origin: str | None = None, force: bool = False
 
     n_photos = n_faces = n_missing = n_err = 0
     t0 = time.time()
-    batch: list[m.Face] = []
     db = SessionLocal()
     try:
         for i, (pid, sf, fv, backend, rot) in enumerate(todo, 1):
@@ -105,36 +104,40 @@ def run(limit: int | None = None, origin: str | None = None, force: bool = False
                 n_err += 1
                 continue
 
-            if force:
-                (db.query(m.Face)
-                 .filter(m.Face.photo_id == pid,
-                         m.Face.detector_version == DETECTOR_VERSION).delete())
+            # ---- write phase: ONE photo, ONE short transaction -------------------------
+            # SQLite has a single writer, and every API request may write (last_login).
+            # The first write statement takes the lock and only commit releases it, so
+            # nothing slow may happen between them. This loop used to commit every 500
+            # faces — the lock was held across minutes of detection and prod served
+            # "database is locked" to the whole family (2026-11-13). Detection above
+            # runs with no transaction open; everything below is milliseconds.
+            rows = []
             for f in faces:
                 x1, y1, x2, y2 = f.bbox
                 # store normalized centre+size, matching photo_person.region_*
-                batch.append(m.Face(
+                rows.append(m.Face(
                     photo_id=pid,
                     x=float((x1 + x2) / 2 / W), y=float((y1 + y2) / 2 / H),
                     w=float(abs(x2 - x1) / W), h=float(abs(y2 - y1) / H),
                     det_score=float(f.det_score),
                     embedding=np.asarray(f.normed_embedding, dtype=np.float32).tobytes(),
                     detector_version=DETECTOR_VERSION))
+            if force:
+                (db.query(m.Face)
+                 .filter(m.Face.photo_id == pid,
+                         m.Face.detector_version == DETECTOR_VERSION).delete())
+            db.add_all(rows)
             db.query(m.Photo).filter(m.Photo.id == pid).update(
                 {"faces_scanned_version": DETECTOR_VERSION})
+            db.commit()      # per photo: releases the write lock, and makes the run resumable
             n_faces += len(faces)
             n_photos += 1
 
-            # Commit in chunks: an interrupted run keeps everything up to the last chunk,
-            # which is what makes this resumable rather than all-or-nothing.
-            if len(batch) >= 500:
-                db.add_all(batch); db.commit(); batch = []
             if i % 200 == 0:
                 rate = i / max(time.time() - t0, 1e-3)
                 eta = (len(todo) - i) / max(rate, 1e-3) / 60
                 print(f"  {i}/{len(todo)}  {rate:.1f} ph/s  {n_faces} faces  ETA {eta:.0f}m",
                       flush=True)
-        if batch:
-            db.add_all(batch); db.commit()
     finally:
         db.close()
 

@@ -22,6 +22,7 @@ agglomerative: at this scale the quality difference is not worth a scikit-learn
 dependency in an image-serving container, and a human confirms every result anyway.
 """
 import argparse
+import time
 from collections import defaultdict
 
 import numpy as np
@@ -31,6 +32,9 @@ from app.database import SessionLocal
 
 DEFAULT_THRESHOLD = 0.55   # tighter than the 0.45 match threshold: grouping strangers
 EMB_DIM = 512              # wrongly is more annoying than leaving them apart
+
+
+YIELD_S = 0.05     # pause after each write chunk so other writers get the lock
 
 
 def run(threshold: float = DEFAULT_THRESHOLD, dry_run: bool = False) -> None:
@@ -115,14 +119,24 @@ def run(threshold: float = DEFAULT_THRESHOLD, dry_run: bool = False) -> None:
             # Drop only pending clusters; named/ignored survive with their decisions.
             pend = [c.id for (c,) in [(x,) for x in db.query(m.FaceCluster)
                                       .filter(m.FaceCluster.status == m.CLUSTER_PENDING).all()]]
-            if pend:
-                db.query(m.Face).filter(m.Face.cluster_id.in_(pend)).update(
+            for k in range(0, len(pend), 100):       # chunked: see the note below
+                ch = pend[k:k + 100]
+                db.query(m.Face).filter(m.Face.cluster_id.in_(ch)).update(
                     {"cluster_id": None}, synchronize_session=False)
-                db.query(m.FaceCluster).filter(m.FaceCluster.id.in_(pend)).delete(
+                db.query(m.FaceCluster).filter(m.FaceCluster.id.in_(ch)).delete(
                     synchronize_session=False)
-            db.flush()
-
-            for cvec, idxs in new_groups:
+                db.commit()
+                time.sleep(YIELD_S)
+            # Commit in small chunks AND pause after each. Two separate failure modes:
+            # one big transaction holds SQLite's single write lock for seconds (the
+            # detect_faces outage, 2026-11-13); but back-to-back small transactions are
+            # just as bad, because SQLite's lock is not fair — this process re-takes it
+            # before a waiting API request's retry lands, and the request starves until
+            # its timeout (measured: 3 lock errors in a 17 s run with no single
+            # transaction over 0.3 s). The pause is the gap the website gets in through.
+            # An interrupted run leaves some faces unclustered; re-running rebuilds all
+            # pending clusters, so that is safe.
+            for n_done, (cvec, idxs) in enumerate(new_groups, 1):
                 areas = [todo[i][4] * todo[i][5] for i in idxs]
                 scores = [todo[i][6] or 0.0 for i in idxs]
                 cl = m.FaceCluster(status=m.CLUSTER_PENDING,
@@ -133,13 +147,18 @@ def run(threshold: float = DEFAULT_THRESHOLD, dry_run: bool = False) -> None:
                 db.flush()
                 db.query(m.Face).filter(m.Face.id.in_([todo[i][0] for i in idxs])).update(
                     {"cluster_id": cl.id}, synchronize_session=False)
+                if n_done % 50 == 0:
+                    db.commit()
+                    time.sleep(YIELD_S)
+            db.commit()
             # Faces absorbed into an already-decided cluster.
             for j in range(existing_n):
                 if members[j]:
                     db.query(m.Face).filter(
                         m.Face.id.in_([todo[i][0] for i in members[j]])).update(
                         {"cluster_id": seed_ids[j]}, synchronize_session=False)
-            db.commit()
+                    db.commit()
+                    time.sleep(YIELD_S)
         finally:
             db.close()
 
