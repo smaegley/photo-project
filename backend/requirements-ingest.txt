@@ -1,0 +1,5 @@
+# ML runtime for the `ingest` image only (SPEC §15.12) — never installed in the site
+# image. Versions match what the §14 pipeline was measured with on dev.
+insightface==1.0.1
+onnxruntime==1.28.0
+opencv-python-headless==4.13.0.92

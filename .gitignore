@@ -30,3 +30,6 @@ frontend/.env
 .DS_Store
 .vscode/
 .idea/
+
+# ML model weights for the ingest image — installed on the host, never committed
+models/

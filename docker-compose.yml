@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: api          # the Dockerfile's last stage is `ingest`; pin the site image
     container_name: photo-api
     environment:
       - DB_PATH=/data/photos.db
@@ -21,6 +22,35 @@ services:
     restart: unless-stopped
     networks:
       - internal
+
+  # One-shot ML jobs (SPEC §15.12): face detection now, nightly ingest later. Behind a
+  # profile so `docker compose up -d` never starts or builds it; run explicitly:
+  #   docker compose --profile ingest build ingest
+  #   docker compose --profile ingest run --rm ingest app.detect_faces
+  # Limits: mem_limit == memswap_limit so it OOMs cleanly instead of thrashing the swap
+  # it shares with the website; 2 CPUs at low priority so `api` always has headroom.
+  ingest:
+    profiles: ["ingest"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ingest
+    environment:
+      - DB_PATH=/data/photos.db
+      - LIBRARY_ROOT=/mnt/photos/library
+      - B2_KEY_ID=${B2_KEY_ID:-}
+      - B2_APP_KEY=${B2_APP_KEY:-}
+      - B2_BUCKET=${B2_BUCKET:-}
+      - B2_ENDPOINT=${B2_ENDPOINT:-}
+    volumes:
+      - ./data:/data
+      - ${LIBRARY_ROOT_HOST:-/mnt/photos/library}:/mnt/photos/library
+      # Model weights, installed once on the host (infra/DEPLOY.md), read-only.
+      - ${MODELS_HOST:-./models}:/root/.insightface/models:ro
+    mem_limit: 2600m
+    memswap_limit: 2600m
+    cpus: 2
+    cpu_shares: 256
 
   caddy:
     build:
