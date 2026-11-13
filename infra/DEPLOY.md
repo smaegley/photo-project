@@ -279,5 +279,24 @@ docker compose --profile ingest run --rm ingest app.cluster_faces             # 
   if it is interrupted (including by the 02:00 Mountain backup) just run it again.
 - Take a DB snapshot first (`bash infra/db-snapshot.sh`). Nothing here deletes data,
   but `match_faces` replaces all *pending* suggestions each run.
+**Nightly ingest by hand** (until the timer exists — SPEC §15.15 slice 8):
+
+```bash
+docker compose --profile ingest run --rm ingest app.ingest --dry-run   # listing + reconcile report, no writes
+docker compose --profile ingest run --rm ingest app.ingest             # stage, faces, match, outings
+docker compose exec -T api python -m app.outings                       # regroup/re-triage only; no ML, seconds
+```
+
+- **Reconcile** (photos deleted, moved or replaced in the bucket) starts in **report**
+  mode: each run prints `reconcile (report): N B2 photos checked — x moved, y deleted,
+  z replaced` and stores the lists in `ingest_run.detail`, but changes nothing. After
+  a few clean nights set `INGEST_RECONCILE=apply` in `/opt/photo-project/.env`. In
+  apply mode, more than 25 vanished masters in one run culls **none** and the run ends
+  `failed` on purpose — look at the listing before overriding.
+- A photo culled this way shows in Manage ▾ → Culled photos as culled by
+  `ingest:deleted-from-b2` and restores like any other.
+- If the file is put back in B2, the next apply-mode run restores the photo by itself.
+  In both modes the Inbox screen shows a **Missing from B2** tab while any are missing.
+
 - **Never import face or tag state from dev** (`tags_io --import`, `faces_io --import`).
   Prod's own tags are the reference set (Steve, 2026-11-13).

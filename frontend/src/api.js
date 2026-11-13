@@ -116,7 +116,10 @@ export const api = {
   cullPhotos: (photoIds) => send("POST", "/api/admin/photos/cull", { photo_ids: photoIds }),
   restorePhotos: (photoIds) => send("POST", "/api/admin/photos/restore", { photo_ids: photoIds }),
   // ---- inbox (SPEC §15.8) — photos staged by the nightly ingest, admin-only ----
-  inbox: (limit = 600, offset = 0) => get(`/api/admin/inbox?limit=${limit}&offset=${offset}`),
+  inbox: (tab = "inbox") => get(`/api/admin/inbox?tab=${tab}`),
+  rescuePhotos: (photoIds) => send("POST", "/api/admin/photos/rescue", { photo_ids: photoIds }),
+  setOutingEvent: (outingId, name) =>
+    send("PUT", `/api/admin/outings/${outingId}/event`, { event_name: name || null }),
   inboxSummary: () => get("/api/admin/inbox/summary"),
   publishPhotos: (photoIds) => send("POST", "/api/admin/photos/publish", { photo_ids: photoIds }),
   culled: (limit = 500, offset = 0) => get(`/api/admin/culled?limit=${limit}&offset=${offset}`),

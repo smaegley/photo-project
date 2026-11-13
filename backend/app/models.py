@@ -109,6 +109,7 @@ class Photo(Base):
     # Composite index backing the interleaved gallery sort (SPEC §12.5).
     __table_args__ = (
         Index("ix_photo_sort", "sort_date", "magazine_id", "slide_in_mag"),
+        Index("ix_photo_outing", "outing_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -153,6 +154,18 @@ class Photo(Base):
     # embedded in the file ("|"-joined) for the inbox to offer as event names.
     ingest_run_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     keywords_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # SPEC §15.5 (slice 4). taken_at = capture time to the second, from EXIF only.
+    # triage = what the pipeline thought (TRIAGE_*); kept after publish. outing_id is a
+    # plain integer (no FK): outings are rebuilt by app.outings and may be renumbered.
+    taken_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    triage: Mapped[str | None] = mapped_column(String, nullable=True)
+    outing_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=False)
+    file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # True while the B2 master is absent from the bucket listing (app.reconcile). The
+    # auto-cull fires only when this turns True, so a photo an admin restores from the
+    # Culled view is not culled again the next night.
+    master_missing: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False,
+                                                 server_default="0")
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject
@@ -238,6 +251,35 @@ class UsageEvent(Base):
     event_type: Mapped[str] = mapped_column(String, nullable=False)  # view|download|search
     target: Mapped[str | None] = mapped_column(String, nullable=True)  # photo source_file, filter summary, …
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
+# SPEC §15.5 triage classes. `rescued` is an admin overruling "unselected"; the pipeline
+# never assigns it and never changes it.
+TRIAGE_SELECTED, TRIAGE_RELATED, TRIAGE_UNSELECTED, TRIAGE_RESCUED = (
+    "selected", "related", "unselected", "rescued")
+TRIAGE_INBOX = (TRIAGE_SELECTED, TRIAGE_RELATED, TRIAGE_RESCUED)
+
+
+class Outing(Base):
+    """Ingested photos taken close together in time and place (SPEC §15.5).
+
+    `folder` is set instead of times for photos with no EXIF capture time: they group
+    by their dated import folder. `event_name` is what the admin typed on the inbox
+    group header; publishing a photo from the outing tags it with that event."""
+    __tablename__ = "outing"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    end_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lat: Mapped[float | None] = mapped_column(Float, nullable=True)
+    lon: Mapped[float | None] = mapped_column(Float, nullable=True)
+    folder: Mapped[str | None] = mapped_column(String, nullable=True)
+    event_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Set once the name has been turned into a real event (first publish). Followed in
+    # preference to the typed name, so renaming or merging the event in Manage events
+    # carries over to photos that join the outing later. Plain integer, no FK.
+    event_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class IngestRun(Base):

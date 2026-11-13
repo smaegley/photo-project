@@ -194,7 +194,7 @@ for t in targets:
 check(viewer.get("/api/admin/inbox").status_code == 403 and viewer.get("/api/admin/inbox/summary").status_code == 403, "viewer cannot open the inbox")
 check(viewer.post("/api/admin/photos/publish", json={"photo_ids": ids}).status_code == 403, "viewer cannot publish")
 box = admin.get("/api/admin/inbox").json()
-check({p["id"] for p in box["photos"]} >= set(ids), "admin inbox lists them")
+check({p["id"] for g in box["groups"] for p in g["photos"]} >= set(ids), "admin inbox lists them")
 check(admin.get("/api/admin/inbox/summary").json()["pending"] >= len(ids), "badge count includes them")
 r = admin.post("/api/admin/photos/cull", json={"photo_ids": ids[:1]})
 r2 = admin.post("/api/admin/photos/restore", json={"photo_ids": ids[:1]})

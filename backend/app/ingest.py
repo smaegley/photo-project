@@ -19,9 +19,10 @@ interrupted run (OOM, the nightly container backup) just picks up the rest next 
 A file that can't be decoded is recorded under `errors` and skipped — it does not fail
 the run (there is a known truncated master in the bucket).
 
-What this slice does NOT do yet: outing grouping and selected/related triage (slice 4),
-the junk score (5), near-duplicate stacks (6), auto-tagging (7), and reconciling
-deleted/moved/replaced objects.
+5. **Outings + triage** — `app.outings` groups the photos and decides which tab of the
+   inbox each lands in (§15.5).
+
+Not yet: the junk score (slice 5), near-duplicate stacks (6), auto-tagging (7).
 """
 import argparse
 import io
@@ -36,7 +37,7 @@ from PIL import ExifTags, Image, IptcImagePlugin
 
 pillow_heif.register_heif_opener()     # most phone photos are HEIC; without this none decode
 
-from app import derivatives, models as m, storage
+from app import derivatives, models as m, reconcile, storage
 from app.config import settings
 from app.database import SessionLocal
 from app.import_photos import build_place_index, resolve_place
@@ -51,38 +52,37 @@ ORIENT_TO_CW = {3: 180, 6: 90, 8: 270}     # EXIF Orientation -> clockwise degre
 FOLDER_DATE = re.compile(r"/(\d{4}-\d{2}-\d{2})/")
 
 
-def discover(db, client=None):
-    """-> (candidates [(key, etag)], listed, skipped {reason: n})."""
-    client = client or storage._b2_client()
-    cutover = datetime.strptime(settings.ingest_cutover, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+def photo_keys(listing: dict) -> tuple[set[str], dict]:
+    """Keys in the listing that could be photos -> (keys, skipped {reason: n})."""
     prefix = settings.ingest_prefix
+    keys, skipped = set(), {}
+    for key, (_etag, _size, modified) in listing.items():
+        rel = key[len(prefix):]
+        name = rel.rsplit("/", 1)[-1]
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if rel.startswith(EXCLUDE_TREES):
+            continue                          # not counted: tens of thousands, by design
+        if name.startswith("._") or ext not in EXTS:
+            if modified >= _cutover():        # only report skips among new uploads
+                skipped[f"type:{ext or 'none'}"] = skipped.get(f"type:{ext or 'none'}", 0) + 1
+            continue
+        keys.add(key)
+    return keys, skipped
+
+
+def _cutover() -> datetime:
+    return datetime.strptime(settings.ingest_cutover, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+
+
+def discover(db, listing: dict, keys: set[str], hold: set[str] = frozenset()):
+    """-> candidates [(key, etag)]: photo keys uploaded on/after the cutover with no
+    photo row in any state. `hold` = keys reconcile wants left alone this run."""
+    cutover = _cutover()
     known = {sf.lower() for (sf,) in db.query(m.Photo.source_file).all()}
     known |= {sp.lower() for (sp,) in db.query(m.Photo.storage_path)
               .filter(m.Photo.storage_path.isnot(None)).all()}
-    out, listed, skipped = [], 0, {}
-
-    def skip(why):
-        skipped[why] = skipped.get(why, 0) + 1
-
-    for page in client.get_paginator("list_objects_v2").paginate(
-            Bucket=settings.b2_bucket, Prefix=prefix):
-        for o in page.get("Contents", []):
-            listed += 1
-            key = o["Key"]
-            rel = key[len(prefix):]
-            name = rel.rsplit("/", 1)[-1]
-            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
-            if rel.startswith(EXCLUDE_TREES):
-                continue                      # not counted: tens of thousands, by design
-            if o["LastModified"] < cutover:
-                continue                      # the pre-cutover library, likewise
-            if name.startswith("._") or ext not in EXTS:
-                skip(f"type:{ext or 'none'}")
-                continue
-            if key.lower() in known:
-                continue
-            out.append((key, o["ETag"].strip('"')))
-    return sorted(out), listed, skipped
+    return sorted((k, listing[k][0]) for k in keys
+                  if listing[k][2] >= cutover and k.lower() not in known and k not in hold)
 
 
 def _decode(buf):
@@ -161,6 +161,30 @@ def write_derivatives(im, key: str, etag: str, rotation: int) -> None:
         tmp.replace(cache)                                    # never leave a half file
 
 
+def _fetch(client, key: str):
+    """One GET -> (decoded image, raw size, meta). The caller closes the image."""
+    raw = client.get_object(Bucket=settings.b2_bucket, Key=key)["Body"].read()
+    im = _decode(io.BytesIO(raw))
+    return im, len(raw), read_meta(im, raw, key)
+
+
+def refresh(db, client, item: dict) -> None:
+    """A master replaced in the bucket (decision 17): rebuild the derivatives, keep
+    every tag, and mark the photo for face re-detection."""
+    p = db.get(m.Photo, item["id"])
+    old_token = derivatives.version_token(p)
+    im, size, meta = _fetch(client, p.storage_path)
+    with im:
+        write_derivatives(im, p.source_file, item["etag"], meta["rotation"])
+        w, h = im.size
+    for d in (settings.thumbnails_dir, settings.display_dir):
+        (d / derivatives.cache_key(p.source_file, old_token, versioned=True)).unlink(missing_ok=True)
+    p.file_version, p.file_size, p.width, p.height = item["etag"], size, w, h
+    p.rotation = meta["rotation"]            # a re-export usually has the rotation baked in
+    p.faces_scanned_version = None
+    db.commit()
+
+
 def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = False) -> int:
     if not settings.b2_enabled:
         print("B2 is not configured (B2_* in .env) — nothing to ingest", file=sys.stderr)
@@ -168,12 +192,33 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
     t0 = time.time()
     db = SessionLocal()
     run_row = None
+    new = 0
     try:
-        cands, listed, skipped = discover(db)
+        client = storage._b2_client()
+        listing = reconcile.list_bucket(client)
+        listed = len(listing)
+        keys, skipped = photo_keys(listing)
+        apply = settings.ingest_reconcile == "apply"
+        pl = reconcile.plan(db, listing, keys)
+        rec = reconcile.summary(pl)
+        rec["mode"] = settings.ingest_reconcile
+        # A moved photo's new key is never staged as a new photo: in apply mode the row
+        # is re-pointed to it below; in report mode it waits.
+        hold = {mv["new"] for mv in pl["moved"]}
+        cands = discover(db, listing, keys, hold)
         todo = cands[:limit] if limit else cands
         print(f"listed {listed} objects under {settings.ingest_prefix!r}; "
               f"{len(cands)} new candidate(s) since {settings.ingest_cutover}; "
               f"skipped types: {skipped or 'none'}")
+        print(f"reconcile ({rec['mode']}): {rec['rows']} B2 photos checked — "
+              f"{rec['n_moved']} moved, {rec['n_deleted']} deleted, "
+              f"{rec['n_replaced']} replaced, {rec['returned']} back")
+        for old, new_key in rec["moved"]:
+            print(f"  moved    {old} -> {new_key}")
+        for k in rec["deleted"]:
+            print(f"  deleted  {k}")
+        for k in rec["replaced"]:
+            print(f"  replaced {k}")
         if dry_run:
             for key, _ in todo[:20]:
                 print("  would ingest", key)
@@ -184,21 +229,22 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
         run_row = m.IngestRun(listed=listed, candidates=len(cands))
         db.add(run_row)
         db.commit()
+        reconcile.backfill_sizes(db, pl)
+        if apply:
+            reconcile.apply_moves(db, pl)
+
         place_names, place_geo = build_place_index(db)
-        client = storage._b2_client()
-        new, err_keys = 0, []
+        err_keys = []
         for i, (key, etag) in enumerate(todo, 1):
             try:
-                raw = client.get_object(Bucket=settings.b2_bucket, Key=key)["Body"].read()
-                with _decode(io.BytesIO(raw)) as im:
-                    meta = read_meta(im, raw, key)
+                im, size, meta = _fetch(client, key)
+                with im:
                     write_derivatives(im, key, etag, meta["rotation"])
                     w, h = im.size
-                del raw
                 taken = meta["taken"]
                 p = m.Photo(
                     source_file=key, origin="digital", storage_backend="b2",
-                    storage_path=key, file_version=etag,
+                    storage_path=key, file_version=etag, file_size=size,
                     original_filename=key.rsplit("/", 1)[-1],
                     width=w, height=h, rotation=meta["rotation"],
                     visibility=m.VIS_PENDING, ingest_run_id=run_row.id,
@@ -206,6 +252,8 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
                     keywords_raw="|".join(meta["keywords"]) or None,
                 )
                 if taken:
+                    if meta["taken_exact"]:
+                        p.taken_at = taken
                     p.date_start = p.date_end = p.sort_date = taken.date()
                     p.date_precision = "day"
                     p.date_raw = (taken.strftime("%Y-%m-%dT%H:%M:%S") if meta["taken_exact"]
@@ -226,8 +274,30 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
                 print(f"  {i}/{len(todo)}  {new} staged, {len(err_keys)} errors, "
                       f"{time.time() - t0:.0f}s", flush=True)
 
+        # --- reconcile, write half: vanished and replaced masters ---
+        guards, refreshed = [], 0
+        if apply:
+            r = reconcile.apply_missing(db, pl)
+            rec["culled"], rec["restored"] = r["culled"], r["restored"]
+            if r["guard"]:
+                guards.append(r["guard"])
+            if len(pl["replaced"]) > settings.ingest_max_refresh:
+                guards.append(f"{len(pl['replaced'])} masters look replaced "
+                              f"(limit {settings.ingest_max_refresh}) — none refreshed")
+            else:
+                for item in pl["replaced"]:
+                    try:
+                        refresh(db, client, item)
+                        refreshed += 1
+                    except Exception as e:  # noqa: BLE001
+                        db.rollback()
+                        err_keys.append({"key": item["key"],
+                                         "error": f"refresh: {type(e).__name__}: {e}"[:200]})
+            rec["refreshed"] = refreshed
+        rec["guards"] = guards
+
         run_row.new, run_row.errors = new, len(err_keys)
-        run_row.detail = json.dumps({"skipped": skipped, "errors": err_keys})
+        run_row.detail = json.dumps({"skipped": skipped, "errors": err_keys, "reconcile": rec})
         db.commit()
         # A few undecodable files are normal (there is a known truncated master). Most
         # of a batch failing is not — that is a broken decoder or a B2 fault, and it
@@ -237,12 +307,22 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
             raise RuntimeError(f"{len(err_keys)} of {len(todo)} files failed — "
                                f"first: {err_keys[0]['error']}")
 
-        if new and not skip_faces:
+        if (new or refreshed) and not skip_faces:
             # Detection reads the display derivatives just written; both steps are
             # idempotent and cover any photo an earlier interrupted run left unscanned.
             from app import detect_faces, match_faces
             detect_faces.run(origin="digital")
             match_faces.run()
+
+        # Outings + triage: cheap, and worth redoing every night even with nothing new
+        # (a face named or rejected since yesterday changes which photos are selected).
+        from app import outings
+        outings.run()
+
+        if guards:
+            # Everything else was done; the guard alone makes the run a failure so the
+            # alert fires and a person looks at the listing before anything is culled.
+            raise RuntimeError("reconcile guard: " + "; ".join(guards))
 
         run_row.state, run_row.finished_at = "ok", datetime.now(timezone.utc)
         db.commit()
@@ -255,10 +335,15 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
         db.rollback()
         if run_row is not None:
             run_row.state, run_row.finished_at = "failed", datetime.now(timezone.utc)
-            run_row.detail = json.dumps({"fatal": f"{type(e).__name__}: {e}"[:500]})
+            try:
+                detail = json.loads(run_row.detail or "{}")
+            except ValueError:
+                detail = {}
+            detail["fatal"] = f"{type(e).__name__}: {e}"[:500]
+            run_row.detail = json.dumps(detail)
             db.commit()
         print(f"ingest FAILED: {type(e).__name__}: {e}", file=sys.stderr)
-        print("INGEST_RESULT " + json.dumps({"state": "failed", "new": 0, "errors": 1}))
+        print("INGEST_RESULT " + json.dumps({"state": "failed", "new": new, "errors": 1}))
         return 1
     finally:
         db.close()

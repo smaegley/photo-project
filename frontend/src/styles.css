@@ -775,5 +775,13 @@ button:disabled kbd { opacity: .3; }
 .inbox-day-head { display: flex; align-items: baseline; gap: 12px; padding: 8px 0 6px;
   position: sticky; top: 0; background: var(--panel, var(--bg)); z-index: 1; }
 .inbox-day .rotation-grid { overflow: visible; }
+.inbox-tabs { display: flex; gap: 4px; }
+.inbox-tabs button { border-radius: 6px 6px 0 0; }
+.inbox-tabs button.on { font-weight: 600; border-bottom: 2px solid var(--accent, currentColor); }
+.inbox-day-head { flex-wrap: wrap; }
+.inbox-event { display: inline-flex; align-items: center; gap: 6px; }
+.inbox-event input { width: 220px; padding: 3px 6px; font-size: 13px; }
+.inbox-kw { font-size: 11px; padding: 1px 7px; border-radius: 10px; border: 1px dashed var(--muted);
+  background: none; color: inherit; cursor: pointer; }
 .inbox-names { display: block; font-size: 11px; line-height: 1.25; color: var(--muted);
   min-height: 14px; padding: 2px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

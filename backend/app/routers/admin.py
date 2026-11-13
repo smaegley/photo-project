@@ -9,11 +9,11 @@ human-confirmed.
 """
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 from PIL import Image
 
@@ -27,6 +27,7 @@ from app.queries import (thumb_url as _thumb_url, display_url as _display_url,
                          _version as _photo_version, not_culled)
 from app.models import SOURCE_AUTO, SOURCE_HUMAN
 from app.routers.images import photo_file, _safe_key
+from app.schemas import OutingEventReq
 from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq, NotesReq,
     EventCreate, EventMerge, EventOut, EventRename,
@@ -1413,6 +1414,21 @@ def restore_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
 # ---- inbox (SPEC §15.8) ------------------------------------------------------------
 # Photos the nightly ingest staged as `pending`. Nothing here is visible to the family
 # until it is published; Cull works on pending photos too and Restore returns them here.
+def _undo_event_tags(db: Session, tags: list, created: list) -> None:
+    """Reverse event tags a publish / outing naming added, and drop an event it had to
+    create — but only if nothing else has started using that event since."""
+    for pid, eid in tags:
+        db.query(m.PhotoEvent).filter(m.PhotoEvent.photo_id == pid,
+                                      m.PhotoEvent.event_id == eid).delete()
+    db.flush()
+    for eid in created:
+        if _event_count(db, eid) == 0:
+            db.query(m.Outing).filter(m.Outing.event_id == eid).update({m.Outing.event_id: None})
+            e = db.get(m.Event, eid)
+            if e:
+                db.delete(e)
+
+
 def _last_run(db: Session) -> dict | None:
     r = db.query(m.IngestRun).order_by(m.IngestRun.id.desc()).first()
     if r is None:
@@ -1422,22 +1438,71 @@ def _last_run(db: Session) -> dict | None:
             "finished_at": r.finished_at.isoformat() if r.finished_at else None}
 
 
+def _inbox_tab(tab: str):
+    """Which pending photos a tab holds. Photos ingested before triage existed (or
+    before `app.outings` has run) have no class yet and stay in the Inbox tab, so
+    nothing pending is ever out of sight."""
+    if tab == "unselected":
+        return m.Photo.triage == m.TRIAGE_UNSELECTED
+    return or_(m.Photo.triage.is_(None), m.Photo.triage.in_(m.TRIAGE_INBOX))
+
+
+def _missing_ids(db: Session) -> list[int]:
+    """Photos whose B2 master was absent at the last ingest (app.reconcile), whether
+    or not reconcile was allowed to act on it."""
+    r = (db.query(m.IngestRun).filter(m.IngestRun.detail.like('%"reconcile"%'))
+         .order_by(m.IngestRun.id.desc()).first())
+    try:
+        return list(json.loads(r.detail)["reconcile"].get("missing_ids", [])) if r else []
+    except (ValueError, KeyError, TypeError):
+        return []
+
+
+def _inbox_counts(db: Session) -> dict:
+    pend = db.query(func.count(m.Photo.id)).filter(m.Photo.visibility == m.VIS_PENDING)
+    c = {t: pend.filter(_inbox_tab(t)).scalar() or 0 for t in ("inbox", "unselected")}
+    c["missing"] = len(_missing_ids(db))
+    return c
+
+
+def _outing_event(db: Session, o: m.Outing) -> m.Event | None:
+    """The event an outing is named for, if it exists yet. The id is followed first so
+    a rename or merge in Manage events carries over; the typed name is the fallback."""
+    e = db.get(m.Event, o.event_id) if o.event_id else None
+    if e is None and o.event_name:
+        e = (db.query(m.Event)
+             .filter(func.lower(m.Event.name) == o.event_name.strip().lower()).first())
+    return e
+
+
 @router.get("/inbox/summary")
 def inbox_summary(db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
-    """Cheap count for the menu badge."""
-    n = db.query(func.count(m.Photo.id)).filter(m.Photo.visibility == m.VIS_PENDING).scalar() or 0
-    return {"pending": n, "last_run": _last_run(db)}
+    """Cheap counts for the menu badge (`pending` = the Inbox tab)."""
+    c = _inbox_counts(db)
+    return {"pending": c["inbox"], "unselected": c["unselected"], "missing": c["missing"],
+            "last_run": _last_run(db)}
 
 
 @router.get("/inbox")
 def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
-          limit: int = 600, offset: int = 0):
-    """Pending photos in capture order, each with its detected-face count and the
-    names the matcher suggests for it."""
-    q = db.query(m.Photo).filter(m.Photo.visibility == m.VIS_PENDING)
-    rows = (q.order_by(m.Photo.sort_date.is_(None), m.Photo.sort_date, m.Photo.date_raw,
-                       m.Photo.id)
-            .offset(max(0, offset)).limit(max(1, min(limit, 1000))).all())
+          tab: str = "inbox"):
+    """Pending photos of one tab, grouped by outing (SPEC §15.8), newest outing first.
+    Each photo carries its detected-face count and the names the matcher suggests."""
+    if tab not in ("inbox", "unselected", "missing"):
+        raise HTTPException(400, "tab must be inbox, unselected or missing")
+    if tab == "missing":
+        # Not a pending-photo tab: these are existing photos, in any state, whose
+        # master has gone from the bucket. Shown so the admin can see what the run
+        # found; one flat group.
+        rows = []
+        for ch in _chunks(_missing_ids(db)):
+            rows += db.query(m.Photo).filter(m.Photo.id.in_(ch)).all()
+        rows.sort(key=lambda p: (p.sort_date is None, p.sort_date, p.id))
+    else:
+        rows = (db.query(m.Photo)
+                .filter(m.Photo.visibility == m.VIS_PENDING, _inbox_tab(tab))
+                .order_by(m.Photo.taken_at.is_(None), m.Photo.taken_at, m.Photo.sort_date,
+                          m.Photo.id).all())
     ids = [p.id for p in rows]
     n_faces: dict[int, int] = defaultdict(int)
     names: dict[int, list[str]] = defaultdict(list)
@@ -1454,16 +1519,87 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
             if name not in names[pid]:
                 names[pid].append(name)
     places = {pl.id: pl.canonical_name for pl in db.query(m.Place).all()}
-    return {"total": q.count(), "last_run": _last_run(db),
+    event_names = {e.name.lower(): e.name for e in db.query(m.Event).all()}
+
+    # Group: by outing where there is one, otherwise by day.
+    buckets: dict[str, list[m.Photo]] = defaultdict(list)
+    for p in rows:
+        key = ("missing" if tab == "missing"
+               else f"o{p.outing_id}" if p.outing_id is not None
+               else f"d{p.date_start.isoformat() if p.date_start else ''}")
+        buckets[key].append(p)
+    oids = sorted({p.outing_id for p in rows if p.outing_id is not None})
+    outings = {}
+    published: dict[int, int] = {}
+    for ch in _chunks(oids):
+        outings.update({o.id: o for o in db.query(m.Outing).filter(m.Outing.id.in_(ch)).all()})
+        published.update(dict(
+            db.query(m.Photo.outing_id, func.count(m.Photo.id))
+            .filter(m.Photo.outing_id.in_(ch), m.Photo.visibility == m.VIS_PUBLISHED)
+            .group_by(m.Photo.outing_id).all()))
+
+    groups = []
+    for key, ps in buckets.items():
+        o = outings.get(ps[0].outing_id) if key.startswith("o") else None
+        ev = _outing_event(db, o) if o else None
+        kws: dict[str, int] = defaultdict(int)
+        for p in ps:
+            for k in (p.keywords_raw or "").split("|"):
+                if k:
+                    kws[k] += 1
+        place_votes = Counter(places[p.place_id] for p in ps if p.place_id in places)
+        times = [p.taken_at for p in ps if p.taken_at]
+        groups.append({
+            "key": key, "outing_id": o.id if o else None,
+            "start": min(times).isoformat() if times else None,
+            "end": max(times).isoformat() if times else None,
+            "date": next((p.date_start.isoformat() for p in ps if p.date_start), None),
+            "undated": not times,
+            "place": place_votes.most_common(1)[0][0] if place_votes else None,
+            "event_name": ev.name if ev else (o.event_name if o else None),
+            "already_published": published.get(o.id, 0) if o else 0,
+            "has_faces": any(n_faces.get(p.id) for p in ps),
+            "keywords": [{"name": event_names.get(k.lower(), k), "known": k.lower() in event_names,
+                          "count": n} for k, n in sorted(kws.items())],
             "photos": [{"id": p.id, "source_file": p.source_file,
                         "filename": p.original_filename, "date_raw": p.date_raw,
-                        "date": p.date_start.isoformat() if p.date_start else None,
-                        "place": places.get(p.place_id), "has_gps": p.lat is not None,
+                        "taken_at": p.taken_at.isoformat() if p.taken_at else None,
+                        "triage": p.triage, "has_gps": p.lat is not None,
+                        "visibility": p.visibility, "culled_by": p.culled_by,
                         "faces": n_faces.get(p.id, 0), "suggested": names.get(p.id, []),
-                        "keywords": (p.keywords_raw or "").split("|") if p.keywords_raw else [],
                         "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
                         "display_url": _display_url(p.source_file) + _photo_version(p)}
-                       for p in rows]}
+                       for p in ps]})
+    groups.sort(key=lambda g: g["start"] or g["date"] or "", reverse=True)
+    return {"tab": tab, "counts": _inbox_counts(db), "total": len(rows),
+            "reconcile_mode": settings.ingest_reconcile,
+            "last_run": _last_run(db), "groups": groups}
+
+
+def _tag_event(db: Session, photo_ids: list[int], event: m.Event) -> list[int]:
+    """Add `event` to photos that lack it -> the photo ids actually tagged."""
+    added = []
+    for ch in _chunks(photo_ids):
+        have = {pid for (pid,) in db.query(m.PhotoEvent.photo_id)
+                .filter(m.PhotoEvent.event_id == event.id, m.PhotoEvent.photo_id.in_(ch)).all()}
+        for pid in ch:
+            if pid not in have:
+                db.add(m.PhotoEvent(photo_id=pid, event_id=event.id, source=SOURCE_HUMAN))
+                added.append(pid)
+    return added
+
+
+def _resolve_outing_event(db: Session, o: m.Outing, created: list[int]) -> m.Event | None:
+    """Turn an outing's typed name into a real event, creating it if needed."""
+    e = _outing_event(db, o)
+    if e is None and o.event_name and o.event_name.strip():
+        e = m.Event(name=o.event_name.strip())
+        db.add(e)
+        db.flush()
+        created.append(e.id)
+    if e is not None:
+        o.event_id, o.event_name = e.id, e.name
+    return e
 
 
 @router.post("/photos/publish")
@@ -1471,19 +1607,91 @@ def publish_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
                    user: m.User = Depends(require_admin)):
     """Make pending photos visible to the family. Admin-only, undoable. Only pending
     photos move — a culled photo must be restored first, so nothing is published by
-    accident."""
+    accident. A photo from a named outing is tagged with that event as it publishes."""
     _check_photo_ids(db, body.photo_ids)
     prev: dict[str, str] = {}
+    by_outing: dict[int, list[int]] = defaultdict(list)
     for ch in _chunks(body.photo_ids):
         for p in db.query(m.Photo).filter(m.Photo.id.in_(ch),
                                           m.Photo.visibility == m.VIS_PENDING).all():
             prev[str(p.id)] = m.VIS_PENDING
             p.visibility = m.VIS_PUBLISHED
+            if p.outing_id is not None:
+                by_outing[p.outing_id].append(p.id)
+    tagged: list[list[int]] = []
+    created: list[int] = []
+    for oid, pids in by_outing.items():
+        o = db.get(m.Outing, oid)
+        e = _resolve_outing_event(db, o, created) if o else None
+        if e is not None:
+            tagged += [[pid, e.id] for pid in _tag_event(db, pids, e)]
     if prev:
         _log(db, user, "photo:publish", None, f"{len(prev)} photo(s)",
-             inverse={"op": "photo_visibility", "prev": prev})
+             inverse={"op": "photo_visibility", "prev": prev,
+                      "event_tags": tagged, "events_created": created})
+    db.commit()
+    return {"changed": len(prev), "event_tagged": len(tagged)}
+
+
+@router.post("/photos/rescue")
+def rescue_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
+                  user: m.User = Depends(require_admin)):
+    """Move pending photos from Not selected into the Inbox tab. Sticky: the nightly
+    triage never demotes a rescued photo, and its outing-mates become `related`."""
+    _check_photo_ids(db, body.photo_ids)
+    prev: dict[str, str | None] = {}
+    for ch in _chunks(body.photo_ids):
+        for p in db.query(m.Photo).filter(m.Photo.id.in_(ch),
+                                          m.Photo.visibility == m.VIS_PENDING,
+                                          m.Photo.triage == m.TRIAGE_UNSELECTED).all():
+            prev[str(p.id)] = p.triage
+            p.triage = m.TRIAGE_RESCUED
+    if prev:
+        _log(db, user, "photo:rescue", None, f"{len(prev)} photo(s)",
+             inverse={"op": "photo_triage", "prev": prev})
     db.commit()
     return {"changed": len(prev)}
+
+
+@router.put("/outings/{outing_id}/event")
+def set_outing_event(outing_id: int, body: OutingEventReq, db: Session = Depends(get_db),
+                     user: m.User = Depends(require_admin)):
+    """Name an outing (or clear the name). Photos already published from it are
+    re-tagged now; pending ones are tagged as they publish. The event itself is only
+    created once a published photo needs it, so a typo fixed before publishing leaves
+    nothing behind."""
+    o = db.get(m.Outing, outing_id)
+    if o is None:
+        raise HTTPException(404, "outing not found")
+    name = (body.event_name or "").strip() or None
+    old_event = _outing_event(db, o)
+    old_name = old_event.name if old_event else o.event_name
+    if (name or "").lower() == (old_name or "").lower():
+        return {"event_name": old_name, "retagged": 0}
+    pub = [pid for (pid,) in db.query(m.Photo.id)
+           .filter(m.Photo.outing_id == o.id, m.Photo.visibility == m.VIS_PUBLISHED).all()]
+    inv = {"op": "outing_event", "id": o.id, "event_name": o.event_name,
+           "event_id": o.event_id, "removed": [], "added": [], "events_created": []}
+    if old_event is not None and pub:
+        for ch in _chunks(pub):
+            for pe in (db.query(m.PhotoEvent)
+                       .filter(m.PhotoEvent.event_id == old_event.id,
+                               m.PhotoEvent.photo_id.in_(ch)).all()):
+                inv["removed"].append([pe.photo_id, pe.event_id, pe.source])
+                db.delete(pe)
+        db.flush()
+    o.event_name, o.event_id = name, None
+    if name:
+        if pub:
+            e = _resolve_outing_event(db, o, inv["events_created"])
+            inv["added"] = [[pid, e.id] for pid in _tag_event(db, pub, e)]
+        else:
+            e = _outing_event(db, o)
+            if e is not None:
+                o.event_id, o.event_name = e.id, e.name
+    _log(db, user, "outing:event", old_name, name, inverse=inv)
+    db.commit()
+    return {"event_name": o.event_name, "retagged": len(inv["added"])}
 
 
 @router.get("/culled")
@@ -2034,6 +2242,19 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 else:
                     p.culled_from = p.culled_at = p.culled_by = None
                 p.visibility = was
+        _undo_event_tags(db, inv.get("event_tags", []), inv.get("events_created", []))
+    elif op == "photo_triage":
+        for ch in _chunks([int(k) for k in inv["prev"]]):
+            for p in db.query(m.Photo).filter(m.Photo.id.in_(ch)).all():
+                p.triage = inv["prev"][str(p.id)]
+    elif op == "outing_event":
+        _undo_event_tags(db, inv["added"], inv["events_created"])
+        for pid, eid, srcv in inv["removed"]:
+            if db.get(m.Event, eid) and not db.get(m.PhotoEvent, (pid, eid)):
+                db.add(m.PhotoEvent(photo_id=pid, event_id=eid, source=srcv))
+        o = db.get(m.Outing, inv["id"])
+        if o:
+            o.event_name, o.event_id = inv["event_name"], inv["event_id"]
     elif op == "photo_caption":
         p = db.get(m.Photo, inv["photo_id"])
         if p:

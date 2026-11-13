@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # were never selected out of the inbox. Move it back deliberately to backfill.
     ingest_prefix: str = "Photo Album/"
     ingest_cutover: str = "2026-07-27"
+    # Reconcile (SPEC §15.4 step 8): "report" only lists what it would re-point, cull
+    # or refresh; "apply" does it. Starts as report so the first nights can be read
+    # before anything is culled automatically.
+    ingest_reconcile: str = "report"
+    ingest_max_auto_cull: int = 25      # more vanished masters than this = cull none, alert
+    ingest_max_refresh: int = 200       # same guard for replaced masters
 
     @property
     def cf_access_enabled(self) -> bool:

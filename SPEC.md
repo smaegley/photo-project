@@ -2203,7 +2203,7 @@ limited `ingest` service. 788 MB built without BuildKit; `detect_faces` measured
 `queries.not_culled()` keeps culled photos out of matching, clustering and every admin
 review tool, while leaving pending photos in. Runbook: `infra/DEPLOY.md`.
 
-**Slice 3 — built on dev (`0fe91fc`), not pushed.** `app/ingest.py` + migration
+**Slice 3 — ✅ LIVE ON PROD (2026-11-13, `d133297`, `OPS-2026-11-13-13`).** `app/ingest.py` + migration
 `b4c5d6e7f8a9`; `GET /api/admin/inbox`, `inbox/summary`, `POST photos/publish`; Inbox
 screen (grouped by day until outings land in slice 4) and a count on the Manage menu.
 EXIF orientation is recorded as the existing `photo.rotation` override rather than
@@ -2213,6 +2213,84 @@ matching. Lesson kept in the code: the first run reported "ok, 1 new, 59 errors"
 because the HEIC decoder was not registered — a batch where more than a quarter of
 files fail now fails the run. Not yet done: reconcile of deleted/moved/replaced
 objects (decisions 16, 17, 20) — scheduled with slice 4.
+
+*First real ingest on prod (by hand, ops):* dry run 451 candidates in 26 s (109,142
+objects listed); 20-photo run then the remaining 431 — both `ok`, 450 staged, 1 error
+(the truncated 2004 master, which stays a candidate every night until Steve replaces
+it). Full run 17 min wall: detection 431 photos / 1,142 faces in 9.6 min at 0.75 ph/s;
+pending suggestions 591 → 926. Write probe 33/33, 0 lock errors, leak check passed with
+a real inbox. Steve published 77 from the Inbox *while the run was going* and it worked
+cleanly (373 pending + 77 published = 450). New derivatives 454 MB; library mount 58 %.
+Peak memory not captured (ops will read `MemoryPeak` in slice 8). Follow-up from ops,
+done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2 intra,
+1 inter) so they neither pin to CPUs outside the LXC cpuset nor size for the host.
+
+**Slice 4 — built, approved by Steve on dev, pushed (2026-11-13); with ops (`DEV-2026-11-13-13`).** Migration `c5d6e7f8a9b0`: table
+`outing`; `photo.taken_at`, `triage`, `outing_id`, `file_size`, `master_missing`.
+
+- **Outings + triage: `app/outings.py`** (runs at the end of every ingest; no ML, so it
+  also runs in the `api` image). 2 h / 5 km as probed; the distance test is against the
+  last GPS fix in the outing, so a photo without GPS does not hide a move. On the real
+  batch it reproduces P-I3 exactly: 80 outings, 26 singletons, the Whitewater Center
+  visit as one outing of 95. Outing ids are stable across runs, so a typed event name
+  survives late arrivals. Only *pending* photos are re-triaged; a published or culled
+  photo keeps the class it had.
+- **Refinements to §15.5/§15.6 made while building:**
+  - A fifth class, **`rescued`** — an admin moving a photo from Not selected to the
+    Inbox. The pipeline never assigns or changes it, and it anchors its outing the way
+    a selected photo does (outing-mates become `related`).
+  - `outing.event_id` as well as the typed `event_name`. The event row is created only
+    when a photo from the outing is first published (a typo fixed before publishing
+    leaves nothing behind); after that the id is followed, so renaming or merging the
+    event in Manage events carries over to photos that join the outing later.
+  - `photo.master_missing` — see reconcile below.
+  - A pending photo with no class yet (ingested before this slice, or before
+    `app.outings` has run) shows in the Inbox tab, grouped by day: nothing pending is
+    ever out of sight.
+- **Inbox screen:** tabs **Inbox** (selected + related + rescued) and **Not selected**,
+  each with a count; groups are outings with time range, place, "N already published"
+  and, in Not selected, "has faces". Event field per outing (autocomplete over existing
+  events; embedded keywords appear as one-click chips, ★ when they match an existing
+  event). Per outing: Mark all · Publish · Cull · Rescue. The menu badge counts the
+  Inbox tab only.
+- **API:** `GET /api/admin/inbox?tab=inbox|unselected` (grouped), `POST
+  /api/admin/photos/rescue`, `PUT /api/admin/outings/{id}/event`; publish tags photos
+  from a named outing with its event. All logged and undoable, including the event
+  tags a publish added.
+- **Reconcile: `app/reconcile.py`** (decisions 16, 17, 20), driven by the same bucket
+  listing as discovery.
+  - *Moved/renamed:* the old key is gone and exactly one new key has the same ETag —
+    or, for the ~100 multipart uploads whose ETag is not a content hash, the same size
+    and the same file name or folder. Unique in both directions or it is not a match.
+    The row is re-pointed before new keys are staged, and its cached derivatives are
+    renamed, not re-fetched. Verified on the bucket: 109,038 of 109,142 ETags are plain
+    MD5s and the two byte-identical 2004 files share one. (Decision 20 said "size +
+    capture time"; capture time would need a download of every candidate, and size +
+    name/folder is as discriminating for a Lightroom move or rename.)
+  - *Deleted:* culled with `culled_by = ingest:deleted-from-b2`, restorable. The cull
+    fires only when `master_missing` turns true, so a photo an admin restores is not
+    culled again the next night.
+    If the master later comes back (a mistaken delete, fixed in Lightroom) a photo
+    the ingest culled returns to where it was by itself; one an admin culled stays
+    culled. (Steve, 2026-11-13.)
+  - *Missing from B2 tab:* the Inbox screen gains a third tab, shown only when the
+    last run found missing masters, listing those photos and their current state in
+    either mode — so the report is visible to Steve, not just in the run log.
+  - *Replaced:* derivatives rebuilt from one GET, tags kept, faces re-detected.
+  - *Guards:* more than 25 vanished (or 200 replaced) in one run → nothing is culled
+    (or refreshed), the rest of the run completes, and the run ends `failed` so the
+    alert fires.
+  - **`INGEST_RECONCILE=report` by default:** the run prints and records what it
+    *would* do and holds moved keys back from staging. Switch to `apply` in prod's
+    `.env` after reading a few nights' reports. On dev's 4,967 B2 photos today's
+    listing plans nothing: no key missing, no ETag changed.
+- *Verified:* `backend/tests/check_inbox.py` (throwaway DB copy, temp library, fake
+  listing): triage invariants, stable ids, tab coverage, viewer lock-out, rescue and
+  its undo, event naming through typo/rename/clear/undo, and every reconcile case
+  including the ambiguous match, the restore-then-rerun case and the guard.
+  `check_write_contention` now includes `app.outings`.
+- *Not done:* the junk class (slice 5) — until then junk-looking photos sit in
+  whichever tab their faces put them. People chips are still read-only names (slice 7).
 
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.

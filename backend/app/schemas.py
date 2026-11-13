@@ -165,6 +165,10 @@ class PhotoIdsReq(BaseModel):
     photo_ids: list[int]
 
 
+class OutingEventReq(BaseModel):
+    event_name: str | None = None
+
+
 class RotateReq(BaseModel):
     degrees: int  # clockwise: 90 | 180 | 270
 

@@ -48,6 +48,8 @@ services:
       - B2_APP_KEY=${B2_APP_KEY:-}
       - B2_BUCKET=${B2_BUCKET:-}
       - B2_ENDPOINT=${B2_ENDPOINT:-}
+      # report = list what reconcile would re-point / cull / refresh; apply = do it (SPEC §15.15 slice 4)
+      - INGEST_RECONCILE=${INGEST_RECONCILE:-report}
     volumes:
       - ./data:/data
       - ${LIBRARY_ROOT_HOST:-/mnt/photos/library}:/mnt/photos/library

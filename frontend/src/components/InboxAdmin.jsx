@@ -1,36 +1,72 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api";
 
-// Inbox (SPEC §15.8, slice 3): photos the nightly ingest pulled from B2. Nobody but
-// admins can see them until they are published. Photos are grouped by day; click to
-// mark, then Publish or Cull the marked ones — or act on a whole day at once.
-// (Outing grouping, the junk tab and stacks arrive in later slices.)
+// Inbox (SPEC §15.8): photos the nightly ingest pulled from B2. Nobody but admins can
+// see them until they are published.
+//   Inbox        — photos showing someone the app knows, plus the rest of their outing
+//   Not selected — everything else; Rescue moves photos (or a whole outing) to Inbox
+// Photos are grouped by outing (close in time and place). Naming an outing tags its
+// photos with that event as they are published. Click to mark, then Publish / Cull the
+// marked ones — or act on a whole outing at once.
+// (The junk tab and stacks arrive in later slices.)
+//   Missing from B2 — existing photos whose master file has gone from the bucket
+//                  (deleted in Lightroom, or a mistake). Only shown when there are any.
+const TABS = [["inbox", "Inbox"], ["unselected", "Not selected"], ["missing", "Missing from B2"]];
+
+const hhmm = (iso) => iso.slice(11, 16);
+function when(g) {
+  if (g.undated) return `${g.date || "No date"} (import date — no capture time)`;
+  if (!g.start) return g.date || "No date";
+  const d1 = g.start.slice(0, 10), d2 = g.end.slice(0, 10);
+  if (g.start === g.end) return `${d1} ${hhmm(g.start)}`;
+  return d1 === d2 ? `${d1} ${hhmm(g.start)}–${hhmm(g.end)}`
+    : `${d1} ${hhmm(g.start)} – ${d2} ${hhmm(g.end)}`;
+}
+
+function EventField({ group, events, busy, onSave }) {
+  const [val, setVal] = useState(group.event_name || "");
+  useEffect(() => { setVal(group.event_name || ""); }, [group.event_name]);
+  const save = (v) => { if ((v || "") !== (group.event_name || "")) onSave(group, v); };
+  const listId = `ev-${group.outing_id}`;
+  return (
+    <span className="inbox-event">
+      <input value={val} placeholder="Event name (optional)" list={listId} disabled={busy}
+             onChange={(e) => setVal(e.target.value)}
+             onBlur={() => save(val.trim())}
+             onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }} />
+      <datalist id={listId}>{events.map((n) => <option key={n} value={n} />)}</datalist>
+      {!group.event_name && group.keywords.map((k) => (
+        <button key={k.name} className="inbox-kw" disabled={busy} onClick={() => save(k.name)}
+                title={k.known ? "Keyword in the files matches an existing event"
+                  : "Keyword found in the files — use it as the event name"}>
+          {k.known ? "★ " : ""}{k.name}
+        </button>
+      ))}
+    </span>
+  );
+}
+
 export default function InboxAdmin({ onClose, onChanged }) {
-  const [data, setData] = useState({ total: 0, photos: [], last_run: null });
+  const [tab, setTab] = useState("inbox");
+  const [data, setData] = useState({ total: 0, groups: [], counts: {}, last_run: null });
+  const [events, setEvents] = useState([]);
   const [marked, setMarked] = useState(() => new Set());
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [peek, setPeek] = useState(null);
 
-  const load = () => api.inbox().then((d) => { setData(d); setMarked(new Set()); });
-  useEffect(() => { load().catch((e) => setMsg(`⚠ ${e.message}`)); }, []);
-
-  const days = useMemo(() => {
-    const by = new Map();
-    for (const p of data.photos) {
-      const k = p.date || "No date";
-      if (!by.has(k)) by.set(k, []);
-      by.get(k).push(p);
-    }
-    return [...by.entries()];
-  }, [data.photos]);
+  const load = (t = tab) => api.inbox(t).then((d) => { setData(d); setMarked(new Set()); });
+  useEffect(() => { load(tab).catch((e) => setMsg(`⚠ ${e.message}`)); }, [tab]);
+  useEffect(() => {
+    api.events(false).then((ev) => setEvents(ev.map((e) => e.name).sort())).catch(() => {});
+  }, []);
 
   const toggle = (id) => setMarked((s) => {
     const n = new Set(s);
     if (n.has(id)) n.delete(id); else n.add(id);
     return n;
   });
-  const markDay = (photos) => setMarked((s) => {
+  const markGroup = (photos) => setMarked((s) => {
     const n = new Set(s);
     const all = photos.every((p) => n.has(p.id));
     photos.forEach((p) => (all ? n.delete(p.id) : n.add(p.id)));
@@ -42,7 +78,8 @@ export default function InboxAdmin({ onClose, onChanged }) {
     setBusy(true); setMsg(null);
     try {
       const r = await fn(ids);
-      setMsg(`✓ ${label} ${r.changed} photo${r.changed !== 1 ? "s" : ""}`);
+      setMsg(`✓ ${label} ${r.changed} photo${r.changed !== 1 ? "s" : ""}`
+        + (r.event_tagged ? ` · ${r.event_tagged} tagged with their event` : ""));
       await load();
       await onChanged?.();
     } catch (e) { setMsg(`⚠ ${e.message}`); }
@@ -50,6 +87,21 @@ export default function InboxAdmin({ onClose, onChanged }) {
   };
   const publish = (ids) => act("published", api.publishPhotos, ids);
   const cull = (ids) => act("culled", api.cullPhotos, ids);
+  const rescue = (ids) => act("moved to Inbox:", api.rescuePhotos, ids);
+  const ids = (g) => g.photos.map((p) => p.id);
+
+  const nameOuting = async (g, name) => {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.setOutingEvent(g.outing_id, name);
+      setMsg(name ? `✓ outing named “${r.event_name}”`
+        + (r.retagged ? ` · ${r.retagged} already-published photo${r.retagged !== 1 ? "s" : ""} tagged` : "")
+        : "✓ event name cleared");
+      setData((d) => ({ ...d, groups: d.groups.map((x) => (x.key === g.key ? { ...x, event_name: r.event_name } : x)) }));
+      if (r.retagged) await onChanged?.();
+    } catch (e) { setMsg(`⚠ ${e.message}`); }
+    finally { setBusy(false); }
+  };
 
   const run = data.last_run;
   const runNote = run
@@ -57,45 +109,74 @@ export default function InboxAdmin({ onClose, onChanged }) {
       + ` — ${run.new} new${run.errors ? `, ${run.errors} file error${run.errors !== 1 ? "s" : ""}` : ""}`
       + (run.state === "failed" ? " — FAILED" : "")
     : "No ingest has run yet.";
+  const isInbox = tab === "inbox";
+  const isMissing = tab === "missing";
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal modal-wide rotation-sweep inbox-admin" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <h2>Inbox <span className="modal-sub">{data.total} waiting · {marked.size} marked</span></h2>
+          <h2>Inbox <span className="modal-sub">{data.total} here · {marked.size} marked</span></h2>
           <button className="lb-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="rotation-toolbar">
+          <span className="inbox-tabs">
+            {TABS.filter(([k]) => k !== "missing" || data.counts.missing || tab === "missing").map(([k, label]) => (
+              <button key={k} className={`ghost ${tab === k ? "on" : ""}`} disabled={busy}
+                      onClick={() => setTab(k)}>
+                {label}{data.counts[k] != null ? ` (${data.counts[k]})` : ""}
+              </button>
+            ))}
+          </span>
           <span className="modal-sub">
-            Only admins see these. Click to mark; double-click to view larger. {runNote}
+            {isInbox ? "Someone the app recognises, plus the rest of the same outing."
+              : isMissing ? (data.reconcile_mode === "apply"
+                ? "These files are no longer in B2. The photos were culled automatically; put a file back in Lightroom and its photo returns by itself the next night."
+                : "These files are no longer in B2. Nothing has been changed (report-only mode): put the file back in Lightroom if it was a mistake, or cull the photo here if it was not.")
+              : "No one recognised. Rescue what is worth keeping; the rest can stay here."}
+            {" "}Click to mark; double-click to view larger. {runNote}
           </span>
           <button className="ghost rotation-apply" onClick={() => cull([...marked])} disabled={busy || !marked.size}>
             Cull {marked.size || ""}
           </button>
-          <button className="ghost" onClick={() => publish([...marked])} disabled={busy || !marked.size}>
-            Publish {marked.size || ""}
-          </button>
+          {tab === "unselected" && (
+            <button className="ghost" onClick={() => rescue([...marked])} disabled={busy || !marked.size}>
+              Rescue {marked.size || ""}
+            </button>
+          )}
+          {!isMissing && (
+            <button className="ghost" onClick={() => publish([...marked])} disabled={busy || !marked.size}>
+              Publish {marked.size || ""}
+            </button>
+          )}
         </div>
 
         <div className="inbox-days">
-          {days.map(([day, photos]) => (
-            <section key={day} className="inbox-day">
+          {data.groups.map((g) => (
+            <section key={g.key} className="inbox-day">
               <header className="inbox-day-head">
-                <b>{day}</b>
+                <b>{isMissing ? "Master file missing from B2" : when(g)}</b>
                 <span className="modal-sub">
-                  {photos.length} photo{photos.length !== 1 ? "s" : ""}
-                  {(() => { const pl = [...new Set(photos.map((p) => p.place).filter(Boolean))]; return pl.length ? ` · ${pl.join(", ")}` : ""; })()}
+                  {g.photos.length} photo{g.photos.length !== 1 ? "s" : ""}
+                  {g.place ? ` · ${g.place}` : ""}
+                  {g.already_published ? ` · ${g.already_published} already published` : ""}
+                  {tab === "unselected" && g.has_faces ? " · has faces" : ""}
                 </span>
-                <button className="link" disabled={busy} onClick={() => markDay(photos)}>
-                  {photos.every((p) => marked.has(p.id)) ? "Unmark day" : "Mark day"}
+                {g.outing_id != null && (
+                  <EventField group={g} events={events} busy={busy} onSave={nameOuting} />
+                )}
+                <button className="link" disabled={busy} onClick={() => markGroup(g.photos)}>
+                  {g.photos.every((p) => marked.has(p.id)) ? "Unmark all" : "Mark all"}
                 </button>
-                <button className="link" disabled={busy} onClick={() => publish(photos.map((p) => p.id))}>
-                  Publish day
-                </button>
+                {tab === "unselected" && (
+                  <button className="link" disabled={busy} onClick={() => rescue(ids(g))}>Rescue outing</button>
+                )}
+                {!isMissing && <button className="link" disabled={busy} onClick={() => publish(ids(g))}>Publish outing</button>}
+                {!isMissing && <button className="link" disabled={busy} onClick={() => cull(ids(g))}>Cull outing</button>}
               </header>
               <div className="rotation-grid">
-                {photos.map((p) => (
+                {g.photos.map((p) => (
                   <button key={p.id} className={`rotation-cell ${marked.has(p.id) ? "marked" : ""}`}
                           onClick={() => toggle(p.id)} onDoubleClick={() => setPeek(p)} disabled={busy}
                           title={`${p.filename || p.source_file}${p.date_raw ? " · " + p.date_raw : ""}`
@@ -105,7 +186,8 @@ export default function InboxAdmin({ onClose, onChanged }) {
                     </span>
                     <span className="rotation-badge">{marked.has(p.id) ? "✓" : ""}</span>
                     <span className="inbox-names">
-                      {p.suggested.length ? p.suggested.slice(0, 3).join(", ")
+                      {isMissing ? (p.visibility === "culled" ? "culled" : `still ${p.visibility}`)
+                        : p.suggested.length ? p.suggested.slice(0, 3).join(", ")
                         : p.faces ? `${p.faces} unknown face${p.faces !== 1 ? "s" : ""}` : ""}
                     </span>
                   </button>
@@ -113,11 +195,10 @@ export default function InboxAdmin({ onClose, onChanged }) {
               </div>
             </section>
           ))}
-          {data.photos.length === 0 && <div className="modal-msg">The inbox is empty.</div>}
+          {data.groups.length === 0 && (
+            <div className="modal-msg">{isInbox ? "The inbox is empty." : "Nothing here."}</div>
+          )}
         </div>
-        {data.total > data.photos.length && (
-          <div className="modal-msg">Showing the first {data.photos.length} of {data.total}; publish or cull some to see more.</div>
-        )}
         {msg && <div className="modal-msg">{msg}</div>}
       </div>
 
