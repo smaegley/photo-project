@@ -69,6 +69,14 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
   // rotate persists on disk + regenerates the thumb; reload() then returns a
   // fresh mtime-versioned image_url so the new orientation shows immediately.
   const rotate = (deg) => edit(() => api.rotatePhoto(photo.id, deg));
+  // Cull hides the photo from everyone (reversible — Manage ▾ → Culled photos). The
+  // photo leaves the current result set, so close and let the gallery refresh.
+  const cull = async () => {
+    if (!window.confirm("Cull this photo? It disappears for the whole family but can be restored from Manage ▾ → Culled photos.")) return;
+    setBusy(true);
+    try { await api.cullPhotos([photo.id]); onChanged?.(); onClose(); }
+    catch (e) { alert(e.message); setBusy(false); }
+  };
   const saveCaption = () => {
     if (!detail || captionDraft.trim() === (detail.caption || "")) return;
     edit(() => api.editCaption(photo.id, captionDraft.trim() || null));
@@ -149,6 +157,9 @@ export default function Lightbox({ photos, index, onClose, onNav, onLoadMore,
           {admin && <span className="lb-tool-div" />}
           {admin && <button onClick={() => rotate(270)} disabled={busy} title="Rotate left">↺</button>}
           {admin && <button onClick={() => rotate(90)} disabled={busy} title="Rotate right">↻</button>}
+          {admin && isAdmin && <span className="lb-tool-div" />}
+          {admin && isAdmin && <button className="lb-tool-cull" onClick={cull} disabled={busy}
+                                       title="Cull — hide from everyone (restorable)">Cull</button>}
         </div>
       </div>
 

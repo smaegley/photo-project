@@ -85,8 +85,8 @@ captured consistently, with no torn write and no WAL belonging to a half-finishe
 transaction. A `Snapshot`-mode job would not give that guarantee for this workload.
 The cost is a brief nightly outage at 02:00, which is irrelevant for a family archive.
 
-No collision with the in-container snapshot timer, which runs at **03:30**
-(`photo-backup.timer`) — after the container is back up.
+No collision with the in-container snapshot timer, which runs at **03:30 UTC** (20:30 Mountain — the container clock is UTC, the Proxmox host is America/Denver)
+(`photo-backup.timer`) — about 5½ hours before the 02:00 Mountain backup window, not after it as this note used to say.
 
 ## Off-site layer — Backblaze B2 (DB snapshots) (built by the Ops agent, 2026-07-27)
 

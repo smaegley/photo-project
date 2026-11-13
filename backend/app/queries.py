@@ -36,6 +36,21 @@ def _version(p: m.Photo) -> str:
     return f"?v={token}" if token else ""
 
 
+def visible():
+    """THE visibility rule (SPEC §15.7): only published photos reach family-facing
+    views. Every query that returns, counts or serves photos outside the admin Inbox /
+    Culled views must include this — `tests/check_visibility.py` walks the routes as a
+    viewer and fails if a hidden photo is reachable. Admins browsing normally see the
+    same thing the family does; hidden photos appear only in their dedicated views."""
+    return m.Photo.visibility == m.VIS_PUBLISHED
+
+
+def can_see(photo, role: str | None) -> bool:
+    """Single-photo form of the rule, for detail and image routes: a hidden photo is
+    reachable by id/URL only for admins (who need it for the Inbox and Culled views)."""
+    return getattr(photo, "visibility", m.VIS_PUBLISHED) == m.VIS_PUBLISHED or role == "admin"
+
+
 @dataclass
 class PhotoFilter:
     date_start: date | None = None
@@ -49,6 +64,7 @@ class PhotoFilter:
 
 
 def _apply(query, f: PhotoFilter, exclude: str | None):
+    query = query.filter(visible())   # never optional — see visible()
     # origin is a view scope, not a facet: it constrains results AND every facet
     # count (no self-exclusion), so it is applied regardless of `exclude`.
     if f.origin:
@@ -100,6 +116,7 @@ def to_photo_out(p: m.Photo) -> PhotoOut:
         thumb_url=thumb_url(p.source_file) + v,
         display_url=display_url(p.source_file) + v,
         image_url=image_url(p.source_file) + v,
+        visibility=p.visibility or m.VIS_PUBLISHED,
     )
 
 

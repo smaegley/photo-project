@@ -767,3 +767,4 @@ button:disabled kbd { opacity: .3; }
 .rotation-badge { position: absolute; top: 4px; right: 4px; font-size: 12px;
   background: color-mix(in srgb, var(--bg) 75%, transparent); border-radius: 5px;
   padding: 1px 5px; min-width: 14px; }
+.lb-toolbar .lb-tool-cull { width: auto; padding: 0 10px; font-size: 13px; color: #ff9b8f; }

@@ -31,6 +31,7 @@ class PhotoOut(BaseModel):
     thumb_url: str
     display_url: str            # sized derivative for the lightbox
     image_url: str
+    visibility: str = "published"   # published|pending|culled (SPEC §15.6)
 
 
 class PhotoDetail(PhotoOut):
@@ -158,6 +159,10 @@ class PlaceUpdate(BaseModel):
 
 class PlaceMerge(BaseModel):
     into_id: str
+
+
+class PhotoIdsReq(BaseModel):
+    photo_ids: list[int]
 
 
 class RotateReq(BaseModel):

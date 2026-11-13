@@ -30,7 +30,7 @@ from app.schemas import (
     BulkEventReq, BulkPersonReq, BulkPlaceReq, CaptionReq, NotesReq,
     EventCreate, EventMerge, EventOut, EventRename,
     FaceRegionReq, PersonCreate, PersonLinksUpdate, PersonMerge, PersonRename, PlaceCreate, PlaceMerge, PlaceOut, PlaceUpdate,
-    RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
+    PhotoIdsReq, RepresentativeReq, RotateReq, UsageStat, UsageStats, UsageUser, UserCreate, UserOut, UserUpdate,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -1361,6 +1361,63 @@ def rotate_photo(photo_id: int, body: RotateReq, db: Session = Depends(get_db),
             "override": storage.backend_of(p) != "local"}
 
 
+# ---- cull / restore (SPEC §15.9) ---------------------------------------------------
+# Cull is a reversible hide, never a delete: the row, its tags, faces and derivatives
+# all stay, so Restore is exact. It works on any origin. The row staying is also what
+# stops ingest from re-importing a culled photo (§15.6).
+def _set_visibility(db: Session, user: m.User, ids: list[int], cull: bool) -> dict:
+    _check_photo_ids(db, ids)
+    now = datetime.now(timezone.utc)
+    prev: dict[str, str] = {}
+    for ch in _chunks(ids):
+        for p in db.query(m.Photo).filter(m.Photo.id.in_(ch)).all():
+            if cull and p.visibility != m.VIS_CULLED:
+                prev[str(p.id)] = p.visibility
+                p.culled_from, p.culled_at, p.culled_by = p.visibility, now, user.email
+                p.visibility = m.VIS_CULLED
+            elif not cull and p.visibility == m.VIS_CULLED:
+                prev[str(p.id)] = m.VIS_CULLED
+                p.visibility = p.culled_from or m.VIS_PUBLISHED
+                p.culled_from = p.culled_at = p.culled_by = None
+    if prev:
+        verb = "cull" if cull else "restore"
+        _log(db, user, f"photo:{verb}", None, f"{len(prev)} photo(s)",
+             photo_id=int(next(iter(prev))) if len(prev) == 1 else None,
+             inverse={"op": "photo_visibility", "prev": prev})
+    db.commit()
+    return {"changed": len(prev)}
+
+
+@router.post("/photos/cull")
+def cull_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
+                user: m.User = Depends(require_admin)):
+    """Hide photos from every family-facing view. Admin-only, undoable."""
+    return _set_visibility(db, user, body.photo_ids, cull=True)
+
+
+@router.post("/photos/restore")
+def restore_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
+                   user: m.User = Depends(require_admin)):
+    """Return culled photos to the state they were culled from."""
+    return _set_visibility(db, user, body.photo_ids, cull=False)
+
+
+@router.get("/culled")
+def list_culled(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
+                limit: int = 200, offset: int = 0):
+    """The Culled view — newest cull first."""
+    q = db.query(m.Photo).filter(m.Photo.visibility == m.VIS_CULLED)
+    rows = (q.order_by(m.Photo.culled_at.desc(), m.Photo.id.desc())
+            .offset(max(0, offset)).limit(max(1, min(limit, 500))).all())
+    return {"total": q.count(),
+            "photos": [{"id": p.id, "source_file": p.source_file, "origin": p.origin,
+                        "caption": p.caption, "date_raw": p.date_raw,
+                        "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
+                        "culled_at": p.culled_at.isoformat() if p.culled_at else None,
+                        "culled_by": p.culled_by, "culled_from": p.culled_from}
+                       for p in rows]}
+
+
 @router.post("/photos/{photo_id}/caption")
 def edit_caption(photo_id: int, body: CaptionReq, db: Session = Depends(get_db),
                  user: m.User = Depends(require_contributor)):
@@ -1881,6 +1938,17 @@ def _apply_inverse(db: Session, inv: dict) -> None:
         p = db.get(m.Photo, inv["photo_id"])
         if p and inv["degrees"] in (90, 180, 270):
             _apply_photo_rotation(db, p, inv["degrees"])
+    elif op == "photo_visibility":
+        # Put each photo back exactly where it was; culled_from is restored for a
+        # re-cull and cleared otherwise.
+        for ch in _chunks([int(k) for k in inv["prev"]]):
+            for p in db.query(m.Photo).filter(m.Photo.id.in_(ch)).all():
+                was = inv["prev"][str(p.id)]
+                if was == m.VIS_CULLED:
+                    p.culled_from, p.culled_at = p.visibility, datetime.now(timezone.utc)
+                else:
+                    p.culled_from = p.culled_at = p.culled_by = None
+                p.visibility = was
     elif op == "photo_caption":
         p = db.get(m.Photo, inv["photo_id"])
         if p:

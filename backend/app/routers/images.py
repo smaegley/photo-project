@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
-from app import derivatives, models as m, storage
+from app import derivatives, models as m, queries, storage
 from app.auth import image_user
 from app.config import settings
 from app.database import SessionLocal
@@ -23,6 +23,17 @@ CARD_RE = re.compile(r"^Mag\d+_card_(?:\d+|extra)\.jpg$")
 # Image URLs are mtime-versioned (?v=), so a given URL's bytes never change.
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 DAY = {"Cache-Control": "public, max-age=86400"}
+# Hidden (pending/culled) photos are served to admins only and must never land in a
+# shared cache under a URL a viewer could replay (SPEC §15.7).
+PRIVATE = {"Cache-Control": "private, no-store"}
+
+
+def _gate(photo, role: str | None) -> dict:
+    """Apply the visibility rule to an image request. 404 — not 403 — for a hidden
+    photo, so its existence isn't confirmed. Returns the cache headers to use."""
+    if photo is None or not queries.can_see(photo, role):
+        raise HTTPException(404, "image not found")
+    return IMMUTABLE if photo.visibility == m.VIS_PUBLISHED else PRIVATE
 
 
 def photo_file(photo: "m.Photo | None") -> Path:
@@ -46,7 +57,7 @@ def photo_file(photo: "m.Photo | None") -> Path:
     return path
 
 
-def _lookup(source_file: str) -> SimpleNamespace:
+def _lookup(source_file: str, role: str | None = None) -> SimpleNamespace:
     """The Photo fields the image routes need, holding a pooled connection only for
     the lookup.
 
@@ -58,15 +69,16 @@ def _lookup(source_file: str) -> SimpleNamespace:
     """
     with SessionLocal() as db:
         p = db.query(m.Photo).filter(m.Photo.source_file == source_file).first()
-        if not p:
-            raise HTTPException(404, "image not found")
-        return SimpleNamespace(storage_path=p.storage_path,
+        headers = _gate(p, role)
+        return SimpleNamespace(headers=headers, visibility=p.visibility,
+                               storage_path=p.storage_path,
                                storage_backend=storage.backend_of(p),
                                file_version=p.file_version,
                                rotation=p.rotation)
 
 
-def _derivative(source_file: str, out_dir: Path, max_edge: int, *, stale_ok: bool = False):
+def _derivative(source_file: str, out_dir: Path, max_edge: int, role: str | None, *,
+                stale_ok: bool = False):
     """Serve a sized derivative, generating it on demand.
 
     **Local masters: unchanged** — resolve the master, regenerate if the cache is
@@ -76,22 +88,22 @@ def _derivative(source_file: str, out_dir: Path, max_edge: int, *, stale_ok: boo
     because a multi-MB fetch inside a request is the §10.16 slow-client shape (SPEC
     §13.7 — prewarm is the fetch point).
     """
-    p = _lookup(source_file)
+    p = _lookup(source_file, role)
     remote = p.storage_backend != "local"
     cache = out_dir / derivatives.cache_key(source_file, derivatives.version_token(p),
                                             versioned=remote)
     if remote:
         if not derivatives.needs_regen(None, cache):
-            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+            return FileResponse(cache, media_type="image/jpeg", headers=p.headers)
         raise HTTPException(404, "derivative not generated yet — run prewarm")
     try:
         src = photo_file(p)
     except HTTPException:
         if stale_ok and cache.exists():  # serve a stale copy rather than 404
-            return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+            return FileResponse(cache, media_type="image/jpeg", headers=p.headers)
         raise
     derivatives.ensure(src, cache, max_edge)
-    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+    return FileResponse(cache, media_type="image/jpeg", headers=p.headers)
 
 
 _safe_key = derivatives.safe_key  # shared with prewarm (SPEC §12.6)
@@ -101,32 +113,33 @@ _safe_key = derivatives.safe_key  # shared with prewarm (SPEC §12.6)
 # photos/<batch>/<file>) — the :path converter captures those; slide names
 # (Mag1_Slide01.JPG) have no slash and match too (SPEC §12.6).
 @router.get("/images/{source_file:path}")
-def full_image(source_file: str, _user=Depends(image_user)):
+def full_image(source_file: str, role: str = Depends(image_user)):
     """The original (full-res) file — used for download.
 
     Local masters only. `origin=digital` masters live in B2 and are deliberately not
     downloadable at full res (SPEC §13.2 #6): the lightbox's digital download points
     at `/api/display/` instead, so this 404s for them rather than proxying B2.
     """
-    return FileResponse(photo_file(_lookup(source_file)),
-                        media_type="image/jpeg", headers=IMMUTABLE)
+    p = _lookup(source_file, role)
+    return FileResponse(photo_file(p), media_type="image/jpeg", headers=p.headers)
 
 
 @router.get("/display/{source_file:path}")
-def display_image(source_file: str, _user=Depends(image_user)):
+def display_image(source_file: str, role: str = Depends(image_user)):
     """Sized derivative for the lightbox (originals can be 24MP)."""
-    return _derivative(source_file, settings.display_dir, derivatives.DISPLAY_MAX)
+    return _derivative(source_file, settings.display_dir, derivatives.DISPLAY_MAX, role)
 
 
 @router.get("/photo-back/{photo_id}")
-def photo_back(photo_id: int, _user=Depends(image_user)):
+def photo_back(photo_id: int, role: str = Depends(image_user)):
     """Display derivative of a scan's back-of-photo (_b) image (SPEC §12.8).
 
     Keyed by photo id (the back has no Photo row of its own). Back scans skip
     Lightroom, so they carry a live EXIF orientation flag — transpose it (§12.6)."""
     with SessionLocal() as db:
         photo = db.query(m.Photo).filter(m.Photo.id == photo_id).first()
-        back_path = photo.back_path if photo else None
+        headers = _gate(photo, role)
+        back_path = photo.back_path
     if not back_path:
         raise HTTPException(404, "no back image")
     root = Path(settings.library_root).resolve()
@@ -135,17 +148,17 @@ def photo_back(photo_id: int, _user=Depends(image_user)):
         raise HTTPException(404, "back image not found")
     cache = settings.display_dir / _safe_key(back_path)
     derivatives.ensure(src, cache, derivatives.DISPLAY_MAX, transpose=True)
-    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+    return FileResponse(cache, media_type="image/jpeg", headers=headers)
 
 
 @router.get("/thumbnails/{source_file:path}")
-def thumbnail(source_file: str, _user=Depends(image_user)):
-    return _derivative(source_file, settings.thumbnails_dir, derivatives.THUMB_MAX,
+def thumbnail(source_file: str, role: str = Depends(image_user)):
+    return _derivative(source_file, settings.thumbnails_dir, derivatives.THUMB_MAX, role,
                        stale_ok=True)
 
 
 @router.get("/faces/{person_id}")
-def face(person_id: str, _user=Depends(image_user)):
+def face(person_id: str, role: str = Depends(image_user)):
     """Cropped face thumbnail for a person's representative photo (SPEC §4.2)."""
     with SessionLocal() as db:
         person = db.get(m.Person, person_id)
@@ -154,6 +167,7 @@ def face(person_id: str, _user=Depends(image_user)):
         rep = db.get(m.Photo, person.representative_photo_id)
         if rep is None:
             raise HTTPException(404, "representative photo missing")
+        _gate(rep, role)
         pp = db.get(m.PhotoPerson, (rep.id, person_id))
         region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
         rep_id, src_file, fv = rep.id, rep.source_file, derivatives.version_token(rep)
@@ -173,7 +187,7 @@ def face(person_id: str, _user=Depends(image_user)):
 
 
 @router.get("/face-crop/{face_id}")
-def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
+def face_crop(face_id: int, size: int = 0, role: str = Depends(image_user)):
     """Cropped face for the §14 confirm queue.
 
     Crops the **display derivative**, which is already local and already sized — the same
@@ -185,6 +199,7 @@ def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
         if not f:
             raise HTTPException(404, "face not found")
         p = db.get(m.Photo, f.photo_id)
+        headers = _gate(p, role)
         region = (f.x, f.y, f.w, f.h)
         src_file, fv, backend = p.source_file, derivatives.version_token(p), storage.backend_of(p)
     src = settings.display_dir / derivatives.cache_key(
@@ -198,11 +213,11 @@ def face_crop(face_id: int, size: int = 0, _user=Depends(image_user)):
     cache = settings.faces_dir / f"face{face_id}_{edge}_{derivatives.FACE_CROP_V}.jpg"
     if not cache.exists():
         derivatives.face_thumb(src, cache, region, max_edge=edge)
-    return FileResponse(cache, media_type="image/jpeg", headers=IMMUTABLE)
+    return FileResponse(cache, media_type="image/jpeg", headers=headers)
 
 
 @router.get("/tag-crop/{photo_id}/{person_id}")
-def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_user)):
+def tag_crop(photo_id: int, person_id: str, size: int = 0, role: str = Depends(image_user)):
     """Crop what a TAG points at, using its own region — not a detected face.
 
     The tiny-tag audit originally resolved each tag to a `face` row and cropped that, but
@@ -216,8 +231,8 @@ def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_u
         if pp is None or pp.region_w is None:
             raise HTTPException(404, "no region for this tag")
         photo = db.get(m.Photo, photo_id)
-        if photo is None:
-            raise HTTPException(404, "photo not found")
+        _gate(photo, role)
+        photo_visible = photo.visibility == m.VIS_PUBLISHED
         region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h)
         src_file, fv, backend = (photo.source_file, derivatives.version_token(photo),
                                  storage.backend_of(photo))
@@ -230,7 +245,8 @@ def tag_crop(photo_id: int, person_id: str, size: int = 0, _user=Depends(image_u
     cache = settings.faces_dir / f"tag_{key}.jpg"
     if not cache.exists():
         derivatives.face_thumb(src, cache, region, max_edge=edge)
-    return FileResponse(cache, media_type="image/jpeg", headers=DAY)
+    return FileResponse(cache, media_type="image/jpeg",
+                        headers=DAY if photo_visible else PRIVATE)
 
 
 @router.get("/cards/{filename}")

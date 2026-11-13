@@ -15,6 +15,7 @@ import PlacesAdmin from "./components/PlacesAdmin";
 import UnplacedAdmin from "./components/UnplacedAdmin";
 import FaceQueueAdmin from "./components/FaceQueueAdmin";
 import RotationSweep from "./components/RotationSweep";
+import CulledAdmin from "./components/CulledAdmin";
 import UsersAdmin from "./components/UsersAdmin";
 import UsageAdmin from "./components/UsageAdmin";
 
@@ -80,6 +81,7 @@ export default function App() {
   const [showUnplaced, setShowUnplaced] = useState(false);
   const [showFaces, setShowFaces] = useState(false);
   const [showRotation, setShowRotation] = useState(false);
+  const [showCulled, setShowCulled] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
   const [showUsage, setShowUsage] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
@@ -313,6 +315,7 @@ export default function App() {
         onNameLocations={() => setShowUnplaced(true)}
         onReviewFaces={() => setShowFaces(true)}
         onRotationSweep={() => setShowRotation(true)}
+        onCulled={() => setShowCulled(true)}
         onManageUsers={() => setShowUsers(true)}
         onShowUsage={() => setShowUsage(true)}
         undoInfo={undoInfo}
@@ -372,6 +375,7 @@ export default function App() {
                   selectedIds={[...selectedIds]}
                   total={result.total}
                   filterEventId={sel.events.length === 1 ? sel.events[0] : null}
+                  isAdmin={isAdmin}
                   events={allEvents}
                   people={allPeople}
                   places={allPlaces}
@@ -467,6 +471,13 @@ export default function App() {
       {showRotation && (
         <RotationSweep
           onClose={() => setShowRotation(false)}
+          onChanged={refresh}
+        />
+      )}
+
+      {showCulled && (
+        <CulledAdmin
+          onClose={() => setShowCulled(false)}
           onChanged={refresh}
         />
       )}

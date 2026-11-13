@@ -20,7 +20,7 @@ Production runs as two containers via Docker Compose behind Cloudflare Access at
 | Deploy dir             | `/opt/photo-project` |
 | Domain                 | `photos.maegley.org` |
 
-**Specs:** 2 vCPU, 2 GB RAM, 16 GB root disk + 50 GB mp disk at
+**Specs:** 2 vCPU, 4 GB RAM (verified by ops 2026-11-13; was documented as 2 GB), 16 GB root disk + 50 GB mp disk at
 `/mnt/photos/library`. The app itself is light (SQLite + a small FastAPI), but the
 **image build is the heavy part** — the Node/Vite frontend build plus Docker layers
 (python-slim, node, caddy) want headroom. The image library is on its own disk and
@@ -208,7 +208,7 @@ systemctl enable --now photo-backup.timer
 systemctl list-timers photo-backup.timer
 /opt/photo-project/infra/db-snapshot.sh    # one manual run to confirm
 ```
-Daily snapshot at 03:30 → `/opt/photo-project/snapshots/` (14-day retention). That
+Daily snapshot at 03:30 **UTC** (the container runs UTC; that is 20:30 Mountain the evening before) → `/opt/photo-project/snapshots/` (14-day retention). That
 directory is on the **same disk as the live DB**, so it is a fast restore point, not
 disaster coverage. Off-box is the Proxmox job: **daily 02:00, mode Stop, → SynDS418,
 5 daily / 1 weekly / 6 monthly**, LXC 209 included — details, why `Stop` matters for

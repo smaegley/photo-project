@@ -37,6 +37,8 @@ This is *not* a greenfield project — it's a maintenance-mode app.
 | Repo HEAD (dev) | in sync with origin (docs may run ahead of prod by doc-only commits) |
 | Deployed to prod | **`7dd7a72`** — 2026-08-05: the whole 2026-08 release (face tooling, person merge, Spouse fix, rotation override, migration `f2a3b4c5d6e7`) **plus the full data import** — verified exact match: 10,875 tags · 10,546 regions · 127 people · 13 rotations · 6,590 photos. See `OPS-2026-08-05-release-and-people-sync-done.md`. |
 | ⚠ PROD IS AUTHORITATIVE | Steve is finishing the rotation sweep **on prod**. Prod is now ahead of dev for rotations/boxes (and everything else). **Never run `tags_io --import` on prod from the old dev export.** Next dev enrichment cycle: `load-prod-snapshot.sh` first, rebuild the dev-only face index, then export. |
+| **§15 direct-to-prod ingest** | Designed + probed 2026-11-13 (SPEC §15). **Slice 1 (visibility + cull) BUILT ON DEV, not deployed**: migration `a3b4c5d6e7f8`, `queries.visible()`, Cull in the admin bar + lightbox, Manage ▾ → Culled photos. Run `cd backend && ../.venv/bin/python -m tests.check_visibility` after touching any photo-returning route. Slices 2–8 not started; LXC resize is requested from ops with slice 2. **Dev is code-only from here on** — no new ingest/enrichment cycles on dev. |
+| ⚠ Time zones | Proxmox host = America/Denver, **LXC 209 = UTC**. vzdump is 02:00 Mountain; the "03:30" DB snapshot is 03:30 **UTC** (20:30 Mountain the evening before). Write timers with an explicit zone. |
 | Dev-only leftovers | §14 embeddings/suggestions/clusters (by design, §14.8a — rebuilt per cycle, not synced) |
 | Removed photo | `Photo Album/2004/December/2004-12-12-006.JPG` was corrupt at the source (LR). **⚠ Correction 2026-11-13 (ops, verified by listing): it is NOT gone from B2** — the original key is still there and a byte-identical copy was uploaded 2026-08-06 at `Photo Album/2004/2004-12/2004-12-12/2004-12-12-006.JPG`. Steve to fix or delete at the source. Earlier note said: Steve deleted it from B2 2026-08-05; prod row removal is with ops (`DEV-2026-08-05-remove-corrupt-photo-row.md`). **Prod count becomes 6,589**; dev says 6,590 until its next snapshot refresh |
 | — includes (2026-07-24) | **§12 Scanned Photos LIVE** (770 scans) + §10.15/§10.16 backlog + lightbox/Places fixes; migration `a7b8c9d0e1f2`; FilterRail "Friends & others" for linked viewers; Manage-People modal Save no longer clips |
@@ -118,7 +120,7 @@ Every step is additive/non-destructive; **never** run `import_data.py`.
    `sort_date`/`is_family=1`; additive):
    ```bash
    cd /opt/photo-project && git pull
-   DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build   # OOM-watch on the 2GB box
+   DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose up -d --build   # OOM-watch (box is 4 GB / 2 cores per ops 2026-11-13)
    ```
 2. **Copy the image files** dev → prod (decade folders; `data/` is gitignored so files
    travel out-of-band, NOT via git):
@@ -281,7 +283,7 @@ problem being triaged, or if Steve asks.
    speed, not archive meaning); and alerting catches "ran and failed" but not "never ran"
    (needs a dead-man's switch).
 
-5. **Lower severity, all accepted:** frontend builds on the 2 GB prod box during
+5. **Lower severity, all accepted:** frontend builds on the prod box (4 GB / 2 cores per ops 2026-11-13; older notes say 2 GB) during
    `docker compose up --build` (OOM risk mid-deploy); `/api/admin/geocode` can starve
    the ~40-thread pool (sync routes + 1.1s sleep + 30s timeout); `iss` not verified in
    the Access JWT (signature/`aud`/`exp` *are*, and RS256 is pinned); concurrent undos

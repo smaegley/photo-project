@@ -119,7 +119,7 @@ def current_user(
 def image_user(
     cf_jwt: str | None = Header(default=None, alias="Cf-Access-Jwt-Assertion"),
     dev_override: str | None = Cookie(default=None),
-) -> None:
+) -> str:
     """Authenticate an image request without pinning a pooled DB connection.
 
     Deliberately does NOT use `Depends(get_db)`. FastAPI tears yield-dependencies
@@ -128,9 +128,12 @@ def image_user(
     that owns them). For a FileResponse that means the connection would stay
     checked out for the entire JPEG transfer through the tunnel. A short-lived
     session returns it immediately instead.
+
+    Returns the caller's **role** (a plain string, nothing attached to the session) so
+    image routes can apply the visibility rule (SPEC §15.7) without a second lookup.
     """
     with SessionLocal() as db:
-        _load_user(db, _identify(cf_jwt, dev_override), touch=False)
+        return _load_user(db, _identify(cf_jwt, dev_override), touch=False).role
 
 
 def require_role(*roles: str):

@@ -74,16 +74,17 @@ def photos_meta(db: Session = Depends(get_db), _user=Depends(current_user)):
     """Timeline bounds for the date slider — min/max photo year across the library
     (SPEC §12.8). Grows as scans/digital extend the range beyond 1962–1976.
     Registered before /photos/{photo_id} so 'meta' isn't read as an id."""
-    lo = db.query(func.min(m.Photo.date_start)).scalar()
-    hi = db.query(func.max(func.coalesce(m.Photo.date_end, m.Photo.date_start))).scalar()
+    lo = db.query(func.min(m.Photo.date_start)).filter(queries.visible()).scalar()
+    hi = (db.query(func.max(func.coalesce(m.Photo.date_end, m.Photo.date_start)))
+          .filter(queries.visible()).scalar())
     return PhotoMeta(year_min=lo.year if lo else None,
                      year_max=hi.year if hi else None)
 
 
 @router.get("/photos/{photo_id}", response_model=PhotoDetail)
-def photo_detail(photo_id: int, db: Session = Depends(get_db), _user=Depends(current_user)):
+def photo_detail(photo_id: int, db: Session = Depends(get_db), user=Depends(current_user)):
     p = db.get(m.Photo, photo_id)
-    if p is None:
+    if p is None or not queries.can_see(p, user.role):   # hidden looks like absent
         raise HTTPException(404, "photo not found")
     place = None
     if p.place:

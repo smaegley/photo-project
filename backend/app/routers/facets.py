@@ -7,7 +7,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app import derivatives, models as m
+from app import derivatives, models as m, queries
 from app.auth import current_user
 from app.config import settings
 from app.database import get_db
@@ -105,14 +105,17 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
         rels = {p.id: None for p in persons}
     counts = dict(db.query(m.PhotoPerson.person_id,
                            func.count(func.distinct(m.PhotoPerson.photo_id)))
+                  .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
+                  .filter(queries.visible())
                   .group_by(m.PhotoPerson.person_id).all())
+    hidden_reps = {r[0] for r in db.query(m.Photo.id).filter(~queries.visible()).all()}
     out = []
     for p in persons:
         n = counts.get(p.id, 0)
         if with_photos_only and n == 0:
             continue
         face_url = None
-        if p.representative_photo_id:
+        if p.representative_photo_id and p.representative_photo_id not in hidden_reps:
             pp = db.get(m.PhotoPerson, (p.representative_photo_id, p.id))
             region = (pp.region_x, pp.region_y, pp.region_w, pp.region_h) if pp else None
             face_url = f"/api/faces/{p.id}?v={derivatives.face_version(p.representative_photo_id, region)}"
@@ -131,6 +134,8 @@ def list_events(db: Session = Depends(get_db), _user=Depends(current_user),
                 with_photos_only: bool = True):
     counts = dict(db.query(m.PhotoEvent.event_id,
                            func.count(func.distinct(m.PhotoEvent.photo_id)))
+                  .join(m.Photo, m.Photo.id == m.PhotoEvent.photo_id)
+                  .filter(queries.visible())
                   .group_by(m.PhotoEvent.event_id).all())
     out = [EventOut(id=e.id, name=e.name, photo_count=counts.get(e.id, 0))
            for e in db.query(m.Event).all()]
@@ -144,7 +149,7 @@ def list_events(db: Session = Depends(get_db), _user=Depends(current_user),
 def list_places(db: Session = Depends(get_db), _user=Depends(current_user),
                 mappable_only: bool = False):
     counts = dict(db.query(m.Photo.place_id, func.count(m.Photo.id))
-                  .filter(m.Photo.place_id.isnot(None))
+                  .filter(m.Photo.place_id.isnot(None), queries.visible())
                   .group_by(m.Photo.place_id).all())
     out = []
     for pl in db.query(m.Place).all():

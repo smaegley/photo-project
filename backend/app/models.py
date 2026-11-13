@@ -97,6 +97,12 @@ class Event(Base):
     name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
 
 
+# SPEC §15.6: who can see a photo. Only `published` reaches family-facing views;
+# `pending` is the ingest inbox, `culled` is a reversible hide. Filter with
+# `queries.visible()` — never compare the column ad hoc in a route.
+VIS_PUBLISHED, VIS_PENDING, VIS_CULLED = "published", "pending", "culled"
+
+
 class Photo(Base):
     """One row per image — the spine of the stream (SPEC §3.2)."""
     __tablename__ = "photo"
@@ -137,6 +143,12 @@ class Photo(Base):
     # matter what). Applied when derivatives are generated; local masters rotate
     # their pixels instead and keep this 0.
     rotation: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # SPEC §15.6 — see VIS_* above. culled_from = the state Restore returns it to.
+    visibility: Mapped[str] = mapped_column(String, nullable=False, default=VIS_PUBLISHED,
+                                            server_default=VIS_PUBLISHED, index=True)
+    culled_from: Mapped[str | None] = mapped_column(String, nullable=True)
+    culled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    culled_by: Mapped[str | None] = mapped_column(String, nullable=True)
     imported_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)               # = card_caption
     original_subject: Mapped[str | None] = mapped_column(String, nullable=True)    # = mag_subject

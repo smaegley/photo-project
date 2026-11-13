@@ -4,7 +4,7 @@ import { api } from "../api";
 // Bulk apply/reject across a selection (SPEC §3.5 step 2). Sits above the gallery
 // in admin mode. "Select all" pulls every id matching the current filter so you
 // can, e.g., filter to an event and strip it from the whole wrong group at once.
-export default function AdminBar({ selectedIds, total, filterEventId,
+export default function AdminBar({ selectedIds, total, filterEventId, isAdmin = false,
                                   events, people, places, onSelectAll, onClear, onApplied }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
@@ -15,7 +15,7 @@ export default function AdminBar({ selectedIds, total, filterEventId,
     setBusy(true); setMsg(null);
     try {
       const r = await fn();
-      const c = r.added ?? r.removed ?? r.updated ?? 0;
+      const c = r.added ?? r.removed ?? r.updated ?? r.changed ?? 0;
       setMsg(`✓ ${label} — ${c} photo(s)`);
       await onApplied();
     } catch (e) { setMsg(`⚠ ${e.message}`); }
@@ -67,6 +67,17 @@ export default function AdminBar({ selectedIds, total, filterEventId,
         <Picker label="− Person" danger options={personOpts}
                 onPick={(id) => run(`removed ${(people.find((p) => p.id === id) || {}).name}`,
                   () => api.bulkPerson(selectedIds, id, "remove"))} />
+        {/* Cull = hide from everyone, recoverable from Manage ▾ → Culled photos (SPEC §15.9) */}
+        {isAdmin && (
+          <button className="admin-picker danger" disabled={busy || !n}
+                  title="Hide the selected photos from everyone. Nothing is deleted — restore from Manage ▾ → Culled photos."
+                  onClick={() => {
+                    if (window.confirm(`Cull ${n} photo${n !== 1 ? "s" : ""}? They disappear for the whole family but can be restored from Manage ▾ → Culled photos.`))
+                      run("culled", () => api.cullPhotos(selectedIds));
+                  }}>
+            Cull
+          </button>
+        )}
       </div>
 
       {msg && <span className="admin-msg">{msg}</span>}

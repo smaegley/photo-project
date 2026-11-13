@@ -2170,6 +2170,30 @@ All eight can run on dev against the real batch without touching prod.
 Slices 3–7 are developed on dev against a prod snapshot and a dev copy of the batch;
 dev remains a place to *build* ingest, not to run it for real.
 
+**Slice 1 — ✅ BUILT ON DEV (2026-11-13), not deployed.** Migration `a3b4c5d6e7f8`
+(`photo.visibility` default `published`, `culled_from`, `culled_at`, `culled_by`; purely
+additive, every existing row stays published). The rule lives in `queries.visible()` /
+`queries.can_see()`: applied unconditionally in `_apply` (gallery, ids, all facet
+counts), in `/photos/meta`, the people/event/place counts, person face thumbnails, and
+every image route (hidden → 404 for non-admins; served to admins with
+`Cache-Control: private, no-store`). Admins browsing normally see what the family sees.
+`POST /api/admin/photos/cull|restore` + `GET /api/admin/culled`, admin-only, logged and
+undoable (`photo_visibility` inverse restores each photo's exact prior state). UI: Cull
+in the admin selection bar and the lightbox toolbar; Manage ▾ → Culled photos.
+
+*Verified:* `backend/tests/check_visibility.py` runs the real app on a throwaway DB
+copy, culls a slide, a scan, a digital photo, a person's representative photo and a
+scan with a back, then walks the API as a viewer — listings, filtered ids, exact
+people/event/place count deltas, detail, every image URL form, and a sweep of all
+parameterless GETs — and checks cull → undo → restore → undo round-trips to identical
+state. All pass. Also smoke-tested against the live dev server.
+
+*Not done in slice 1, by design:* `magazine.slide_count` is a stored number and does
+not drop when a slide is culled; admin tools (rotation sweep, face review) still list
+culled photos; culled photos are not yet excluded from the face match index (slice 2,
+when the index moves to prod). The Rolls-view lightbox has no Cull button yet. The UI
+has been built and the API exercised, but **not yet clicked through in a browser**.
+
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.
 - A signed-in viewer can reach no pending or culled photo by any route or image URL.
@@ -2233,6 +2257,10 @@ up, disposable). Nothing was written to any database.
   which 3,461 are `FastFoto/` + `PreProcess_Slides/` re-uploads; after the tree
   exclusions exactly the same 451 remain. The exclusions are a hard filter.
 
-### 15.18 Open questions
-For Steve: (1) accept 0.65 / ~1% error for auto-tagging, or keep everything as
-suggestions? (2) drop the embedded-keyword reader given P-I5?
+### 15.18 Open questions — resolved (Steve, 2026-11-13)
+1. **Auto-tagging at score ≥ 0.65, never pets — accepted** (~1 wrong in 100).
+2. **The embedded-keyword reader stays.** Steve has not keyworded the new photos in
+   Lightroom, so P-I5's "none" proves nothing about them. A follow-up sample of 25
+   older masters that carry event keywords in the catalog found **3 with IPTC keyword
+   records in the file** (all in `2004/December`) and none with XMP `dc:subject` — so
+   some files do carry keywords, most do not. Read IPTC as well as XMP.
