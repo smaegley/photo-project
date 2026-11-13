@@ -12,6 +12,11 @@ Pillow==11.0.0
 # too. 0.21.0 builds against the pinned Pillow 11.0.0.
 pillow-heif==0.21.0
 boto3==1.43.56
+# The admin face-review routes score embeddings in-process (app.match_faces helpers),
+# so numpy is a WEBSITE dependency, not only an ingest one. It was missing from this
+# file and Review faces -> Unnamed faces 500'd on prod (2026-11-13); dev never showed
+# it because the dev venv has everything installed. tests/check_api_image.py guards it.
+numpy==2.5.0
 httpx==0.28.1
 PyJWT==2.10.1
 cryptography==44.0.0

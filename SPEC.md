@@ -1929,6 +1929,7 @@ Follow-up answers (Steve, 2026-11-13, second pass):
 | 18 | **Inbox items never expire.** |
 | 20 | **Moved or renamed in Lightroom → re-pointed, not culled** (gap found by ops, 2026-11-13). The sync turns a move into delete-old-key + upload-new-key. Before culling a vanished key, reconcile matches it to a new key by size + capture time (or ETag) and re-points `storage_path`, keeping tags, faces and visibility. |
 | 19 | **Prod's faces are the gold copy; nothing face-related moves from dev.** All face review is finished on prod. The 378 suggestions pending on dev stay on dev and are not carried over. |
+| 19a | **Decision 19 re-confirmed with the cost known (Steve, 2026-11-13) — no exception, no carry-over tool.** Of the 575 suggestions prod's first face pass produced, 353 are faces Steve had tagged on dev after the 5 August sync, 60 he had rejected there, 16 carry some other dev decision and 146 are new; the 355 August scans have 342 people tags on dev and 0 on prod (measured by ops, `OPS-2026-11-13-11`). He will re-review on prod. Do not propose transferring them. |
 
 ### 15.3 What Steve does, end to end
 1. Import into Lightroom as today (Google Photos zip or DSLR card). Lightroom → NAS → B2
