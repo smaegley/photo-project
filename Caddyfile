@@ -11,8 +11,21 @@
     handle /health {
         reverse_proxy api:8077
     }
+    # Hashed build assets: cache forever, and a MISSING one is a real 404. Falling back
+    # to index.html here is what turns a stale tab into a blank white page — the browser
+    # asks for last deploy's /assets/index-<hash>.js, gets HTML back, and refuses to run it.
+    handle /assets/* {
+        root * /srv
+        @hit file
+        header @hit Cache-Control "public, max-age=31536000, immutable"   # never on the 404
+        file_server
+    }
+    # The SPA shell must be revalidated on every load, or a browser keeps using an old
+    # index.html (heuristic caching can hold it for days) that points at assets a deploy
+    # has since replaced.
     handle {
         root * /srv
+        header Cache-Control "no-cache"
         try_files {path} /index.html
         file_server
     }
