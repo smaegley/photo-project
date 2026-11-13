@@ -2196,6 +2196,24 @@ culled photos; culled photos are not yet excluded from the face match index (sli
 when the index moves to prod). The Rolls-view lightbox has no Cull button yet. The UI
 has been built and the API exercised, but **not yet clicked through in a browser**.
 
+**Slice 2 — built, pushed (`db5cbc7`), with ops (2026-11-13).** `Dockerfile` has an
+`ingest` stage on top of `api`; compose pins `api` to its stage and adds a profiled,
+limited `ingest` service. 788 MB built without BuildKit; `detect_faces` measured at
+~2 s/photo under the limits (so the one-time prod pass is 3–4 h, not "about an hour").
+`queries.not_culled()` keeps culled photos out of matching, clustering and every admin
+review tool, while leaving pending photos in. Runbook: `infra/DEPLOY.md`.
+
+**Slice 3 — built on dev (`0fe91fc`), not pushed.** `app/ingest.py` + migration
+`b4c5d6e7f8a9`; `GET /api/admin/inbox`, `inbox/summary`, `POST photos/publish`; Inbox
+screen (grouped by day until outings land in slice 4) and a count on the Manage menu.
+EXIF orientation is recorded as the existing `photo.rotation` override rather than
+baked into derivatives, so prewarm and serving agree. Dev test, first 60 candidates:
+59 staged, 1 error (the known truncated 2004 master), 144 s including detection and
+matching. Lesson kept in the code: the first run reported "ok, 1 new, 59 errors"
+because the HEIC decoder was not registered — a batch where more than a quarter of
+files fail now fails the run. Not yet done: reconcile of deleted/moved/replaced
+objects (decisions 16, 17, 20) — scheduled with slice 4.
+
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.
 - A signed-in viewer can reach no pending or culled photo by any route or image URL.
