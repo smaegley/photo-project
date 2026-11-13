@@ -12,6 +12,12 @@ services:
       # enforced and the dev bypass is off. Leave unset only for local testing.
       - CF_ACCESS_TEAM_DOMAIN=${CF_ACCESS_TEAM_DOMAIN}
       - CF_ACCESS_AUD=${CF_ACCESS_AUD}
+      # Backblaze B2, read-only (SPEC §13). From .env; blank = local-only serving.
+      # (Was carried by an untracked override file on prod until 2026-11-13.)
+      - B2_KEY_ID=${B2_KEY_ID:-}
+      - B2_APP_KEY=${B2_APP_KEY:-}
+      - B2_BUCKET=${B2_BUCKET:-}
+      - B2_ENDPOINT=${B2_ENDPOINT:-}
     volumes:
       - ./data:/data
       # Image library, read-WRITE: the app rotates slides in place and (re)generates
