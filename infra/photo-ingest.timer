@@ -1,0 +1,13 @@
+[Unit]
+Description=Nightly Maegley Photo Album B2 ingest
+
+[Timer]
+# LXC 209 runs UTC; the zone is explicit so this stays 07:30 Mountain across DST.
+# The NAS -> B2 sync finishes 05:00-07:00 Mountain.
+OnCalendar=*-*-* 07:30:00 America/Denver
+# Not Persistent: no catch-up run when the 02:00 stop-mode vzdump restarts the
+# container; a missed run waits for the next morning (the dead-man alert covers it).
+Persistent=false
+
+[Install]
+WantedBy=timers.target

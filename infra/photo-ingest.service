@@ -1,0 +1,24 @@
+[Unit]
+Description=Maegley Photo Album nightly B2 ingest (SPEC §15)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/photo-project
+# A restore point before every run. KEEP must match photo-backup.service: both units
+# rotate the same directory, so the smaller number would win.
+Environment=DB=/opt/photo-project/data/photos.db
+Environment=OUTDIR=/opt/photo-project/snapshots
+Environment=KEEP=28
+# Broker address and login for the status message; ops-owned, never in git.
+EnvironmentFile=-/etc/photo-album/mqtt.env
+ExecStartPre=/opt/photo-project/infra/db-snapshot.sh
+# `app.ingest` must be named: the image's default command is app.detect_faces.
+ExecStart=/usr/bin/docker compose --profile ingest run --rm -T ingest app.ingest
+# Runs whatever happened above — success, app failure, OOM kill, timeout, or a failed
+# snapshot — and publishes the retained status message (infra/job-status.sh).
+ExecStopPost=/opt/photo-project/infra/job-status.sh ingest
+# A hung run must never reach the 02:00 Mountain vzdump.
+TimeoutStartSec=4h

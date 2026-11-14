@@ -284,7 +284,42 @@ docker compose --profile ingest run --rm ingest app.cluster_faces             # 
   if it is interrupted (including by the 02:00 Mountain backup) just run it again.
 - Take a DB snapshot first (`bash infra/db-snapshot.sh`). Nothing here deletes data,
   but `match_faces` replaces all *pending* suggestions each run.
-**Nightly ingest by hand** (until the timer exists — SPEC §15.15 slice 8):
+**Nightly ingest timer + status messages (SPEC §15.15 slice 8).** Tracked units:
+`infra/photo-ingest.service`, `infra/photo-ingest.timer`, `infra/photo-backup.service`
+(now with a status publisher), and `infra/job-status.sh`.
+
+```bash
+# once: broker login, ops-owned, never in git (MQTT_HOST, MQTT_PORT, MQTT_USER, MQTT_PASS)
+ls -l /etc/photo-album/mqtt.env                         # root, 0600
+command -v mosquitto_pub                                # from mosquitto-clients, on the host
+# install (symlinks, so a `git pull` updates the units; then daemon-reload)
+systemctl link /opt/photo-project/infra/photo-ingest.service /opt/photo-project/infra/photo-ingest.timer
+# photo-backup.service: the installed copy has host-specific lines (the off-site step),
+# so MERGE these three into it by hand rather than replacing it:
+#   Environment=KEEP=28
+#   EnvironmentFile=-/etc/photo-album/mqtt.env
+#   ExecStopPost=/opt/photo-project/infra/job-status.sh backup
+systemctl daemon-reload && systemctl enable --now photo-ingest.timer
+systemctl list-timers 'photo-*'                         # ingest 07:30 Mountain, backup 03:30 UTC
+```
+
+- The run is `docker compose --profile ingest run --rm -T ingest app.ingest`. **`app.ingest`
+  must be named** — the image's default command is `app.detect_faces`.
+- Each run takes a DB snapshot first (`ExecStartPre`). `KEEP=28` must be the same in
+  **both** units: they rotate one directory and the smaller number would win.
+- `job-status.sh ingest|backup` runs as `ExecStopPost=` after every attempt and
+  publishes a retained message to `photo-album/<job>/status`:
+  `{"state":"ok|failed","finished_at":"…Z","new":N,"errors":N,"result":"<SERVICE_RESULT>"}`.
+  Ingest is `ok` only if systemd reports success **and** the app's `INGEST_RESULT` line
+  says ok. It always exits 0; a failed publish is logged, never fails the unit.
+  Try it without publishing: `SERVICE_RESULT=success JOB_STATUS_DRY_RUN=1 infra/job-status.sh backup`.
+- Home Assistant (ops, `packages/photo_album_alerts.yaml`): Telegram on `failed`; at
+  09:00 Mountain, Telegram if a job's `finished_at` is over 26 h old.
+- `errors` > 0 with `state: ok` means individual files could not be read (they are
+  retried every night); it is not an alert.
+- A reconcile guard (too many masters missing at once) ends the run `failed` on purpose.
+
+**Ingest by hand** (still fine at any time; the timer just does the second line):
 
 ```bash
 docker compose --profile ingest run --rm ingest app.ingest --dry-run   # listing + reconcile report, no writes

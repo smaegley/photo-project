@@ -7,5 +7,9 @@ Type=oneshot
 # Adjust paths if the deploy dir differs.
 Environment=DB=/opt/photo-project/data/photos.db
 Environment=OUTDIR=/opt/photo-project/snapshots
-Environment=KEEP=14
+Environment=KEEP=28
+# KEEP must match photo-ingest.service: both rotate the same directory.
+EnvironmentFile=-/etc/photo-album/mqtt.env
 ExecStart=/opt/photo-project/infra/db-snapshot.sh
+# Retained status message for Home Assistant (failure + dead-man alerts, SPEC §15.12).
+ExecStopPost=/opt/photo-project/infra/job-status.sh backup

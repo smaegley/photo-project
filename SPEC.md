@@ -2391,6 +2391,16 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
   idempotent, confirm / remove / undo, no existing tag changed),
   `check_write_contention` with `app.autotag`, `check_visibility`, `check_api_image`.
 
+**Slice 8 — built and pushed (2026-11-14); deploy request `DEV-2026-11-14-11`.** Ops' half is live
+(`OPS-2026-11-14-10`): Mosquitto on LXC 206, login in `/etc/photo-album/mqtt.env` on
+209, HA package with the failed + dead-man alerts, tested end to end. DEV's half:
+`infra/photo-ingest.service` + `.timer` (07:30 America/Denver, `Persistent=false`,
+snapshot first, 4 h cap), `infra/job-status.sh ingest|backup` as `ExecStopPost=` on the
+ingest and backup units, snapshot `KEEP` 14 → 28 in both. Beyond §15.12: a second topic
+`photo-album/backup/status` (the backup job was silent on success until now) and a
+`result` field carrying `$SERVICE_RESULT`. Payload logic tested on dev with stand-in
+inputs; no real publish and no run under systemd until ops installs it.
+
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.
 - A signed-in viewer can reach no pending or culled photo by any route or image URL.
