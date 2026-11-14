@@ -60,6 +60,11 @@ if not n_ing:
 db.execute("update photo set visibility='pending', triage=null, outing_id=null, culled_from=null "
            "where ingest_run_id is not null")
 db.execute("delete from outing")
+# The fixture owns event tags too: on prod most ingested photos have been published
+# with an event, and setting them back to pending must not leave that tag behind
+# (OPS-2026-11-14-08 — "gets no event" saw a Birthday tag from before the test).
+db.execute("delete from photo_event where photo_id in "
+           "(select id from photo where ingest_run_id is not null)")
 db.commit()
 gallery_before = viewer.get("/api/photos/meta").json()
 
