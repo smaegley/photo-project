@@ -753,6 +753,7 @@ button:disabled kbd { opacity: .3; }
   flex-wrap: wrap; }
 .rotation-toolbar .ghost.active { border-color: var(--accent); color: var(--accent); }
 .rotation-apply { margin-left: auto; }
+.inbox-admin .rotation-apply { margin-left: 0; }
 .rotation-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
   gap: 8px; overflow-y: auto; max-height: 68vh; padding-bottom: 8px; }
 .rotation-cell { position: relative; border: 2px solid transparent; border-radius: 8px;
@@ -770,7 +771,17 @@ button:disabled kbd { opacity: .3; }
 .lb-toolbar .lb-tool-cull { width: auto; padding: 0 10px; font-size: 13px; color: #ff9b8f; }
 
 /* Inbox (SPEC §15.8) */
-.inbox-admin .inbox-days { overflow-y: auto; min-height: 0; padding-bottom: 12px; }
+/* The toolbar must keep its full height: .rotation-sweep lets every child shrink, and a
+   shrunken toolbar spills its second and third rows over the photo list. */
+.modal.modal-wide.inbox-admin { width: min(1100px, 94vw); max-height: 90vh; }
+.inbox-admin > .modal-head, .inbox-admin > .rotation-toolbar, .inbox-admin > .modal-msg { flex: 0 0 auto; }
+.inbox-admin > .rotation-toolbar { row-gap: 6px; border-bottom: 1px solid var(--border); }
+.inbox-admin > .rotation-toolbar, .inbox-admin > .modal-msg { margin: 0 20px; }
+.inbox-admin > .inbox-days { padding: 0 20px 12px; }
+.inbox-admin .inbox-tabs { flex: 1 1 auto; }
+.inbox-admin .inbox-help { flex: 1 1 100%; order: 3; }
+.inbox-admin .inbox-days { flex: 1 1 auto; overflow-y: auto; min-height: 0; padding-bottom: 12px; }
+.inbox-day-head .inbox-acts { display: inline-flex; gap: 12px; margin-left: auto; white-space: nowrap; }
 .inbox-day { margin-bottom: 14px; }
 .inbox-day-head { display: flex; align-items: baseline; gap: 12px; padding: 8px 0 6px;
   position: sticky; top: 0; background: var(--panel, var(--bg)); z-index: 1; }

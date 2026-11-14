@@ -161,6 +161,7 @@ class Photo(Base):
     triage: Mapped[str | None] = mapped_column(String, nullable=True)
     outing_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=False)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    junk_score: Mapped[float | None] = mapped_column(Float, nullable=True)   # app.junk, 0..1
     # True while the B2 master is absent from the bucket listing (app.reconcile). The
     # auto-cull fires only when this turns True, so a photo an admin restores from the
     # Culled view is not culled again the next night.
@@ -255,8 +256,8 @@ class UsageEvent(Base):
 
 # SPEC §15.5 triage classes. `rescued` is an admin overruling "unselected"; the pipeline
 # never assigns it and never changes it.
-TRIAGE_SELECTED, TRIAGE_RELATED, TRIAGE_UNSELECTED, TRIAGE_RESCUED = (
-    "selected", "related", "unselected", "rescued")
+TRIAGE_SELECTED, TRIAGE_RELATED, TRIAGE_UNSELECTED, TRIAGE_RESCUED, TRIAGE_JUNK = (
+    "selected", "related", "unselected", "rescued", "junk")
 TRIAGE_INBOX = (TRIAGE_SELECTED, TRIAGE_RELATED, TRIAGE_RESCUED)
 
 

@@ -22,7 +22,9 @@ the run (there is a known truncated master in the bucket).
 5. **Outings + triage** — `app.outings` groups the photos and decides which tab of the
    inbox each lands in (§15.5).
 
-Not yet: the junk score (slice 5), near-duplicate stacks (6), auto-tagging (7).
+Between 4 and 5, `app.junk` scores each new photo for the Likely junk tab.
+
+Not yet: near-duplicate stacks (slice 6), auto-tagging (7).
 """
 import argparse
 import io
@@ -313,6 +315,11 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
             from app import detect_faces, match_faces
             detect_faces.run(origin="digital")
             match_faces.run()
+
+        if not skip_faces:
+            # Junk score for anything not scored yet (skips itself if the model is absent).
+            from app import junk
+            junk.run()
 
         # Outings + triage: cheap, and worth redoing every night even with nothing new
         # (a face named or rejected since yesterday changes which photos are selected).

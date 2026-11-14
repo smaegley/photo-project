@@ -2225,7 +2225,7 @@ Peak memory not captured (ops will read `MemoryPeak` in slice 8). Follow-up from
 done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2 intra,
 1 inter) so they neither pin to CPUs outside the LXC cpuset nor size for the host.
 
-**Slice 4 — built, approved by Steve on dev, pushed (2026-11-13); with ops (`DEV-2026-11-13-13`).** Migration `c5d6e7f8a9b0`: table
+**Slice 4 — ✅ LIVE ON PROD (2026-11-14, `0cf7e86`, `OPS-2026-11-14-01`).** On prod: 80 outings / 26 singletons as on dev; triage 161 selected · 179 related · 110 unselected; reconcile report all zeros over 5,129 B2 photos; no affinity warnings after the thread fix; the untracked compose override is retired (`e6cd9cc`). Migration `c5d6e7f8a9b0`: table
 `outing`; `photo.taken_at`, `triage`, `outing_id`, `file_size`, `master_missing`.
 
 - **Outings + triage: `app/outings.py`** (runs at the end of every ingest; no ML, so it
@@ -2291,6 +2291,35 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
   `check_write_contention` now includes `app.outings`.
 - *Not done:* the junk class (slice 5) — until then junk-looking photos sit in
   whichever tab their faces put them. People chips are still read-only names (slice 7).
+
+**Slice 5 — built on dev (2026-11-14), not pushed.** Migration `d6e7f8a9b0c1`
+(`photo.junk_score`).
+
+- **`app/junk.py`**: CLIP ViT-B/32 zero-shot, same prompts and preprocessing as P-I2,
+  run on the display derivative; score = share of probability on the junk prompts.
+  Runs in `app.ingest` after matching, before outings; one short write per photo.
+- **Only the vision model ships** (`<models>/clip/vision_model.onnx`, 352 MB, sha256
+  `fd6e1402…7d40`, mounted read-only with the face models). The text embeddings of the
+  39 prompts are precomputed into `backend/app/junk_prompts.npz` (76 KB, in git) by
+  `backend/tools/build_junk_prompts.py`, so no tokenizer, text model or new Python
+  package is needed anywhere. If the model file is absent the step warns and skips —
+  nothing is classed as junk and the run stays `ok`.
+- **Triage** gains `junk`: score ≥ 0.5 **and no face of any kind**, checked after
+  `selected`. A junk photo does not anchor its outing. Only pending photos are classed.
+- **Likely junk tab** between Inbox and Not selected: score under each photo, **Cull
+  all** (the "confirm" of §15.8), Rescue per photo or group. Nothing is culled until an
+  admin presses the button. A rescued junk photo becomes `rescued` like any other.
+- On the dev batch: 25 of 450 score ≥ 0.5; 11 of those have a face and stay where
+  they were; **14 land in Likely junk** (the probe's 20 minus photos already published
+  or culled on dev, which keep their class). 68 s for 450 photos on dev natively.
+  With the face models loaded in the same process inside the ingest image: 781 MB
+  after loading both and scoring one photo — well inside the 2.6 GB limit, though the
+  full-run peak is still to be measured on prod.
+- *Verified:* `check_inbox` (tab = class, no faced or under-threshold photo is junk,
+  pipeline never culls, rescue + undo), `check_write_contention` with `app.junk`,
+  `check_api_image` in the api image.
+- *Not measured:* recall. The first batch was pre-cleaned; whether real junk gets
+  caught will show on Steve's next unfiltered import.
 
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.

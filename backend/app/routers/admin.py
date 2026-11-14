@@ -1444,6 +1444,8 @@ def _inbox_tab(tab: str):
     nothing pending is ever out of sight."""
     if tab == "unselected":
         return m.Photo.triage == m.TRIAGE_UNSELECTED
+    if tab == "junk":
+        return m.Photo.triage == m.TRIAGE_JUNK
     return or_(m.Photo.triage.is_(None), m.Photo.triage.in_(m.TRIAGE_INBOX))
 
 
@@ -1460,7 +1462,7 @@ def _missing_ids(db: Session) -> list[int]:
 
 def _inbox_counts(db: Session) -> dict:
     pend = db.query(func.count(m.Photo.id)).filter(m.Photo.visibility == m.VIS_PENDING)
-    c = {t: pend.filter(_inbox_tab(t)).scalar() or 0 for t in ("inbox", "unselected")}
+    c = {t: pend.filter(_inbox_tab(t)).scalar() or 0 for t in ("inbox", "unselected", "junk")}
     c["missing"] = len(_missing_ids(db))
     return c
 
@@ -1479,7 +1481,8 @@ def _outing_event(db: Session, o: m.Outing) -> m.Event | None:
 def inbox_summary(db: Session = Depends(get_db), _user: m.User = Depends(require_admin)):
     """Cheap counts for the menu badge (`pending` = the Inbox tab)."""
     c = _inbox_counts(db)
-    return {"pending": c["inbox"], "unselected": c["unselected"], "missing": c["missing"],
+    return {"pending": c["inbox"], "unselected": c["unselected"], "junk": c["junk"],
+            "missing": c["missing"],
             "last_run": _last_run(db)}
 
 
@@ -1488,8 +1491,8 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
           tab: str = "inbox"):
     """Pending photos of one tab, grouped by outing (SPEC §15.8), newest outing first.
     Each photo carries its detected-face count and the names the matcher suggests."""
-    if tab not in ("inbox", "unselected", "missing"):
-        raise HTTPException(400, "tab must be inbox, unselected or missing")
+    if tab not in ("inbox", "unselected", "junk", "missing"):
+        raise HTTPException(400, "tab must be inbox, unselected, junk or missing")
     if tab == "missing":
         # Not a pending-photo tab: these are existing photos, in any state, whose
         # master has gone from the bucket. Shown so the admin can see what the run
@@ -1566,6 +1569,7 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
                         "taken_at": p.taken_at.isoformat() if p.taken_at else None,
                         "triage": p.triage, "has_gps": p.lat is not None,
                         "visibility": p.visibility, "culled_by": p.culled_by,
+                        "junk_score": round(p.junk_score, 2) if p.junk_score is not None else None,
                         "faces": n_faces.get(p.id, 0), "suggested": names.get(p.id, []),
                         "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
                         "display_url": _display_url(p.source_file) + _photo_version(p)}
@@ -1636,14 +1640,15 @@ def publish_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
 @router.post("/photos/rescue")
 def rescue_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
                   user: m.User = Depends(require_admin)):
-    """Move pending photos from Not selected into the Inbox tab. Sticky: the nightly
+    """Move pending photos from Not selected or Likely junk into the Inbox tab. Sticky: the nightly
     triage never demotes a rescued photo, and its outing-mates become `related`."""
     _check_photo_ids(db, body.photo_ids)
     prev: dict[str, str | None] = {}
     for ch in _chunks(body.photo_ids):
         for p in db.query(m.Photo).filter(m.Photo.id.in_(ch),
                                           m.Photo.visibility == m.VIS_PENDING,
-                                          m.Photo.triage == m.TRIAGE_UNSELECTED).all():
+                                          m.Photo.triage.in_((m.TRIAGE_UNSELECTED,
+                                                              m.TRIAGE_JUNK))).all():
             prev[str(p.id)] = p.triage
             p.triage = m.TRIAGE_RESCUED
     if prev:

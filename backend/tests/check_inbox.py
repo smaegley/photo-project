@@ -102,9 +102,26 @@ ib, un = admin.get("/api/admin/inbox").json(), admin.get("/api/admin/inbox?tab=u
 n = lambda d: sum(len(g["photos"]) for g in d["groups"])     # noqa: E731
 check(n(ib) == tri.get("selected", 0) + tri.get("related", 0), f"Inbox tab = selected + related ({n(ib)})")
 check(n(un) == tri.get("unselected", 0), f"Not selected tab = unselected ({n(un)})")
-check(n(ib) + n(un) == n_ing, "the two tabs cover every pending photo exactly once")
+check(n(ib) + n(un) + tri.get("junk", 0) == n_ing, "the tabs cover every pending photo exactly once")
 check(admin.get("/api/admin/inbox/summary").json()["pending"] == n(ib), "badge counts the Inbox tab only")
 check(viewer.get("/api/photos/meta").json() == gallery_before, "family gallery unchanged by triage")
+
+print("== likely junk ==")
+jk = admin.get("/api/admin/inbox?tab=junk").json()
+check(n(jk) == tri.get("junk", 0), f"Likely junk tab = junk ({n(jk)})")
+check(q("""select count(*) from photo p where triage='junk' and
+           (exists (select 1 from face f where f.photo_id=p.id) or junk_score is null or junk_score < 0.5)""")[0][0] == 0,
+      "no photo with a face, or under the threshold, is classed as junk")
+check(q("select count(*) from photo where triage='junk' and visibility!='pending'")[0][0] == 0,
+      "junk is never culled or published by the pipeline")
+if n(jk):
+    jid = jk["groups"][0]["photos"][0]["id"]
+    admin.post("/api/admin/photos/rescue", json={"photo_ids": [jid]})
+    outings.run()
+    check(q("select triage from photo where id=?", jid)[0][0] == "rescued", "a rescued junk photo stays in the Inbox")
+    admin.post("/api/admin/undo")
+    outings.run()
+    check(q("select triage from photo where id=?", jid)[0][0] == "junk", "undo returns it to Likely junk")
 
 print("== rescue ==")
 g = max(un["groups"], key=lambda g: len(g["photos"]))

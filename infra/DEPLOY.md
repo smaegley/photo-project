@@ -257,6 +257,11 @@ mkdir -p /opt/photo-project/models
 rsync -a aiuser@10.0.1.121:/home/aiuser/.insightface/models/buffalo_l /opt/photo-project/models/
 ls /opt/photo-project/models/buffalo_l        # expect det_10g.onnx and w600k_r50.onnx (+3 unused), ~326 MB
 
+# 1b. junk-classifier vision model (slice 5) — same directory, same mount
+mkdir -p /opt/photo-project/models/clip
+rsync -a aiuser@10.0.1.121:/home/aiuser/.insightface/models/clip/vision_model.onnx /opt/photo-project/models/clip/
+sha256sum /opt/photo-project/models/clip/vision_model.onnx   # fd6e1402a588279d1723c7534d4bcba5bc0b14b47dfab0e46f8c47b8270d7d40
+
 # 2. build the image (BuildKit off, as always on this host) — about 790 MB
 cd /opt/photo-project
 DOCKER_BUILDKIT=0 COMPOSE_DOCKER_CLI_BUILD=0 docker compose --profile ingest build ingest
@@ -285,6 +290,7 @@ docker compose --profile ingest run --rm ingest app.cluster_faces             # 
 docker compose --profile ingest run --rm ingest app.ingest --dry-run   # listing + reconcile report, no writes
 docker compose --profile ingest run --rm ingest app.ingest             # stage, faces, match, outings
 docker compose exec -T api python -m app.outings                       # regroup/re-triage only; no ML, seconds
+docker compose --profile ingest run --rm ingest app.junk               # junk-score anything unscored (part of app.ingest too)
 ```
 
 - **Reconcile** (photos deleted, moved or replaced in the bucket) starts in **report**

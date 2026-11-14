@@ -13,6 +13,8 @@ with no EXIF capture time (saved or received images) group by their dated import
 **Triage, first match wins** (`rescued` is an admin override and is never touched):
   selected   — a face in the photo matches someone known to the app (a pending or
                accepted suggestion), or the photo carries a people tag
+  junk       — junk score at or over the threshold AND no face of any kind in the
+               photo (every flagged photo with a face was a false positive, P-I2)
   related    — same outing as a selected or rescued photo
   unselected — everything else
 Only *pending* photos are re-triaged, so a class can still improve when a late arrival
@@ -34,7 +36,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import timedelta
 
-from app import models as m
+from app import junk, models as m
 from app.database import SessionLocal
 
 GAP = timedelta(hours=2)
@@ -107,7 +109,7 @@ def run(dry_run: bool = False) -> dict:
     try:
         rows = (db.query(m.Photo.id, m.Photo.taken_at, m.Photo.lat, m.Photo.lon,
                          m.Photo.source_file, m.Photo.outing_id, m.Photo.triage,
-                         m.Photo.visibility)
+                         m.Photo.visibility, m.Photo.junk_score)
                 .filter(m.Photo.ingest_run_id.isnot(None)).all())
         if not rows:
             print("outings: no ingested photos")
@@ -126,6 +128,11 @@ def run(dry_run: bool = False) -> dict:
 
         # --- triage ---
         trig = trigger_ids(db)
+        faced = {pid for (pid,) in db.query(m.Face.photo_id).distinct()
+                 .join(m.Photo, m.Photo.id == m.Face.photo_id)
+                 .filter(m.Photo.ingest_run_id.isnot(None))}
+        junky = {r.id for r in rows if r.junk_score is not None
+                 and r.junk_score >= junk.THRESHOLD and r.id not in faced and r.id not in trig}
         new_triage: dict[int, str] = {}
         for g in groups:
             def frozen(r):                         # once published or culled, or rescued
@@ -140,6 +147,7 @@ def run(dry_run: bool = False) -> dict:
                 if frozen(r):
                     continue
                 t = (m.TRIAGE_SELECTED if i in trig
+                     else m.TRIAGE_JUNK if i in junky
                      else m.TRIAGE_RELATED if anchored else m.TRIAGE_UNSELECTED)
                 if t != r.triage:
                     new_triage[i] = t

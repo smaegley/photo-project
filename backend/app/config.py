@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     ingest_reconcile: str = "report"
     ingest_max_auto_cull: int = 25      # more vanished masters than this = cull none, alert
     ingest_max_refresh: int = 200       # same guard for replaced masters
+    # Junk classifier's vision model (SPEC §15.15 slice 5). In the ingest container the
+    # host's models directory is mounted at ~/.insightface/models. Absent = step skipped.
+    junk_model_path: str = "~/.insightface/models/clip/vision_model.onnx"
 
     @property
     def cf_access_enabled(self) -> bool:

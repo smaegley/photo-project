@@ -11,7 +11,10 @@ import { api } from "../api";
 // (The junk tab and stacks arrive in later slices.)
 //   Missing from B2 — existing photos whose master file has gone from the bucket
 //                  (deleted in Lightroom, or a mistake). Only shown when there are any.
-const TABS = [["inbox", "Inbox"], ["unselected", "Not selected"], ["missing", "Missing from B2"]];
+//   Likely junk  — no face, and it looks like a label, receipt, screenshot…; a guess,
+//                  never culled automatically. "Cull all" confirms the lot.
+const TABS = [["inbox", "Inbox"], ["junk", "Likely junk"], ["unselected", "Not selected"],
+  ["missing", "Missing from B2"]];
 
 const hhmm = (iso) => iso.slice(11, 16);
 function when(g) {
@@ -111,6 +114,9 @@ export default function InboxAdmin({ onClose, onChanged }) {
     : "No ingest has run yet.";
   const isInbox = tab === "inbox";
   const isMissing = tab === "missing";
+  const isJunk = tab === "junk";
+  const canRescue = tab === "unselected" || isJunk;
+  const allIds = data.groups.flatMap((g) => g.photos.map((p) => p.id));
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -129,18 +135,15 @@ export default function InboxAdmin({ onClose, onChanged }) {
               </button>
             ))}
           </span>
-          <span className="modal-sub">
-            {isInbox ? "Someone the app recognises, plus the rest of the same outing."
-              : isMissing ? (data.reconcile_mode === "apply"
-                ? "These files are no longer in B2. The photos were culled automatically; put a file back in Lightroom and its photo returns by itself the next night."
-                : "These files are no longer in B2. Nothing has been changed (report-only mode): put the file back in Lightroom if it was a mistake, or cull the photo here if it was not.")
-              : "No one recognised. Rescue what is worth keeping; the rest can stay here."}
-            {" "}Click to mark; double-click to view larger. {runNote}
-          </span>
           <button className="ghost rotation-apply" onClick={() => cull([...marked])} disabled={busy || !marked.size}>
             Cull {marked.size || ""}
           </button>
-          {tab === "unselected" && (
+          {isJunk && (
+            <button className="ghost rotation-apply" onClick={() => cull(allIds)} disabled={busy || !allIds.length}>
+              Cull all {allIds.length || ""}
+            </button>
+          )}
+          {canRescue && (
             <button className="ghost" onClick={() => rescue([...marked])} disabled={busy || !marked.size}>
               Rescue {marked.size || ""}
             </button>
@@ -150,6 +153,15 @@ export default function InboxAdmin({ onClose, onChanged }) {
               Publish {marked.size || ""}
             </button>
           )}
+          <span className="modal-sub inbox-help">
+            {isInbox ? "Someone the app recognises, plus the rest of the same outing."
+              : isMissing ? (data.reconcile_mode === "apply"
+                ? "These files are no longer in B2. The photos were culled automatically; put a file back in Lightroom and its photo returns by itself the next night."
+                : "These files are no longer in B2. Nothing has been changed (report-only mode): put the file back in Lightroom if it was a mistake, or cull the photo here if it was not.")
+              : isJunk ? "No faces, and they look like labels, receipts, screenshots or similar. This is a guess: rescue anything it got wrong, then Cull all."
+              : "No one recognised. Rescue what is worth keeping; the rest can stay here."}
+            {" "}Click to mark; double-click to view larger. {runNote}
+          </span>
         </div>
 
         <div className="inbox-days">
@@ -163,17 +175,21 @@ export default function InboxAdmin({ onClose, onChanged }) {
                   {g.already_published ? ` · ${g.already_published} already published` : ""}
                   {tab === "unselected" && g.has_faces ? " · has faces" : ""}
                 </span>
-                {g.outing_id != null && (
+                {g.outing_id != null && !isJunk && (
                   <EventField group={g} events={events} busy={busy} onSave={nameOuting} />
                 )}
+                <span className="inbox-acts">
                 <button className="link" disabled={busy} onClick={() => markGroup(g.photos)}>
                   {g.photos.every((p) => marked.has(p.id)) ? "Unmark all" : "Mark all"}
                 </button>
-                {tab === "unselected" && (
-                  <button className="link" disabled={busy} onClick={() => rescue(ids(g))}>Rescue outing</button>
+                {canRescue && (
+                  <button className="link" disabled={busy} onClick={() => rescue(ids(g))}>
+                    {isJunk ? "Rescue these" : "Rescue outing"}
+                  </button>
                 )}
-                {!isMissing && <button className="link" disabled={busy} onClick={() => publish(ids(g))}>Publish outing</button>}
+                {!isMissing && !isJunk && <button className="link" disabled={busy} onClick={() => publish(ids(g))}>Publish outing</button>}
                 {!isMissing && <button className="link" disabled={busy} onClick={() => cull(ids(g))}>Cull outing</button>}
+                </span>
               </header>
               <div className="rotation-grid">
                 {g.photos.map((p) => (
@@ -187,6 +203,7 @@ export default function InboxAdmin({ onClose, onChanged }) {
                     <span className="rotation-badge">{marked.has(p.id) ? "✓" : ""}</span>
                     <span className="inbox-names">
                       {isMissing ? (p.visibility === "culled" ? "culled" : `still ${p.visibility}`)
+                        : isJunk ? `junk score ${p.junk_score ?? "?"}`
                         : p.suggested.length ? p.suggested.slice(0, 3).join(", ")
                         : p.faces ? `${p.faces} unknown face${p.faces !== 1 ? "s" : ""}` : ""}
                     </span>
