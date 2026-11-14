@@ -234,6 +234,7 @@ export default function InboxAdmin({ onClose, onChanged }) {
                               onClick={() => (open ? toggle(p.id) : markGroup(it.photos))}
                               onDoubleClick={() => setPeek(p)} disabled={busy}
                               title={`${p.filename || p.source_file}${p.date_raw ? " · " + p.date_raw : ""}`
+                                + `${p.tagged.length ? " · tagged " + p.tagged.map((t) => t.name).join(", ") : ""}`
                                 + `${p.suggested.length ? " · looks like " + p.suggested.join(", ") : ""}`
                                 + (isStack && !open ? ` · ${it.photos.length} similar shots — click marks them all` : "")}>
                         <span className="rotation-frame">
@@ -257,7 +258,21 @@ export default function InboxAdmin({ onClose, onChanged }) {
                         <span className="inbox-names">
                           {isMissing ? (p.visibility === "culled" ? "culled" : `still ${p.visibility}`)
                             : isJunk ? `junk score ${p.junk_score ?? "?"}`
-                            : p.suggested.length ? p.suggested.slice(0, 3).join(", ")
+                            : (p.tagged.length || p.suggested.length) ? (
+                              <>
+                                {p.tagged.map((t, k) => (
+                                  <b key={t.name} title={t.auto ? "Tagged automatically (strong face match)" : "Tagged"}>
+                                    {k ? ", " : ""}{t.name}
+                                  </b>
+                                ))}
+                                {p.suggested.filter((n) => !p.tagged.some((t) => t.name === n)).slice(0, 3)
+                                  .map((n, k) => (
+                                    <span key={n} title="Suggestion — confirm in Review faces">
+                                      {(k || p.tagged.length) ? ", " : ""}{n}?
+                                    </span>
+                                  ))}
+                              </>
+                            )
                             : p.faces ? `${p.faces} unknown face${p.faces !== 1 ? "s" : ""}` : ""}
                         </span>
                       </button>

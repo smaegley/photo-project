@@ -26,7 +26,8 @@ Between 4 and 5, `app.junk` scores each new photo for the Likely junk tab.
 
 6. **Stacks** — `app.stacks` groups near-duplicate bursts for the inbox.
 
-Not yet: auto-tagging (slice 7).
+After matching, `app.autotag` tags strong matches (>= 0.65, never pets) on the new,
+still-pending photos with `source='auto-face'`.
 """
 import argparse
 import io
@@ -317,6 +318,8 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
             from app import detect_faces, match_faces
             detect_faces.run(origin="digital")
             match_faces.run()
+            from app import autotag
+            autotag.run()                    # strong matches on pending photos only
 
         if not skip_faces:
             # Junk score for anything not scored yet (skips itself if the model is absent).

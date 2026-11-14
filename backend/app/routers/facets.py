@@ -123,7 +123,7 @@ def list_people(db: Session = Depends(get_db), user=Depends(current_user),
             id=p.id, name=p.canonical_name, relationship=rels.get(p.id),
             photo_count=n, representative_photo_id=p.representative_photo_id, face_url=face_url,
             father_id=p.father_id, mother_id=p.mother_id, spouse_id=p.spouse_id,
-            is_family=p.is_family))
+            is_family=p.is_family, is_pet=(p.notes or "").strip().lower() == "pet"))
     out.sort(key=lambda x: (REL_ORDER.index(x.relationship) if x.relationship in REL_ORDER else 99,
                             -x.photo_count, x.name))
     return out

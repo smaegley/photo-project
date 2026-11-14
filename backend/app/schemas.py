@@ -85,6 +85,7 @@ class PersonOut(BaseModel):
     mother_id: str | None = None
     spouse_id: str | None = None
     is_family: bool = True             # False = friend/other (SPEC §12.7)
+    is_pet: bool = False               # person.notes == 'pet'
 
 
 class EventOut(BaseModel):
@@ -201,6 +202,7 @@ class PersonCreate(BaseModel):
 class PersonRename(BaseModel):
     canonical_name: str
     is_family: bool | None = None   # optional non-family toggle (SPEC §12.7)
+    is_pet: bool | None = None      # pets are never auto-tagged (SPEC §15.10)
 
 
 class PersonLinksUpdate(BaseModel):

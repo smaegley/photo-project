@@ -2321,7 +2321,7 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
 - *Not measured:* recall. The first batch was pre-cleaned; whether real junk gets
   caught will show on Steve's next unfiltered import.
 
-**Slice 6 — built, approved by Steve on dev, pushed (2026-11-14); with ops (`DEV-2026-11-14-03`).** Migration `e7f8a9b0c1d2`
+**Slice 6 — ✅ LIVE ON PROD (2026-11-14, `ec419c3`, `OPS-2026-11-14-05`).** On prod: 450 measured in 32 s, 116 pending photos in 49 stacks (largest 6), peak 79 MiB, 0 lock errors; `check_inbox` passes on prod's data. Migration `e7f8a9b0c1d2`
 (`photo.phash`, `sharpness`, `stack_id`).
 
 - **`app/stacks.py`** (after `app.outings` in every ingest; no ML, runs in the `api`
@@ -2344,6 +2344,44 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
   across outings, neighbour limits, idempotent, cull + undo), `check_write_contention`
   with `app.stacks`, `check_api_image`, and headless screenshots of a collapsed and an
   opened stack.
+
+**Slice 7 — built on dev (2026-11-14), not pushed.** No migration.
+
+- **`app/autotag.py`**, in `app.ingest` right after `match_faces`: a *pending*
+  suggestion with score ≥ 0.65 becomes a `photo_person` row with
+  **`source='auto-face'`** and the face's box; the suggestion is marked `accepted` with
+  `decided_by='auto-face'`, so it is never re-offered and its score stays on record.
+- **Scope, narrower than §15.10's wording and deliberately so:** only photos that came
+  through ingest and are **still pending**. A photo the family can already see is never
+  auto-tagged; its strong matches stay suggestions. So every auto tag is shown to an
+  admin in the inbox (name in bold) before it can be published. The ~190 strong pending
+  suggestions on older, already-published photos are untouched.
+- **Never pets:** a person with `notes == 'pet'` is skipped. **Arya was not marked** —
+  the four older pets were, from the August import. Manage people gains a
+  **mark pet / unmark pet** action and a "pet" badge (`is_pet` on `PATCH
+  /api/admin/people/{id}` and in `/api/people`). The dry run prints per-person counts
+  so an unmarked pet is visible before anything is written. Arya is marked on dev;
+  **on prod she must be marked before the first `app.autotag` run.**
+- **Auto tags are not references:** `match_faces` excludes `auto-face` rows when
+  building each person's model. Confirming one makes it `human-confirmed`, and a reference.
+- **Audit:** Review faces → Check accepted → **auto-tagged only**, with ✓ Confirm and
+  the existing ✕ Remove tag. Removing an auto tag marks its suggestion `rejected`, so
+  the guess is neither offered nor applied again. Both are undoable.
+- **Inbox:** tagged names in bold, suggestions as "Name?".
+- One tag per (photo, person): a second strong face of the same person in one photo is
+  left for a human.
+- Dev batch: 156 strong pending suggestions on pending photos → **149 tagged** across
+  10 people, 4 pet (Arya) skipped, 3 left for review.
+- *Observation, not acted on:* 90 of the 149 are on faces under 0.3 % of the frame and
+  27 under 0.1 % (distant group shots). In the review history at score ≥ 0.65, humans
+  rejected 1 of 7 at under 0.1 %, 3 of 77 between 0.1 % and 0.3 %, and 14 of 645 above
+  — small samples that include pets. No size floor was added; the audit sorts smallest
+  first, which is where to look.
+- *Not built:* removing a chip directly in the inbox (§15.8). Wrong auto tags are
+  removed in the audit or the lightbox.
+- *Verified:* `check_inbox` (source, scope, pets, thresholds, references unchanged,
+  idempotent, confirm / remove / undo, no existing tag changed),
+  `check_write_contention` with `app.autotag`, `check_visibility`, `check_api_image`.
 
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.

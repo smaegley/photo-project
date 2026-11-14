@@ -71,6 +71,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     personId: "personId" in over ? over.personId : tinyPerson,
     maxScore: "maxScore" in over ? over.maxScore : auditMax,
     maxArea:  "maxArea"  in over ? over.maxArea  : (tinyOnly ? 0.003 : null),
+    autoOnly: "autoOnly" in over ? over.autoOnly : autoOnly,
     sort:     over.sort  ?? auditSort,
   });
   const reloadAudit = (over = {}) => {
@@ -79,7 +80,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     api.faceTags({ ...q, limit: PAGE, offset: 0 })
       .then((d) => setAudit(d.map((r) => ({ ...r, key: `${r.photo_id}:${r.person_id}` }))))
       .catch((e) => setErr(String(e)));
-    api.faceTagsByPerson({ maxScore: q.maxScore, maxArea: q.maxArea })
+    api.faceTagsByPerson({ maxScore: q.maxScore, maxArea: q.maxArea, autoOnly: q.autoOnly })
       .then(setTinyPeople).catch(() => {});
     setAuditSel(new Set());
   };
@@ -235,6 +236,19 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
     decideCluster({ action: "name", cluster_ids: [id], person_id: pid });
   }
 
+  async function confirmSelectedAuto() {
+    const pairs = audit.filter((a) => auditSel.has(a.key) && a.origin === "auto")
+      .map((a) => [a.photo_id, a.person_id]);
+    if (!pairs.length) return;
+    setBusy(true); setErr(null);
+    try {
+      const r = await api.confirmAutoTags(pairs);
+      setNote(`Confirmed ${r.confirmed} auto tag(s).`);
+      reloadAudit();
+      await refreshUndo();
+    } catch (e) { setErr(String(e?.message || e)); } finally { setBusy(false); }
+  }
+
   async function removeSelectedTags() {
     const pairs = audit.filter((a) => auditSel.has(a.key)).map((a) => [a.photo_id, a.person_id]);
     if (!pairs.length) return;
@@ -355,6 +369,7 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
   const [noFace, setNoFace] = useState(null);      // people lacking a thumbnail
   const [pick, setPick] = useState({});            // person_id -> chosen photo_id
   const [tinyOnly, setTinyOnly] = useState(true);
+  const [autoOnly, setAutoOnly] = useState(false);       // tags the nightly ingest applied
   const [tinyPeople, setTinyPeople] = useState(null);    // per-person counts
   const [tinyPerson, setTinyPerson] = useState(null);    // filter, null = everyone
   const [unnamed, setUnnamed] = useState([]);            // good faces with no name
@@ -902,6 +917,16 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
                                            reloadAudit({ maxArea: e.target.checked ? 0.003 : null }); }} />
                 tiny faces only
               </label>
+              <label className="fq-fam" title="Tags the nightly ingest applied by itself (score 0.65 or higher). Confirm the right ones; remove the wrong ones.">
+                <input type="checkbox" checked={autoOnly} disabled={busy}
+                       onChange={(e) => {
+                         const on = e.target.checked;
+                         setAutoOnly(on);
+                         if (on) setTinyOnly(false);
+                         reloadAudit(on ? { autoOnly: true, maxArea: null } : { autoOnly: false });
+                       }} />
+                auto-tagged only
+              </label>
               <span className="muted">{audit.length.toLocaleString()} of {auditTotal.toLocaleString()}</span>
               <span className="spacer" />
               <button onClick={() => setAuditSel(new Set(audit.map((a) => a.key)))}
@@ -910,6 +935,11 @@ export default function FaceQueueAdmin({ people, onClose, onChanged }) {
               {audit.length < auditTotal && (
                 <button onClick={loadMoreAudit} disabled={busy}>
                   Load {Math.min(300, auditTotal - audit.length).toLocaleString()} more
+                </button>
+              )}
+              {autoOnly && (
+                <button disabled={busy || !auditSel.size} onClick={confirmSelectedAuto}>
+                  ✓ Confirm {auditSel.size || ""}
                 </button>
               )}
               <button className="fq-reject" disabled={busy || !auditSel.size}

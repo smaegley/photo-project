@@ -292,6 +292,7 @@ docker compose --profile ingest run --rm ingest app.ingest             # stage, 
 docker compose exec -T api python -m app.outings                       # regroup/re-triage only; no ML, seconds
 docker compose --profile ingest run --rm ingest app.junk               # junk-score anything unscored (part of app.ingest too)
 docker compose exec -T api python -m app.stacks                        # re-stack near-duplicates; no ML
+docker compose exec -T api python -m app.autotag --dry-run             # who would be auto-tagged, per person; writes nothing
 ```
 
 - **Reconcile** (photos deleted, moved or replaced in the bucket) starts in **report**

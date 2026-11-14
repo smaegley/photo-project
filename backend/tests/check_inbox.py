@@ -154,6 +154,84 @@ if big:
     check(q("select count(*) from photo where stack_id=? and visibility='pending'", sid)[0][0] == len(mem),
           "undo + rerun rebuilds the stack")
 
+print("== auto-tag ==")
+import contextlib, io, re                                         # noqa: E402,E401
+from app import autotag, match_faces                              # noqa: E402
+
+
+def identified() -> int:
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        match_faces.run(dry_run=True)
+    return int(re.search(r"already identified:\s+(\d+)", buf.getvalue()).group(1))
+
+
+# Fixture: undo whatever auto-tagging the source DB already has, so there is work to do.
+db.execute("""update face_suggestion set status='pending', decided_by=null, decided_at=null
+              where decided_by='auto-face'""")
+db.execute("delete from photo_person where source='auto-face'")
+db.commit()
+strong = q("""select fs.id, f.photo_id, fs.person_id, pe.notes from face_suggestion fs
+              join face f on f.id=fs.face_id join photo p on p.id=f.photo_id
+              join person pe on pe.id=fs.person_id
+              where fs.status='pending' and fs.score>=0.65 and p.ingest_run_id is not null
+              and p.visibility='pending' order by fs.score desc""")
+if len(strong) < 5:
+    print("  (fewer than 5 strong pending suggestions in this DB — auto-tag checks skipped)")
+else:
+    refs_before = identified()
+    tags_before = q("select count(*) from photo_person")[0][0]
+    human = [r for r in strong if (r["notes"] or "") != "pet"]
+    pub_sid, pub_photo, pub_person = human[0]["id"], human[0]["photo_id"], human[0]["person_id"]
+    pet_person = human[1]["person_id"]
+    db.execute("update photo set visibility='published' where id=?", (pub_photo,))
+    db.execute("update person set notes='pet' where id=?", (pet_person,))
+    db.commit()
+    weak_before = q("select count(*) from face_suggestion where status='pending' and score<0.65")[0][0]
+    st = autotag.run()
+    check(st["tagged"] > 0 and q("select count(*) from photo_person where source='auto-face'")[0][0] == st["tagged"],
+          f"strong matches are tagged with source auto-face ({st['tagged']})")
+    check(q("""select count(*) from photo_person pp join photo p on p.id=pp.photo_id
+               where pp.source='auto-face' and (p.visibility!='pending' or p.ingest_run_id is null)""")[0][0] == 0,
+          "only pending, ingested photos are auto-tagged")
+    check(q("select status from face_suggestion where id=?", pub_sid)[0][0] == "pending"
+          and q("select count(*) from photo_person where photo_id=? and person_id=? and source='auto-face'",
+                pub_photo, pub_person)[0][0] == 0,
+          "a photo the family can already see is left as a suggestion")
+    check(q("select count(*) from photo_person where person_id=? and source='auto-face'", pet_person)[0][0] == 0
+          and st["pets_skipped"] > 0, "a person marked as a pet is never auto-tagged")
+    check(q("select count(*) from face_suggestion where status='pending' and score<0.65")[0][0] == weak_before,
+          "matches under 0.65 stay suggestions")
+    check(q("""select count(*) from face_suggestion fs join face f on f.id=fs.face_id
+               join photo_person pp on pp.photo_id=f.photo_id and pp.person_id=fs.person_id
+               where fs.decided_by='auto-face' and fs.status='accepted' and pp.source='auto-face'""")[0][0] == st["tagged"],
+          "each auto tag keeps its suggestion and score on record")
+    check(identified() == refs_before, "auto tags are not used as references by the matcher")
+    check(autotag.run()["tagged"] == 0, "a second run tags nothing more")
+    at = admin.get("/api/admin/face-tags?auto_only=true&limit=500").json()
+    check(len(at) == st["tagged"] and all(a["origin"] == "auto" for a in at),
+          "the audit lists exactly the auto tags")
+    a, b = at[0], at[1]
+    admin.post("/api/admin/face-tags/confirm-auto", json={"pairs": [[a["photo_id"], a["person_id"]]]})
+    check(q("select source from photo_person where photo_id=? and person_id=?", a["photo_id"], a["person_id"])[0][0]
+          == "human-confirmed", "confirming makes it an ordinary tag")
+    check(identified() == refs_before + 1, "…and a reference")
+    admin.post("/api/admin/undo")
+    check(q("select source from photo_person where photo_id=? and person_id=?", a["photo_id"], a["person_id"])[0][0]
+          == "auto-face", "undo makes it an auto tag again")
+    admin.post("/api/admin/face-queue/tiny-tags/remove", json={"pairs": [[b["photo_id"], b["person_id"]]]})
+    check(q("""select count(*) from face_suggestion fs join face f on f.id=fs.face_id
+               where f.photo_id=? and fs.person_id=? and fs.status='rejected'""", b["photo_id"], b["person_id"])[0][0] >= 1
+          and autotag.run()["tagged"] == 0, "removing an auto tag rejects the guess: it is not re-applied")
+    admin.post("/api/admin/undo")
+    check(q("select source from photo_person where photo_id=? and person_id=?", b["photo_id"], b["person_id"])[0][0]
+          == "auto-face", "undo of the removal restores the auto tag")
+    check(q("select count(*) from photo_person where source!='auto-face'")[0][0] == tags_before,
+          "no existing tag was changed")
+    db.execute("update photo set visibility='pending' where id=?", (pub_photo,))
+    db.execute("update person set notes=null where id=?", (pet_person,))
+    db.commit()
+
 print("== rescue ==")
 g = max(un["groups"], key=lambda g: len(g["photos"]))
 one, rest = g["photos"][0]["id"], [p["id"] for p in g["photos"][1:]]

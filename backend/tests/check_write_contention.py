@@ -72,7 +72,7 @@ th.start()
 env = dict(os.environ, DB_PATH=str(tmp), PYTHONPATH=str(Path(__file__).resolve().parents[1]))
 t0 = time.time()
 ok = True
-for mod in (["app.detect_faces", "--limit", str(args.photos)], ["app.match_faces"], ["app.cluster_faces"],
+for mod in (["app.detect_faces", "--limit", str(args.photos)], ["app.match_faces"], ["app.autotag"], ["app.cluster_faces"],
             ["app.junk"], ["app.outings"], ["app.stacks"]):
     phase[0] = mod[0]
     r = subprocess.run([sys.executable, "-m", *mod], env=env, capture_output=True, text=True,

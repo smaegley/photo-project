@@ -96,7 +96,10 @@ def run(threshold: float = DEFAULT_THRESHOLD, min_refs: int = MIN_REFS,
                             m.PhotoPerson.region_x, m.PhotoPerson.region_y,
                             m.PhotoPerson.region_w, m.PhotoPerson.region_h)
                    .join(m.Photo, m.Photo.id == m.PhotoPerson.photo_id)
-                   .filter(m.PhotoPerson.region_w.isnot(None), queries.not_culled()).all())
+                   # Auto tags (app.autotag) are never references: a wrong one must not
+                   # be able to teach the matcher to repeat itself (§15.10).
+                   .filter(m.PhotoPerson.region_w.isnot(None), queries.not_culled(),
+                           m.PhotoPerson.source != "auto-face").all())
         tagged = defaultdict(set)      # photo_id -> {person_id} tagged but with NO box
         boxed = set()                  # (photo_id, person_id) already carrying a box
         for pid, person, rw in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id,

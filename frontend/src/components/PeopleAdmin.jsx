@@ -105,6 +105,12 @@ export default function PeopleAdmin({ onClose, onChanged }) {
     run(`${p.name} is now ${p.is_family ? "non-family" : "family"}`,
         () => api.renamePerson(p.id, p.name, !p.is_family));
 
+  // Pets are never auto-tagged by the nightly ingest: the face model cannot tell
+  // animals apart (SPEC §15.10).
+  const togglePet = (p) =>
+    run(`${p.name} is ${p.is_pet ? "no longer marked" : "now marked"} as a pet`,
+        () => api.setPersonPet(p.id, p.name, !p.is_pet));
+
   const saveLinks = async (p) => {
     const ok = await run(`updated ${p.name}'s family links`, () =>
       api.updatePersonLinks(p.id, lFather || null, lMother || null, lSpouse || null)
@@ -169,6 +175,7 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                 <span className="event-admin-name">
                   {p.name}
                   {!p.is_family && <span className="lb-origin-badge" style={{ marginLeft: 6 }}>friend / other</span>}
+                  {p.is_pet && <span className="lb-origin-badge" style={{ marginLeft: 6 }}>pet</span>}
                   <span className="modal-sub"> · {p.photo_count} photo{p.photo_count !== 1 ? "s" : ""}</span>
                 </span>
                 {!mergeFrom && (
@@ -181,6 +188,10 @@ export default function PeopleAdmin({ onClose, onChanged }) {
                   <button className="link" onClick={() => toggleFamily(p)} disabled={busy}
                           title={p.is_family ? "Move to Friends & others" : "Move back into the family tree"}>
                     {p.is_family ? "mark friend" : "mark family"}
+                  </button>
+                  <button className="link" onClick={() => togglePet(p)} disabled={busy}
+                          title="Pets are never tagged automatically — the face matcher cannot tell animals apart">
+                    {p.is_pet ? "unmark pet" : "mark pet"}
                   </button>
                   {p.is_family && (
                     <button className="link" onClick={() => editingLinks === p.id ? cancelEditLinks() : startEditLinks(p)}

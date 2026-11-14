@@ -439,7 +439,7 @@ def face_queue(db: Session = Depends(get_db), user: m.User = Depends(require_adm
 # matches routes in declaration order, so with the catch-all first, a request for
 # /face-queue/accepted binds person_id="accepted" and quietly returns an empty list —
 # a 200 with no data, which looks like "nothing to audit" rather than a routing bug.
-def _face_tag_query(db, person_id=None, max_score=None, max_area=None):
+def _face_tag_query(db, person_id=None, max_score=None, max_area=None, auto_only=False):
     """Every face-boxed tag, with its confidence where one exists.
 
     One query behind the whole audit. `By confidence` and `Tiny faces` were two views of
@@ -476,13 +476,15 @@ def _face_tag_query(db, person_id=None, max_score=None, max_area=None):
         q = q.filter(area <= max_area)
     if max_score is not None:
         q = q.filter(sub.c.score <= max_score)
+    if auto_only:
+        q = q.filter(m.PhotoPerson.source == "auto-face")
     return q, area
 
 
 @router.get("/face-tags")
 def face_tags(person_id: str | None = None, max_score: float | None = None,
               max_area: float | None = None, sort: str = "area", limit: int = 500,
-              offset: int = 0,
+              offset: int = 0, auto_only: bool = False,
               db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
     """The unified audit list — filter by person / score / size, sort by size or score.
 
@@ -490,14 +492,17 @@ def face_tags(person_id: str | None = None, max_score: float | None = None,
     stall the browser; `offset` lets the panel append a page at a time while the sidebar
     counts show the true total, so a cap can never silently hide work.
     """
-    q, area = _face_tag_query(db, person_id, max_score, max_area)
+    q, area = _face_tag_query(db, person_id, max_score, max_area, auto_only)
+    auto = {(ph, pid) for ph, pid in db.query(m.PhotoPerson.photo_id, m.PhotoPerson.person_id)
+            .filter(m.PhotoPerson.source == "auto-face").all()}
     q = q.order_by(area.asc() if sort == "area"
                    else m.PhotoPerson.region_w.asc() if sort == "width"
                    else _nulls_last_score())
     rows = q.offset(max(0, offset)).limit(limit).all()
     return [{"photo_id": ph, "person_id": pid, "person": pname,
              "area": round(a, 6), "score": round(sc, 3) if sc is not None else None,
-             "origin": "suggested" if sc is not None else "imported",
+             "origin": ("auto" if (ph, pid) in auto
+                        else "suggested" if sc is not None else "imported"),
              "source_file": sf, "year": dt.year if dt else None,
              "box": [round(rx, 5), round(ry, 5), round(rw, 5), round(rh, 5)]}
             for ph, pid, rx, ry, rw, rh, pname, sf, dt, sc, a in rows]
@@ -510,9 +515,10 @@ def _nulls_last_score():
 
 @router.get("/face-tags/by-person")
 def face_tags_by_person(max_score: float | None = None, max_area: float | None = None,
+                        auto_only: bool = False,
                         db: Session = Depends(get_db), user: m.User = Depends(require_admin)):
     """Per-person counts under the SAME filters, so the sidebar always agrees with the grid."""
-    q, _area = _face_tag_query(db, None, max_score, max_area)
+    q, _area = _face_tag_query(db, None, max_score, max_area, auto_only)
     counts = {}
     for row in q.all():
         pid, pname = row[1], row[6]
@@ -582,6 +588,45 @@ def tiny_tags_by_person(max_area: float = 0.003, db: Session = Depends(get_db),
                    for p, n, c, sm in rows], key=lambda r: -r["count"])
 
 
+def _auto_suggestions(db: Session, photo_id: int, person_id: str, status: str,
+                      by: str) -> list[int]:
+    """Re-mark the auto-accepted suggestion(s) behind an auto tag -> their ids.
+    Removing an auto tag is a rejection of the machine's guess (so it is never offered
+    or auto-applied again); confirming one makes the decision the admin's."""
+    ids = []
+    for sg in (db.query(m.FaceSuggestion)
+               .join(m.Face, m.Face.id == m.FaceSuggestion.face_id)
+               .filter(m.Face.photo_id == photo_id, m.FaceSuggestion.person_id == person_id,
+                       m.FaceSuggestion.status == m.FACE_ACCEPTED,
+                       m.FaceSuggestion.decided_by == "auto-face").all()):
+        sg.status, sg.decided_by = status, by
+        sg.decided_at = datetime.now(timezone.utc)
+        ids.append(sg.id)
+    return ids
+
+
+@router.post("/face-tags/confirm-auto")
+def confirm_auto_tags(body: dict, db: Session = Depends(get_db),
+                      user: m.User = Depends(require_admin)):
+    """Turn auto tags into ordinary human-confirmed ones (which also makes them
+    references for the matcher). Undoable."""
+    pairs = [(int(a), str(b)) for a, b in body.get("pairs", [])]
+    if not pairs:
+        raise HTTPException(400, "no pairs")
+    done, sugs = [], []
+    for ph, pid in pairs:
+        pp = db.get(m.PhotoPerson, (ph, pid))
+        if pp is None or pp.source != "auto-face":
+            continue
+        pp.source = SOURCE_HUMAN
+        done.append([ph, pid])
+        sugs += _auto_suggestions(db, ph, pid, m.FACE_ACCEPTED, user.email)
+    _log(db, user, "face:confirm-auto", None, f"{len(done)} tags",
+         inverse={"op": "face_unconfirm_auto", "pairs": done, "suggestion_ids": sugs})
+    db.commit()
+    return {"confirmed": len(done)}
+
+
 @router.post("/face-queue/tiny-tags/remove")
 def remove_tiny_tags(body: dict, db: Session = Depends(get_db),
                      user: m.User = Depends(require_admin)):
@@ -590,15 +635,18 @@ def remove_tiny_tags(body: dict, db: Session = Depends(get_db),
     if not pairs:
         raise HTTPException(400, "no pairs")
     removed = []
+    rejected: list[int] = []
     for ph, pid in pairs:
         pp = db.get(m.PhotoPerson, (ph, pid))
         if pp is None:
             continue
         removed.append([ph, pid, [pp.region_x, pp.region_y, pp.region_w, pp.region_h],
                         pp.source, bool(pp.uncertain)])
+        if pp.source == "auto-face":
+            rejected += _auto_suggestions(db, ph, pid, m.FACE_REJECTED, user.email)
         db.delete(pp)
     _log(db, user, "face:untag", None, f"{len(removed)} tags",
-         inverse={"op": "face_untag", "removed": removed})
+         inverse={"op": "face_untag", "removed": removed, "auto_rejected": rejected})
     db.commit()
     return {"removed": len(removed)}
 
@@ -1521,6 +1569,14 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
                           .order_by(m.FaceSuggestion.score.desc()).all()):
             if name not in names[pid]:
                 names[pid].append(name)
+    tags: dict[int, list[dict]] = defaultdict(list)
+    for ch in _chunks(ids):
+        for pid, name, src in (db.query(m.PhotoPerson.photo_id, m.Person.canonical_name,
+                                        m.PhotoPerson.source)
+                               .join(m.Person, m.Person.id == m.PhotoPerson.person_id)
+                               .filter(m.PhotoPerson.photo_id.in_(ch))
+                               .order_by(m.Person.canonical_name).all()):
+            tags[pid].append({"name": name, "auto": src == "auto-face"})
     places = {pl.id: pl.canonical_name for pl in db.query(m.Place).all()}
     event_names = {e.name.lower(): e.name for e in db.query(m.Event).all()}
 
@@ -1572,6 +1628,7 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
                         "junk_score": round(p.junk_score, 2) if p.junk_score is not None else None,
                         "stack_id": p.stack_id, "sharpness": p.sharpness,
                         "faces": n_faces.get(p.id, 0), "suggested": names.get(p.id, []),
+                        "tagged": tags.get(p.id, []),
                         "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
                         "display_url": _display_url(p.source_file) + _photo_version(p)}
                        for p in ps]})
@@ -1830,9 +1887,15 @@ def rename_person(person_id: str, body: PersonRename, db: Session = Depends(get_
     # (a low-stakes, one-click-reversible flag).
     if body.is_family is not None:
         person.is_family = body.is_family
+    # Pet marker (`notes == 'pet'`, the importer's convention). The face model cannot
+    # tell animals apart, so a pet is never auto-tagged (SPEC §15.10).
+    if body.is_pet is True:
+        person.notes = "pet"
+    elif body.is_pet is False and (person.notes or "").strip().lower() == "pet":
+        person.notes = None
     db.commit()
     return {"id": person.id, "canonical_name": person.canonical_name,
-            "is_family": person.is_family}
+            "is_family": person.is_family, "is_pet": person.notes == "pet"}
 
 
 @router.post("/people/{person_id}/merge")
@@ -2318,6 +2381,20 @@ def _apply_inverse(db: Session, inv: dict) -> None:
                 db.add(m.PhotoPerson(photo_id=ph, person_id=pid, source=src,
                                      uncertain=unc, region_x=box[0], region_y=box[1],
                                      region_w=box[2], region_h=box[3]))
+        if inv.get("auto_rejected"):
+            db.query(m.FaceSuggestion).filter(
+                m.FaceSuggestion.id.in_(inv["auto_rejected"])).update(
+                {"status": m.FACE_ACCEPTED, "decided_by": "auto-face"},
+                synchronize_session=False)
+    elif op == "face_unconfirm_auto":
+        for ph, pid in inv["pairs"]:
+            pp = db.get(m.PhotoPerson, (ph, pid))
+            if pp is not None and pp.source == SOURCE_HUMAN:
+                pp.source = "auto-face"
+        if inv.get("suggestion_ids"):
+            db.query(m.FaceSuggestion).filter(
+                m.FaceSuggestion.id.in_(inv["suggestion_ids"])).update(
+                {"decided_by": "auto-face"}, synchronize_session=False)
     elif op == "face_unaccept":
         db.query(m.FaceSuggestion).filter(
             m.FaceSuggestion.id.in_(inv["suggestion_ids"])).update(

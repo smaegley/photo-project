@@ -83,19 +83,23 @@ export const api = {
   acceptedFaces: (maxScore = 1.0, limit = 400) =>
     get(`/api/admin/face-queue/accepted?max_score=${maxScore}&limit=${limit}`),
   acceptedSummary: () => get("/api/admin/face-queue/accepted/summary"),
-  faceTags: ({ personId = null, maxScore = null, maxArea = null,
+  faceTags: ({ personId = null, maxScore = null, maxArea = null, autoOnly = null,
                sort = "area", limit = 300, offset = 0 } = {}) =>
     get("/api/admin/face-tags?" + new URLSearchParams(Object.entries({
       person_id: personId, max_score: maxScore, max_area: maxArea, sort, limit, offset,
+      auto_only: autoOnly || null,
     }).filter(([, v]) => v !== null && v !== "")).toString()),
   peopleWithoutFace: (limit = 200) =>
     get(`/api/admin/people/without-face?limit=${limit}`),
   setRepresentatives: (picks) =>
     send("POST", "/api/admin/people/set-representatives", { picks }),
-  faceTagsByPerson: ({ maxScore = null, maxArea = null } = {}) =>
+  faceTagsByPerson: ({ maxScore = null, maxArea = null, autoOnly = null } = {}) =>
     get("/api/admin/face-tags/by-person?" + new URLSearchParams(Object.entries({
-      max_score: maxScore, max_area: maxArea,
+      max_score: maxScore, max_area: maxArea, auto_only: autoOnly || null,
     }).filter(([, v]) => v !== null && v !== "")).toString()),
+  confirmAutoTags: (pairs) => send("POST", "/api/admin/face-tags/confirm-auto", { pairs }),
+  setPersonPet: (id, canonical_name, is_pet) =>
+    send("PATCH", `/api/admin/people/${id}`, { canonical_name, is_pet }),
   removeTinyTags: (pairs) =>
     send("POST", "/api/admin/face-queue/tiny-tags/remove", { pairs }),
   decideFaces: (suggestionIds, action) =>
