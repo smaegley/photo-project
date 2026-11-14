@@ -171,7 +171,15 @@ check(q("select count(*) from photo_event where event_id=?", eid)[0][0] == len(f
 print("== reconcile ==")
 sdb = SessionLocal()
 now = datetime.now(timezone.utc)
-listing = {r["storage_path"]: (r["file_version"], 1000 + r["id"], now - timedelta(days=900))
+# The fixture owns file_size. Whatever the source DB holds (NULL before the first real
+# reconcile, real byte counts after it — OPS-2026-11-14-04), every B2 row gets a known
+# size here, and a block of rows is set back to NULL so the backfill has work to do.
+SIZE = lambda pid: 1000 + pid                                    # noqa: E731
+db.execute("update photo set file_size = 1000 + id, master_missing = 0 where storage_backend='b2'")
+unsized = [r[0] for r in q("select id from photo where storage_backend='b2' order by id desc limit 25")]
+db.execute(f"update photo set file_size = null where id in ({','.join(map(str, unsized))})")
+db.commit()
+listing = {r["storage_path"]: (r["file_version"], SIZE(r["id"]), now - timedelta(days=900))
            for r in q("select id, storage_path, file_version from photo where storage_backend='b2'")}
 rows = q("""select id, storage_path, file_version from photo where storage_backend='b2'
             and visibility='published' and ingest_run_id is null and file_version is not null
@@ -179,14 +187,17 @@ rows = q("""select id, storage_path, file_version from photo where storage_backe
 keys = set(listing)
 pl = reconcile.plan(sdb, listing, keys)
 check(not pl["moved"] and not pl["deleted"] and not pl["replaced"], "an unchanged bucket plans nothing")
-check(len(pl["sizes"]) > 0, f"sizes to backfill: {len(pl['sizes'])}")
+check(set(pl["sizes"]) == set(unsized), f"exactly the unsized rows are queued for backfill ({len(pl['sizes'])})")
 reconcile.backfill_sizes(sdb, pl)
+check(q("select count(*) from photo where storage_backend='b2' and file_size is null")[0][0] == 0
+      and q("select file_size from photo where id=?", unsized[0])[0][0] == SIZE(unsized[0]),
+      "backfill fills them from the listing")
 
 mv, mv2, gone, repl, amb1, amb2 = rows[0], rows[1], rows[2], rows[3], rows[4], rows[5]
 new_key = "Photo Album/2099/2099-01/2099-01-01/" + mv["storage_path"].rsplit("/", 1)[-1]
 ren_key = mv2["storage_path"].rsplit("/", 1)[0] + "/renamed-9471.jpg"
 L = dict(listing)
-L[new_key] = (L.pop(mv["storage_path"])[0], 1000 + mv["id"], now)             # moved: same ETag
+L[new_key] = (L.pop(mv["storage_path"])[0], SIZE(mv["id"]), now)             # moved: same ETag
 L[ren_key] = ("multipart-etag-2", L.pop(mv2["storage_path"])[1], now)         # renamed: size + folder
 del L[gone["storage_path"]]                                                    # deleted
 L[repl["storage_path"]] = ("newetag9471", 5, now)                              # replaced
