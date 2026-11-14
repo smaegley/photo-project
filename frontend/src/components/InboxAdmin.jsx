@@ -5,9 +5,12 @@ import { api } from "../api";
 // see them until they are published.
 //   Inbox        — photos showing someone the app knows, plus the rest of their outing
 //   Not selected — everything else; Rescue moves photos (or a whole outing) to Inbox
-// Photos are grouped by outing (close in time and place). Naming an outing tags its
-// photos with that event as they are published. Click to mark, then Publish / Cull the
-// marked ones — or act on a whole outing at once.
+// Photos are grouped by outing (close in time and place). Each group has an Event name
+// box: the name is applied to photos AS THEY ARE PUBLISHED, never afterwards, so a
+// group can go out in parts under different names. Click to mark; "Publish event" on a
+// group and "Publish" in the toolbar both publish only the marked photos, each tagged
+// with its own group's event name if one is filled in. "Cull event" and "Rescue event"
+// follow the marks the same way.
 // Near-duplicate bursts show as one cell ("▸ 3 similar"): open it to choose, or use
 // "keep only this" / "Keep best of stacks". Publishing never culls anything by itself.
 //   Missing from B2 — existing photos whose master file has gone from the bucket
@@ -121,13 +124,25 @@ export default function InboxAdmin({ onClose, onChanged }) {
     setBusy(true); setMsg(null);
     try {
       const r = await api.setOutingEvent(g.outing_id, name);
-      setMsg(name ? `✓ outing named “${r.event_name}”`
-        + (r.retagged ? ` · ${r.retagged} already-published photo${r.retagged !== 1 ? "s" : ""} tagged` : "")
-        : "✓ event name cleared");
+      setMsg(name ? `✓ event name “${r.event_name}” — applied to the photos you publish from this group`
+        : "✓ event name cleared — photos already published keep theirs");
       setData((d) => ({ ...d, groups: d.groups.map((x) => (x.key === g.key ? { ...x, event_name: r.event_name } : x)) }));
-      if (r.retagged) await onChanged?.();
     } catch (e) { setMsg(`⚠ ${e.message}`); }
     finally { setBusy(false); }
+  };
+
+  // Per-group buttons act on the MARKED photos of that group only, never the whole
+  // group — the same rule as the toolbar buttons (Steve, 2026-11-14).
+  const groupBtn = (g, label, fn, verb, tail) => {
+    const mine = ids(g).filter((id) => marked.has(id));
+    return (
+      <button className="link" disabled={busy || !mine.length} onClick={() => fn(mine)}
+              title={mine.length
+                ? `${verb} the ${mine.length} marked photo${mine.length !== 1 ? "s" : ""} in this group${tail}`
+                : "Mark the photos first (or Mark all)"}>
+        {label}{mine.length ? ` (${mine.length})` : ""}
+      </button>
+    );
   };
 
   const run = data.last_run;
@@ -206,19 +221,16 @@ export default function InboxAdmin({ onClose, onChanged }) {
                 <button className="link" disabled={busy} onClick={() => markGroup(g.photos)}>
                   {g.photos.every((p) => marked.has(p.id)) ? "Unmark all" : "Mark all"}
                 </button>
-                {canRescue && (
-                  <button className="link" disabled={busy} onClick={() => rescue(ids(g))}>
-                    {isJunk ? "Rescue these" : "Rescue outing"}
-                  </button>
-                )}
-                {!isMissing && !isJunk && <button className="link" disabled={busy} onClick={() => publish(ids(g))}>Publish outing</button>}
+                {canRescue && groupBtn(g, "Rescue event", rescue, "Move", " to the Inbox tab")}
+                {!isMissing && !isJunk && groupBtn(g, "Publish event", publish, "Publish",
+                  g.event_name ? `, tagged “${g.event_name}”` : " (no event name)")}
                 {!isMissing && stackExtras(g.photos).length > 0 && (
                   <button className="link" disabled={busy} onClick={() => cull(stackExtras(g.photos))}
                           title="In every stack of similar shots in this outing, keep the sharpest and cull the others">
                     Keep best of stacks (cull {stackExtras(g.photos).length})
                   </button>
                 )}
-                {!isMissing && <button className="link" disabled={busy} onClick={() => cull(ids(g))}>Cull outing</button>}
+                {!isMissing && groupBtn(g, "Cull event", cull, "Cull", "")}
                 </span>
               </header>
               <div className="rotation-grid">

@@ -2056,7 +2056,15 @@ hidden, so every read path has to filter:
   cannot teach the index to repeat itself.
 
 ### 15.11 Events
-- Naming an outing in the inbox tags every published photo in it with that event.
+- The event name on an inbox group is applied to photos **as they are published** and to
+  nothing else (revised 2026-11-14, was: tags every published photo in the outing). Photos
+  already published keep their event when the name is changed or cleared, so one outing
+  can go out in parts — some as "Birthday", some with no event. A typo found after
+  publishing is fixed in Manage events. Reason: Steve published two cake photos and the
+  two dog photos of the same outing went out as "Birthday" with them (`OPS-2026-11-14-07`).
+- The per-group buttons are **Publish event / Cull event / Rescue event** and act only on
+  the checked photos of that group, like the toolbar buttons; with none checked they are
+  disabled. "Keep best of stacks" still acts on the whole group.
 - Embedded keywords are matched against the event vocabulary (existing union-add rules,
   never auto-create). Unmatched keywords are shown on the outing header as one-click
   "use as event name" suggestions instead of going to a CSV report.
@@ -2345,7 +2353,7 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
   with `app.stacks`, `check_api_image`, and headless screenshots of a collapsed and an
   opened stack.
 
-**Slice 7 — built on dev (2026-11-14), not pushed.** No migration.
+**Slice 7 — ✅ LIVE ON PROD (2026-11-14, `932340a`, `OPS-2026-11-14-06`).** On prod: Arya marked as a pet first; 176 auto tags across 10 people, 2 pet matches skipped, 3 left for review. No migration.
 
 - **`app/autotag.py`**, in `app.ingest` right after `match_faces`: a *pending*
   suggestion with score ≥ 0.65 becomes a `photo_person` row with

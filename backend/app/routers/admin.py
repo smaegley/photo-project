@@ -1719,10 +1719,13 @@ def rescue_photos(body: PhotoIdsReq, db: Session = Depends(get_db),
 @router.put("/outings/{outing_id}/event")
 def set_outing_event(outing_id: int, body: OutingEventReq, db: Session = Depends(get_db),
                      user: m.User = Depends(require_admin)):
-    """Name an outing (or clear the name). Photos already published from it are
-    re-tagged now; pending ones are tagged as they publish. The event itself is only
-    created once a published photo needs it, so a typo fixed before publishing leaves
-    nothing behind."""
+    """Set (or clear) the event name on an inbox group. The name is applied to photos
+    **as they are published** and to nothing else: photos already published from the
+    group keep whatever event they have, so one outing can be published in parts under
+    different names, or partly with no event (Steve, 2026-11-14 — two dog photos went
+    out as "Birthday" with the cake ones). To fix a typo after publishing, rename the
+    event in Manage events; the group follows it by id. The event row itself is only
+    created when a photo is published with it."""
     o = db.get(m.Outing, outing_id)
     if o is None:
         raise HTTPException(404, "outing not found")
@@ -1731,30 +1734,16 @@ def set_outing_event(outing_id: int, body: OutingEventReq, db: Session = Depends
     old_name = old_event.name if old_event else o.event_name
     if (name or "").lower() == (old_name or "").lower():
         return {"event_name": old_name, "retagged": 0}
-    pub = [pid for (pid,) in db.query(m.Photo.id)
-           .filter(m.Photo.outing_id == o.id, m.Photo.visibility == m.VIS_PUBLISHED).all()]
     inv = {"op": "outing_event", "id": o.id, "event_name": o.event_name,
            "event_id": o.event_id, "removed": [], "added": [], "events_created": []}
-    if old_event is not None and pub:
-        for ch in _chunks(pub):
-            for pe in (db.query(m.PhotoEvent)
-                       .filter(m.PhotoEvent.event_id == old_event.id,
-                               m.PhotoEvent.photo_id.in_(ch)).all()):
-                inv["removed"].append([pe.photo_id, pe.event_id, pe.source])
-                db.delete(pe)
-        db.flush()
     o.event_name, o.event_id = name, None
     if name:
-        if pub:
-            e = _resolve_outing_event(db, o, inv["events_created"])
-            inv["added"] = [[pid, e.id] for pid in _tag_event(db, pub, e)]
-        else:
-            e = _outing_event(db, o)
-            if e is not None:
-                o.event_id, o.event_name = e.id, e.name
+        e = _outing_event(db, o)
+        if e is not None:
+            o.event_id, o.event_name = e.id, e.name
     _log(db, user, "outing:event", old_name, name, inverse=inv)
     db.commit()
-    return {"event_name": o.event_name, "retagged": len(inv["added"])}
+    return {"event_name": o.event_name, "retagged": 0}
 
 
 @router.get("/culled")

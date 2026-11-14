@@ -271,11 +271,30 @@ if later:
     check(q("select visibility from photo where id=?", later[0])[0][0] == "pending"
           and q("select count(*) from photo_event where photo_id=? and event_id=?", later[0], eid)[0][0] == 0,
           "undo of that publish removes its event tag")
-r = admin.put(f"/api/admin/outings/{oid}/event", json={"event_name": None}).json()
-check(q("select count(*) from photo_event where event_id=?", eid)[0][0] == 0,
-      "clearing the name untags the photos already published from the outing")
+# The name applies at publish time only: clearing or changing it never touches photos
+# already published, so part of an outing can go out under the event and part without.
+admin.put(f"/api/admin/outings/{oid}/event", json={"event_name": None})
+check(q("select count(*) from photo_event where event_id=?", eid)[0][0] == len(first),
+      "clearing the name leaves the photos already published with their event")
+if later:
+    r = admin.post("/api/admin/photos/publish", json={"photo_ids": later[:1]}).json()
+    check(r["event_tagged"] == 0
+          and q("select count(*) from photo_event where photo_id=?", later[0])[0][0] == 0,
+          "a photo published after the name is cleared gets no event")
+    admin.post("/api/admin/undo")
+    OTHER = "Inbox Check Other 9471"
+    admin.put(f"/api/admin/outings/{oid}/event", json={"event_name": OTHER})
+    admin.post("/api/admin/photos/publish", json={"photo_ids": later[:1]})
+    oth = q("select id from event where name=?", OTHER)
+    check(len(oth) == 1
+          and q("select count(*) from photo_event where event_id=?", oth[0][0])[0][0] == 1
+          and q("select count(*) from photo_event where event_id=?", eid)[0][0] == len(first),
+          "a second name tags only the photos published under it")
+    admin.post("/api/admin/undo")
+    check(q("select count(*) from event where name=?", OTHER)[0][0] == 0, "undo removes the event it created")
+    admin.post("/api/admin/undo")
 admin.post("/api/admin/undo")
-check(q("select count(*) from photo_event where event_id=?", eid)[0][0] == len(first), "undo restores those tags")
+check(q("select event_name from outing where id=?", oid)[0][0] is not None, "undo restores the cleared name")
 
 print("== reconcile ==")
 sdb = SessionLocal()
