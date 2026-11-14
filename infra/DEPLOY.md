@@ -291,6 +291,7 @@ docker compose --profile ingest run --rm ingest app.ingest --dry-run   # listing
 docker compose --profile ingest run --rm ingest app.ingest             # stage, faces, match, outings
 docker compose exec -T api python -m app.outings                       # regroup/re-triage only; no ML, seconds
 docker compose --profile ingest run --rm ingest app.junk               # junk-score anything unscored (part of app.ingest too)
+docker compose exec -T api python -m app.stacks                        # re-stack near-duplicates; no ML
 ```
 
 - **Reconcile** (photos deleted, moved or replaced in the bucket) starts in **report**

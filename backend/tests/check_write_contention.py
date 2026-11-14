@@ -36,6 +36,7 @@ with sqlite3.connect(f"file:{SRC}?mode=ro", uri=True) as s, sqlite3.connect(tmp)
                   order by id desc limit ?)""", (args.photos,))
     # ...and every ingested photo look ungrouped, so app.outings rewrites them all
     d.execute("update photo set outing_id=null, triage=null where ingest_run_id is not null")
+    d.execute("update photo set phash=null, sharpness=null, stack_id=null where ingest_run_id is not null")
     d.execute("""update photo set junk_score=null where id in
                  (select id from photo where ingest_run_id is not null order by id desc limit ?)""",
               (args.photos,))
@@ -72,7 +73,7 @@ env = dict(os.environ, DB_PATH=str(tmp), PYTHONPATH=str(Path(__file__).resolve()
 t0 = time.time()
 ok = True
 for mod in (["app.detect_faces", "--limit", str(args.photos)], ["app.match_faces"], ["app.cluster_faces"],
-            ["app.junk"], ["app.outings"]):
+            ["app.junk"], ["app.outings"], ["app.stacks"]):
     phase[0] = mod[0]
     r = subprocess.run([sys.executable, "-m", *mod], env=env, capture_output=True, text=True,
                        cwd=Path(__file__).resolve().parents[1])

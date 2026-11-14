@@ -24,7 +24,9 @@ the run (there is a known truncated master in the bucket).
 
 Between 4 and 5, `app.junk` scores each new photo for the Likely junk tab.
 
-Not yet: near-duplicate stacks (slice 6), auto-tagging (7).
+6. **Stacks** — `app.stacks` groups near-duplicate bursts for the inbox.
+
+Not yet: auto-tagging (slice 7).
 """
 import argparse
 import io
@@ -323,8 +325,9 @@ def run(dry_run: bool = False, limit: int | None = None, skip_faces: bool = Fals
 
         # Outings + triage: cheap, and worth redoing every night even with nothing new
         # (a face named or rejected since yesterday changes which photos are selected).
-        from app import outings
+        from app import outings, stacks
         outings.run()
+        stacks.run()                         # near-duplicate stacks; needs the outings
 
         if guards:
             # Everything else was done; the guard alone makes the run a failure so the

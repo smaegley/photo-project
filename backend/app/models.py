@@ -162,6 +162,11 @@ class Photo(Base):
     outing_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=False)
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     junk_score: Mapped[float | None] = mapped_column(Float, nullable=True)   # app.junk, 0..1
+    # app.stacks: difference hash (hex), sharpness, and the near-duplicate stack this
+    # pending photo is in (= the stack's lowest photo id; null = on its own).
+    phash: Mapped[str | None] = mapped_column(String, nullable=True)
+    sharpness: Mapped[float | None] = mapped_column(Float, nullable=True)
+    stack_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # True while the B2 master is absent from the bucket listing (app.reconcile). The
     # auto-cull fires only when this turns True, so a photo an admin restores from the
     # Culled view is not culled again the next night.

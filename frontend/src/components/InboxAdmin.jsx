@@ -8,7 +8,8 @@ import { api } from "../api";
 // Photos are grouped by outing (close in time and place). Naming an outing tags its
 // photos with that event as they are published. Click to mark, then Publish / Cull the
 // marked ones — or act on a whole outing at once.
-// (The junk tab and stacks arrive in later slices.)
+// Near-duplicate bursts show as one cell ("▸ 3 similar"): open it to choose, or use
+// "keep only this" / "Keep best of stacks". Publishing never culls anything by itself.
 //   Missing from B2 — existing photos whose master file has gone from the bucket
 //                  (deleted in Lightroom, or a mistake). Only shown when there are any.
 //   Likely junk  — no face, and it looks like a label, receipt, screenshot…; a guess,
@@ -25,6 +26,23 @@ function when(g) {
   return d1 === d2 ? `${d1} ${hhmm(g.start)}–${hhmm(g.end)}`
     : `${d1} ${hhmm(g.start)} – ${d2} ${hhmm(g.end)}`;
 }
+
+// Consecutive photos sharing a stack_id are one near-duplicate stack (app.stacks).
+// `best` is the sharpest — the suggestion for which one to keep.
+function stackItems(photos) {
+  const items = [];
+  for (const p of photos) {
+    const last = items[items.length - 1];
+    if (p.stack_id != null && last && last.stack === p.stack_id) last.photos.push(p);
+    else items.push({ key: p.stack_id != null ? `s${p.stack_id}` : `p${p.id}`, stack: p.stack_id, photos: [p] });
+  }
+  for (const it of items) {
+    it.best = it.photos.reduce((a, b) => ((b.sharpness ?? 0) > (a.sharpness ?? 0) ? b : a));
+  }
+  return items;
+}
+const stackExtras = (photos) => stackItems(photos).filter((it) => it.photos.length > 1)
+  .flatMap((it) => it.photos.filter((p) => p.id !== it.best.id).map((p) => p.id));
 
 function EventField({ group, events, busy, onSave }) {
   const [val, setVal] = useState(group.event_name || "");
@@ -57,6 +75,12 @@ export default function InboxAdmin({ onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState(null);
   const [peek, setPeek] = useState(null);
+  const [openStacks, setOpenStacks] = useState(() => new Set());
+  const toggleStack = (k) => setOpenStacks((s) => {
+    const n = new Set(s);
+    if (n.has(k)) n.delete(k); else n.add(k);
+    return n;
+  });
 
   const load = (t = tab) => api.inbox(t).then((d) => { setData(d); setMarked(new Set()); });
   useEffect(() => { load(tab).catch((e) => setMsg(`⚠ ${e.message}`)); }, [tab]);
@@ -188,27 +212,58 @@ export default function InboxAdmin({ onClose, onChanged }) {
                   </button>
                 )}
                 {!isMissing && !isJunk && <button className="link" disabled={busy} onClick={() => publish(ids(g))}>Publish outing</button>}
+                {!isMissing && stackExtras(g.photos).length > 0 && (
+                  <button className="link" disabled={busy} onClick={() => cull(stackExtras(g.photos))}
+                          title="In every stack of similar shots in this outing, keep the sharpest and cull the others">
+                    Keep best of stacks (cull {stackExtras(g.photos).length})
+                  </button>
+                )}
                 {!isMissing && <button className="link" disabled={busy} onClick={() => cull(ids(g))}>Cull outing</button>}
                 </span>
               </header>
               <div className="rotation-grid">
-                {g.photos.map((p) => (
-                  <button key={p.id} className={`rotation-cell ${marked.has(p.id) ? "marked" : ""}`}
-                          onClick={() => toggle(p.id)} onDoubleClick={() => setPeek(p)} disabled={busy}
-                          title={`${p.filename || p.source_file}${p.date_raw ? " · " + p.date_raw : ""}`
-                            + `${p.suggested.length ? " · looks like " + p.suggested.join(", ") : ""}`}>
-                    <span className="rotation-frame">
-                      <img src={p.thumb_url} alt={p.filename || p.source_file} loading="lazy" />
-                    </span>
-                    <span className="rotation-badge">{marked.has(p.id) ? "✓" : ""}</span>
-                    <span className="inbox-names">
-                      {isMissing ? (p.visibility === "culled" ? "culled" : `still ${p.visibility}`)
-                        : isJunk ? `junk score ${p.junk_score ?? "?"}`
-                        : p.suggested.length ? p.suggested.slice(0, 3).join(", ")
-                        : p.faces ? `${p.faces} unknown face${p.faces !== 1 ? "s" : ""}` : ""}
-                    </span>
-                  </button>
-                ))}
+                {stackItems(g.photos).map((it) => {
+                  const open = it.photos.length === 1 || openStacks.has(it.key);
+                  const shown = open ? it.photos : [it.best];
+                  return shown.map((p, i) => {
+                    const isStack = it.photos.length > 1;
+                    const on = open ? marked.has(p.id) : it.photos.every((x) => marked.has(x.id));
+                    return (
+                      <button key={p.id}
+                              className={`rotation-cell ${on ? "marked" : ""} ${isStack ? "in-stack" : ""} ${isStack && open && p.id === it.best.id ? "stack-best" : ""}`}
+                              onClick={() => (open ? toggle(p.id) : markGroup(it.photos))}
+                              onDoubleClick={() => setPeek(p)} disabled={busy}
+                              title={`${p.filename || p.source_file}${p.date_raw ? " · " + p.date_raw : ""}`
+                                + `${p.suggested.length ? " · looks like " + p.suggested.join(", ") : ""}`
+                                + (isStack && !open ? ` · ${it.photos.length} similar shots — click marks them all` : "")}>
+                        <span className="rotation-frame">
+                          <img src={p.thumb_url} alt={p.filename || p.source_file} loading="lazy" />
+                        </span>
+                        <span className="rotation-badge">{on ? "✓" : ""}</span>
+                        {isStack && (!open || i === 0) && (
+                          <span className="stack-chip" role="button" tabIndex={0}
+                                title={open ? "Collapse this stack" : "Show all the similar shots"}
+                                onClick={(e) => { e.stopPropagation(); toggleStack(it.key); }}>
+                            {open ? "◂ close" : `▸ ${it.photos.length} similar`}
+                          </span>
+                        )}
+                        {isStack && open && p.id === it.best.id && (
+                          <span className="stack-chip stack-keep" role="button" tabIndex={0}
+                                title="Cull the other shots in this stack and keep this one (the sharpest)"
+                                onClick={(e) => { e.stopPropagation(); cull(it.photos.filter((x) => x.id !== p.id).map((x) => x.id)); }}>
+                            ★ keep only this
+                          </span>
+                        )}
+                        <span className="inbox-names">
+                          {isMissing ? (p.visibility === "culled" ? "culled" : `still ${p.visibility}`)
+                            : isJunk ? `junk score ${p.junk_score ?? "?"}`
+                            : p.suggested.length ? p.suggested.slice(0, 3).join(", ")
+                            : p.faces ? `${p.faces} unknown face${p.faces !== 1 ? "s" : ""}` : ""}
+                        </span>
+                      </button>
+                    );
+                  });
+                })}
               </div>
             </section>
           ))}

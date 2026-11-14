@@ -2292,7 +2292,7 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
 - *Not done:* the junk class (slice 5) — until then junk-looking photos sit in
   whichever tab their faces put them. People chips are still read-only names (slice 7).
 
-**Slice 5 — built on dev (2026-11-14), not pushed.** Migration `d6e7f8a9b0c1`
+**Slice 5 — ✅ LIVE ON PROD (2026-11-14, `d90bcd5`, `OPS-2026-11-14-03`).** On prod: 450 scored in 62 s, 25 over the threshold, 14 in Likely junk (same as dev), peak 519 MiB, 0 lock errors. Migration `d6e7f8a9b0c1`
 (`photo.junk_score`).
 
 - **`app/junk.py`**: CLIP ViT-B/32 zero-shot, same prompts and preprocessing as P-I2,
@@ -2320,6 +2320,30 @@ done in `app/ort_threads.py`: onnxruntime sessions get explicit thread counts (2
   `check_api_image` in the api image.
 - *Not measured:* recall. The first batch was pre-cleaned; whether real junk gets
   caught will show on Steve's next unfiltered import.
+
+**Slice 6 — built, approved by Steve on dev, pushed (2026-11-14); with ops (`DEV-2026-11-14-03`).** Migration `e7f8a9b0c1d2`
+(`photo.phash`, `sharpness`, `stack_id`).
+
+- **`app/stacks.py`** (after `app.outings` in every ingest; no ML, runs in the `api`
+  image too): difference hash + Laplacian sharpness from the display derivative, then
+  a stack = a run of *pending* photos in one outing, each within **30 s and 12 of 64
+  bits** of the one before. Stack id = its lowest photo id; singletons get none.
+- **Thresholds set by eye** on a contact sheet of the 118 closest pairs in the batch:
+  every pair at ≤ 10 bits was a retake of the same frame, 11–12 still were, and at
+  14–16 different poses and subjects appear. P-I7 proposed 10; 12 is used. Dev batch:
+  44 stacks over 102 of 342 pending photos, largest 5.
+- **Nothing is culled by stacking or by publishing** (decision 8). In the inbox a stack
+  is one cell showing its sharpest photo with "▸ N similar". Clicking the cell marks
+  the whole stack; the chip opens it to mark photos one by one. "★ keep only this" on
+  the sharpest, and "Keep best of stacks (cull N)" on the outing header, are the
+  one-click picks — both are ordinary, undoable culls.
+- The "fewest closed eyes" part of §15.4 step 5 is not built: sharpness alone picks
+  the suggestion. A stack whose members have been culled down to one stops showing as
+  a stack at once in the UI and loses its id at the next run.
+- *Verified:* `check_inbox` (stacking changes no visibility, no stack of one, never
+  across outings, neighbour limits, idempotent, cull + undo), `check_write_contention`
+  with `app.stacks`, `check_api_image`, and headless screenshots of a collapsed and an
+  opened stack.
 
 ### 15.16 Acceptance
 - A photo synced to B2 appears in the prod inbox by the next morning with no human step.

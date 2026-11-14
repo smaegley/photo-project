@@ -1570,6 +1570,7 @@ def inbox(db: Session = Depends(get_db), _user: m.User = Depends(require_admin),
                         "triage": p.triage, "has_gps": p.lat is not None,
                         "visibility": p.visibility, "culled_by": p.culled_by,
                         "junk_score": round(p.junk_score, 2) if p.junk_score is not None else None,
+                        "stack_id": p.stack_id, "sharpness": p.sharpness,
                         "faces": n_faces.get(p.id, 0), "suggested": names.get(p.id, []),
                         "thumb_url": _thumb_url(p.source_file) + _photo_version(p),
                         "display_url": _display_url(p.source_file) + _photo_version(p)}

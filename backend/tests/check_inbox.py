@@ -123,6 +123,37 @@ if n(jk):
     outings.run()
     check(q("select triage from photo where id=?", jid)[0][0] == "junk", "undo returns it to Likely junk")
 
+print("== stacks ==")
+from app import stacks                                           # noqa: E402
+before_vis = q("select id, visibility from photo order by id")
+st = stacks.run()
+check(q("select id, visibility from photo order by id") == before_vis, "stacking culls and publishes nothing")
+solo = q("select stack_id, count(*) n from photo where stack_id is not null and visibility='pending' group by 1 having n < 2")
+check(not solo, f"every stack has at least two photos ({st['stacks']} stacks, {st['stacked_photos']} photos)")
+check(q("""select count(*) from (select stack_id from photo where stack_id is not null and visibility='pending'
+           group by 1 having count(distinct outing_id) > 1)""")[0][0] == 0, "a stack never spans outings")
+bad = 0
+for (sid,) in q("select distinct stack_id from photo where stack_id is not null and visibility='pending'"):
+    ms = q("select taken_at, phash from photo where stack_id=? and visibility='pending' order by taken_at, id", sid)
+    for a, b in zip(ms, ms[1:]):
+        dt = (datetime.fromisoformat(b[0]) - datetime.fromisoformat(a[0])).total_seconds()
+        bad += dt > stacks.MAX_SECONDS or stacks.bits_apart(a[1], b[1]) > stacks.MAX_BITS
+check(bad == 0, "neighbours in a stack are within 30 s and 12 bits")
+s2 = stacks.run()
+check(s2["updated"] == 0 and s2["measured"] == 0, "a second run changes nothing")
+big = q("select stack_id, count(*) n from photo where stack_id is not null and visibility='pending' group by 1 order by n desc limit 1")
+if big:
+    sid = big[0][0]
+    mem = [r[0] for r in q("select id from photo where stack_id=? and visibility='pending' order by id", sid)]
+    admin.post("/api/admin/photos/cull", json={"photo_ids": mem[1:]})
+    stacks.run()
+    check(q("select stack_id from photo where id=?", mem[0])[0][0] is None,
+          "after culling the rest, the kept photo is no longer shown as a stack")
+    admin.post("/api/admin/undo")
+    stacks.run()
+    check(q("select count(*) from photo where stack_id=? and visibility='pending'", sid)[0][0] == len(mem),
+          "undo + rerun rebuilds the stack")
+
 print("== rescue ==")
 g = max(un["groups"], key=lambda g: len(g["photos"]))
 one, rest = g["photos"][0]["id"], [p["id"] for p in g["photos"][1:]]

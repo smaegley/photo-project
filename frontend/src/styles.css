@@ -796,3 +796,11 @@ button:disabled kbd { opacity: .3; }
   background: none; color: inherit; cursor: pointer; }
 .inbox-names { display: block; font-size: 11px; line-height: 1.25; color: var(--muted);
   min-height: 14px; padding: 2px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Near-duplicate stacks in the inbox (SPEC §15.15 slice 6) */
+.rotation-cell.in-stack .rotation-frame { box-shadow: 3px 3px 0 var(--border), 6px 6px 0 var(--muted-bg); }
+.rotation-cell.stack-best .rotation-frame { outline: 2px solid var(--accent); outline-offset: 1px; }
+.stack-chip { position: absolute; left: 4px; top: 4px; font-size: 11px; line-height: 1; padding: 3px 6px;
+  border-radius: 9px; background: rgba(0,0,0,.72); color: #fff; cursor: pointer; white-space: nowrap; }
+.stack-chip:hover { background: var(--accent); }
+.stack-chip.stack-keep { top: auto; bottom: 22px; }
